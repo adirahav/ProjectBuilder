@@ -1,0 +1,50 @@
+# Cursorrules Instructions
+
+## General
+
+- Strict Git Policy: You are strictly forbidden from performing any Git operations. Never push code to Git, do not create or switch branches, and do not perform git pull or git fetch operations.
+
+## Planning
+
+- Use the plan folder to write down a plan for solving any task. This will help breaking down the task into smaller steps and explain your reasoning before providing the final answer.
+
+- The plan file name should have a consequtive number and a descriptive name, for example: `001-react-routing-redux-capacitor-setup`.
+
+- Ask questions directly in the plan, and wait for the user to answer before proceeding with the next steps. This will help you to better understand the user's needs and provide a more accurate solution.
+
+- If a PLAN file already exists for a task, do not try to rewrite it or use complex search-and-replace formats. Instead, simply append the following section to the end of the file:
+
+```
+#############################
+# AI Agent Implementation
+#############################
+- Followed by your updates (e.g., TODO LIST or progress notes). Do not get stuck in a loop updating the file status—just append and move to the next coding task.
+
+- For every new task, ask at least 3 clarifying questions before starting the implementation.
+
+  - You must respond to specific user triggers to initiate the correct workflow:
+
+  - *"Plan a new task"*: Initiate a feature-specific workflow on an existing application.
+
+    - Ask which app the task refers to.
+
+    - Break down the task into UI, Service Layer, and State Management changes.
+
+    - Create a plan file: [num]-[task-name].
+
+  - *"Run plan [file-name]"*: Execute an existing plan from the plan/ folder.
+
+    - Locate the specified Markdown file in the plan/ directory.
+
+    - STRICT INSTRUCTION: DO NOT write any code yet.
+      Before proceeding to the implementation phase, you must:
+      
+      1. Review the steps and ask at least 3 clarifying questions in the plan file to ensure the plan is still up-to-date or needs adjustments.
+
+      2. Wait for my explicit approval for each answer before generating even a single line of code.
+
+      3. Confirm you understand this by presenting the questions now.
+
+    - Proceed with implementation only after confirmation.
+
+- For every new task, write at least 10 test cases in the plan file before starting the implementation.

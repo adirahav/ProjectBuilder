@@ -1,0 +1,176 @@
+# New Project Setup — Master Prompt
+
+This file is a **master prompt template**, not project documentation. Copy this whole file into a new project's repo root, along with every file the processing order below actually touches — `docs/PRD.md`, `.doc/*.md`, `.rule/*.md`, `.claude/skills/*/SKILL.md`, `AGENTS.md`, `agents/*/CLAUDE.md`, `.claude/settings.json`, `.claude/hooks/*.js`, `.mcp.json`, `team-members.json`, `scripts/*` (except `preserveStaticTxt.js` — see Phase D), and `.plan/000-backlog.md` (emptied of tasks per its own note below) — then run it with an LLM coding agent (e.g. Claude Code) to bootstrap that project's whole configuration/orchestration layer, file by file, through guided Q&A. Do not copy files this prompt never mentions (`README.md`, `DEMO-GUIDE.md`, `HUMAN-TODO.md`, `package.json`/`package-lock.json`, `backend/`, `frontend/`) — those are the source reference project's own content/output, not template scaffolding, and the new project gets its own via the scaffolding tasks in Phase E's backlog.
+
+It was extracted from a finished reference project (a tour/bus seat-booking app) whose config files encode a proven React + Node/Express + Mongoose + Zustand + Tailwind v4 architecture, plus a multi-agent build/QA/security orchestration workflow. Every templatized file still contains that project's working example, wrapped in `{{PLACEHOLDER}}` markers and an HTML comment block listing exactly what to fill in and what to ask the user. This prompt is the driver that walks through them.
+
+---
+
+## Conversation language vs. file language
+The Q&A itself can happen in whatever language the user writes in — follow their lead, switch naturally, don't force English on the conversation. But every file this process writes or edits — every template, every doc, every code comment, every commit-worthy artifact — is always written in English, regardless of what language the conversation was conducted in. This is independent of Part 1 Q5 (the product's own language/RTL-LTR settings, i.e. what end users of the *new app* will see) — that's a product decision; this is a rule about the setup process's own output.
+
+## Resuming — read this before doing anything else
+This process spans many files and is expected to be interrupted (closed mid-session, resumed days later, possibly in a fresh session with no memory of this conversation). Progress is tracked on disk, not in conversation memory — so the very first thing to do, before Part 1 or any file work, is:
+
+1. **Check whether `.setup-progress.md` exists in the repo root.**
+   - **If it doesn't exist**, this is a fresh run. Proceed to Part 1.
+   - **If it exists**, this is a resume. Read it — it tells you Part 1's answers (recorded at the top) and the status of every file. Do not re-run Part 1's interview or re-open any file marked `approved`. Resume from the first file that is not `approved` (i.e. `pending` or `drafted`) and continue down the list in order. If a `drafted` file's draft is still in the file itself (Part 2's per-file work always writes the draft in place before asking for approval), read it and re-present it for approval rather than re-interviewing from scratch.
+
+2. **Once Part 1 is confirmed** (fresh run only), create `.setup-progress.md` seeded with every file from Phases 0-E, each marked `pending`, before starting Part 2.
+
+3. **Keep `.setup-progress.md` updated as you go** — every status change (pending → drafted → approved) is written to disk immediately, not just stated in the conversation, since the conversation may not survive to the next session.
+
+`.setup-progress.md` format:
+```markdown
+# Setup Progress
+
+## Part 1 answers (confirmed YYYY-MM-DD)
+1. App: ...
+2. Roles: ...
+... (one line per Part 1 question, so a resumed session never re-asks)
+
+## Files
+- [ ] .doc/product-definition.md — pending
+- [ ] .doc/glossary.md — pending
+... one line per file in Phases 0-E, in processing order, status one of: pending / drafted (awaiting approval) / approved
+```
+
+---
+
+## Part 1 — Project Description
+
+Before touching any template, collect a plain-language description of the new project from the user. Ask for (or infer from what they've already said, without re-asking what's already answered):
+
+1. **What is the app?** One or two sentences — the product, who uses it, the core workflow.
+2. **Who are the users/roles?** e.g. "one admin role + anonymous public users", or "buyer, seller, admin".
+3. **What are the main domain entities?** e.g. "Product, Order, Cart" or "Tour, Bus, Seat".
+4. **Is there a contested/limited resource** — something two actors could race to claim at the same instant (inventory, seats, slots, coupons, appointment times)? If yes, name it. If no, note that `seat-concurrency-layer` will be deleted rather than filled in.
+5. **Language & direction** — primary language(s), RTL or LTR, single-language or translated.
+6. **Platform targets** — web only, or also native (Capacitor/Android/iOS)?
+7. **Backend shape** — one service (monolith) or multiple microservices? If multiple, what does each own, and is one of them a production gateway/reverse-proxy?
+8. **Icon library / design-system starting point**, if the user already knows.
+9. **Design source of truth.** Ask: "Do you have an AI-Studio export, a Figma file, or no design source yet?"
+   - **AI-Studio export** — ask for the folder name (defaults to `raw_from_ai_studio/`, matching this template). `{{DESIGN_SOURCE}}` = that folder path.
+   - **Figma** — this needs an MCP server, not just a placeholder. Walk the user through adding a `figma` entry to `.mcp.json` (same shape as the existing `linear` entry — see `.mcp.json`'s own instructions) with their Figma API key/file key, gitignored/env-sourced like the Linear key. `{{DESIGN_SOURCE}}` = "Figma (via MCP)"; note the file/frame naming convention if the user has one.
+   - **No design source** — the Frontend Agent designs the UI itself, per `.rule/style-rules.md` and the `css-layer`/`ui-component-layer` skills (brand colors, spacing scale, component patterns) rather than matching an external reference. `{{DESIGN_SOURCE}}` should be left unset — every `{{DESIGN_SOURCE}}` reference across templates (`docs/PRD.md`'s Design Source field and "design fidelity" AC, `agents/frontend/CLAUDE.md`'s Allowed Paths/workflow, `.rule/style-rules.md`) must be removed or reworded for this case, not filled with a placeholder value — don't leave a dangling reference to a design source that doesn't exist.
+10. **Multi-agent build workflow** — will this project use a Claude Code orchestrator/frontend/backend/QA/security agent split (like `agents/*/CLAUDE.md` here), or a simpler single-agent workflow? If multi-agent: what issue tracker (Linear, Jira, GitHub Issues, none) sequences the tickets?
+
+Do not interrogate the user with all of this as a single wall of questions if they've already described the project — extract what's already implied, and only ask about what's genuinely missing. Keep this part conversational, a few questions at a time, not a form.
+
+Once you have enough of the picture, summarize it back in 3-5 bullet points and confirm before moving to Part 2.
+
+## Part 2 — Filling the Templates
+
+Two different kinds of template live in this repo, and they're filled differently:
+
+- **Fill-in-the-blank templates** (`.rule/*.md`, `.claude/skills/*/SKILL.md`, `agents/*/CLAUDE.md`, `AGENTS.md`): each contains a working example from the source reference project with `{{PLACEHOLDER}}` markers wherever project-specific content belongs, plus an HTML comment block listing those placeholders and 1-2 example clarifying questions. You *adapt* the existing worked example.
+- **Question-driven templates** (`docs/PRD.md`, `.doc/architecture.md`, `.doc/glossary.md`, `.doc/product-definition.md`): these hold the product's actual substance, which can't be adapted from the reference project's seat-booking domain — it has to be authored fresh. Each section is an instruction block (interview questions + a note on the reference file's depth/tone) rather than a worked example. You *interview the user and write the section from scratch*, then delete the instruction block.
+
+### Processing order
+Fill templates in this order, across five phases. Later files reference earlier ones (`@other-file` links, or the same placeholder/terminology vocabulary), so filling in dependency order avoids re-deriving the same facts twice or introducing inconsistent terms.
+
+**Phase 0 — `docs/PRD.md` + `.doc/*.md` (question-driven; the product's actual content, everything else is scaffolding around it):**
+1. `.doc/product-definition.md` — vision, users, scope, constraints (drives everything below)
+2. `.doc/glossary.md` — canonical terms for every entity/role/action/status decided in product-definition.md
+3. `.doc/architecture.md` — service boundaries, data flow, auth model, using glossary.md's terms throughout
+4. `docs/PRD.md` — screens, functional requirements, acceptance criteria; the most concrete/UI-facing of the four, written last so it can lean on the other three rather than re-deciding things
+
+**Phase A — `.rule/*.md` (foundational conventions, no cross-file dependencies on skills/agents):**
+5. `naming-rules` — canonical entity/action terms (must match Phase 0's glossary.md exactly)
+6. `database-rules` — schema, RBAC, contested-entity status rules
+7. `coding-rules`, `error-handling-rules`, `style-rules`, `ui-rules`, `testing-rules`, `versioning-rules`, `planning-rules` — any order, each is largely self-contained
+
+**Phase B — `.claude/skills/*/SKILL.md` (architecture layers — same order as before):**
+8. `app-layer` — roles, routes, auth model (drives almost everything else)
+9. `api-layer` — backend services, domain services, error codes
+10. `backend-service-layer` — service topology, models list
+11. `mongoose-models-layer` — schema definitions, soft-delete, indexes
+12. `jwt-middleware-layer` — token shape, issuing/validating services
+13. `seat-concurrency-layer` — **only if a contested resource exists** (Part 1, Q4). If not, delete this file (`.claude/skills/seat-concurrency-layer/`) and remove its `@seat-concurrency-layer/SKILL.md` references from `backend-service-layer`, `mongoose-models-layer`, and `.rule/database-rules.md` (Phase A, item 6) — grep for `seat-concurrency-layer` across the repo before finishing this item to catch any reference these three don't cover.
+14. `service-layer` — frontend service files per entity
+15. `state-management-layer` — Zustand slices per feature
+16. `page-layer` — guarded vs. unguarded routes, page patterns
+17. `ui-component-layer` — icon library, i18n strategy, complex-component exceptions
+18. `css-layer` — RTL/LTR, spatial-component exceptions
+19. `accessibility-layer` — language, multi-state entities, key forms
+20. `native-navigation-layer` — **only if targeting native (Capacitor/Android/iOS)** (Part 1, Q6). If web-only, delete this file.
+
+**Phase C — agent orchestration (only if Part 1, Q9 says multi-agent; otherwise delete `agents/` and skip this phase — `AGENTS.md` still applies to a single-agent workflow):**
+21. `AGENTS.md` (root) — near-generic pointer file; confirm directory names match, fill quickly
+22. `agents/backend/CLAUDE.md` — service list, model fields, contested-entity action table, gateway proxy setup if applicable
+23. `agents/frontend/CLAUDE.md` — design source, stack, native flag, deploy-gateway wiring if applicable
+24. `agents/qa/CLAUDE.md` — service list, acceptance criteria from docs/PRD.md, contested-entity concurrency check if applicable
+25. `agents/orchestrator/CLAUDE.md` — ticketing system, ticket sequencing, agent launch commands
+26. `agents/security/CLAUDE.md` — checklist adapted to the real services/contested entity/gateway
+
+### Adapting, not just filling
+The worked example in each template is a starting point, not a contract. If the user's Part 1 answers imply a section, a role, a layer, or a whole file isn't needed — say so, propose removing or restructuring it, and confirm before deleting, the same way conditional deletes (seat-concurrency-layer, native-navigation-layer, agents/) already work. Conversely, if the new project needs something no template covers, add a new section or file in the same style rather than forcing the domain into the template's existing shape. Treat every file this way, not only the ones explicitly marked conditional — run this as an ongoing dialogue (a few focused questions at a time, confirm before structural changes), not a one-pass mechanical substitution.
+
+**Phase D — tooling (`.claude/hooks/*.js`, `.claude/settings.json`, `.mcp.json`, `scripts/*`):**
+27. `.claude/settings.json` — generic as-is; only touch if hook filenames change.
+28. `.claude/hooks/block-secret-file-access.js`, `block-destructive-bash.js` — generic as-is, no project-specific content, don't touch.
+29. `.claude/hooks/enforce-agent-boundaries.js` — **only if multi-agent** (Q9); delete otherwise. If kept, `ALLOWED_WRITE_PREFIXES` must match the real agent roles and real backend directory layout (one prefix per microservice if Q7 says multiple services). See its own TEMPLATE comment block.
+30. `.mcp.json` — the `linear` server block is **only relevant if Linear is the tracker** (Q9); otherwise delete it. Add a `figma` server block **only if Figma is the design source** (Q9's design-source branch) — same shape as `linear`, with the user's Figma API/file key. Never hardcode either key — they're secrets, not template values; use an env var or a gitignored local copy.
+31. `scripts/dev-loop.js` — **only if multi-agent** (Q9); delete otherwise. This is executable code, not prose, so it's a proportional rewrite, not a placeholder substitution — see its own TEMPLATE comment block for exactly which sections scale with the real service list and tracker choice.
+32. `scripts/hooks-checker.js` — **only if multi-agent** (Q9); delete otherwise. Generic hook-enforcement test harness, no domain-specific content to fill.
+33. `scripts/trace-agent.js`, `scripts/install-deps.ts` — generic as-is, no project-specific content; `install-deps.ts` encodes its own stack opinions (Vite/react-ts, Zustand, Capacitor+Android, Express+MongoDB driver) independent of this template's own stack choices — leave alone unless the user specifically wants this bootstrap script kept in sync with Part 1's stack answers.
+34. `scripts/preserveStaticTxt.js` — **not a template at all.** It hardcodes paths into an unrelated external project (`../../../NodeProjects/diraleashkaa-backend/...`), not the reference project this template is built from. Flag it to the user and ask whether to delete it before treating this repo as a template source — do not adapt or copy it forward.
+35. `team-members.json` — **only if Linear is the tracker** (Q9); otherwise delete it (and its `LINEAR_TEAM_FILE` reference in `.mcp.json`). If kept, every `{{..._LINEAR_USER_ID}}` and `{{OWNER_NAME}}` placeholder must become the new project's real Linear user IDs — ask the user for each, or ask them to fill this file locally themselves since these are their real Linear account identifiers, not values to invent. `dev-loop.js`'s ticket-assignment code treats any non-empty value here as a real ID to assign issues to, so a leftover `{{PLACEHOLDER}}` will fail at Linear API call time, not silently no-op.
+
+### On `docs/api-contract/*.yaml`
+These files are not part of the template scaffolding at all — no phase above touches them. They're a normal **build artifact**: per `agents/frontend/CLAUDE.md`, the Frontend Agent writes one `docs/api-contract/api-contract.<service-name>.yaml` per service as a byproduct of implementing each real feature ticket, only for the service(s) that ticket touches. Once `agents/frontend/CLAUDE.md` (Phase C) is correctly filled with the new project's real service names, the existing reference-project contract files under `docs/api-contract/` can simply be deleted — they will be regenerated automatically the first time a ticket reaches the Frontend Agent. Do not attempt to pre-generate them during setup.
+
+**Phase E — `.plan/000-backlog.md` (only if multi-agent, Q9 — `scripts/dev-loop.js` is what consumes this file; skip for single-agent):**
+36. Generate this file **last**, after every Phase 0-D file is filled — it depends on real screens (`docs/PRD.md`), real services (Q7), and real agent role keys (`scripts/dev-loop.js`'s `ALL_AGENT_KEYS`, Phase D item 31).
+
+### How to build `.plan/000-backlog.md`
+Each line is one task, in the exact format already used by `scripts/dev-loop.js`'s parser (`getNextBacklogTask`):
+```
+- [ ] <Title> | <field>: <value> | scope: <agentKey1,agentKey2,...>
+```
+- `<Title>` is always the first `|`-separated part, plain text.
+- Recognized optional fields: `figma: <url>` (only meaningful if Figma is the design source) and `scope: <comma-separated agent keys>` or `scope: none`. Omitting `scope:` entirely means "unknown scope — run every agent," which is only appropriate for early groundwork tasks, not real feature tasks.
+- Every key in `scope:` must be one of the real agent keys defined in `scripts/dev-loop.js`'s `ALL_AGENT_KEYS`/`AGENT_IDENTITY` for this project (Phase D item 31) — not the reference project's own keys (`tour-service`, `user-management-service`, ...) unless the new project happens to reuse them.
+
+Build the list in this order, mirroring the worked example already in this file (read it before writing, then replace it):
+1. **Scaffolding tasks first** — one line per setup step (create the frontend project, install root/frontend dependencies, create each backend service's `package.json`), scoped to whichever agents actually do that work (or `scope: none` for a step no agent needs to touch, like a plain `npm install`).
+2. **One task per screen/component from `docs/PRD.md`'s Screens section** — same granularity as the reference (one line per standalone page/component/modal, not one line per whole screen if it bundles several reusable pieces). If there's a filesystem design source, reference the matching file under it (e.g. `{{DESIGN_SOURCE}}/pages/<Screen>.tsx`); omit that reference entirely if the design source is Figma-via-MCP or doesn't exist.
+3. **`scope:` per task reflects real judgment, not a default list** — a pure-UI task is `frontend,qa`; a task whose screen reads/writes a specific backend service adds that service's key; add `security` only where the screen touches auth, PII, or the contested entity (Part 1 Q4) — mirror the reasoning visible in the worked example (e.g. the passenger-facing seat screen adds the service owning the contested entity plus `security`; a pure admin-management list screen usually doesn't need `security` unless it exposes PII).
+
+This file is deliberately the **last** thing the setup process produces. Present it to the user for review once generated — they're expected to prune, reorder, or add tasks by hand before `scripts/dev-loop.js` is run, exactly as described at the top of the conversation that produced this file (the human curates the queue; `dev-loop.js` executes it end-to-end, one task at a time, gated by plan approval and QA/security review per task).
+
+### How to fill each one
+
+**Phase 0 (question-driven) files:**
+1. **Read the file.** Note which sections still have an instruction block (HTML comment) vs. which are already written.
+2. **Interview the user**, 2-4 questions at a time per the questions listed in that section's instruction block, using the noted reference depth/tone as a target, not a script to imitate word-for-word.
+3. **Write the section in prose/tables**, replacing the instruction block entirely.
+4. **Approval gate (mandatory, every file — see below).**
+5. **Move to the next section**, then the next file, in the order listed above.
+
+**Phase A/B/C/D/E (fill-in-the-blank) files:**
+1. **Read the file.** Read its HTML comment block and note which placeholders are still unanswered from Part 1, from Phase 0's docs, or from an earlier file this session.
+2. **Ask only what's missing.** Use the file's own suggested clarifying questions as a starting point, but don't re-ask anything already established. Ask 1-3 focused questions at a time, not a giant form.
+3. **Rewrite the file in place**, replacing every `{{PLACEHOLDER}}` with real project content, adapting the worked example(s) to the new domain (rename entities, adjust routes, rewrite code samples to use real field/entity names — don't leave the reference project's example values in place).
+4. **Delete the HTML comment block** once the file is filled — it was setup-time-only guidance, not documentation for the finished project.
+5. **Approval gate (mandatory, every file — see below).**
+6. **Move to the next file.** Briefly state which file you just finished and what's next, so the user can follow progress.
+
+### Approval gate — every file, no exceptions
+Once a file is drafted, mark it `drafted` in `.setup-progress.md` immediately, then stop and ask the user explicitly: **"Here's `<file>` — approve as-is, or any notes/changes?"** Show enough of the actual content (not just a summary) that they can judge it — the whole file if short, the changed sections if long.
+- **Do not touch the next file until this one is approved.** If they give feedback, revise the file and ask again — same gate, same file.
+- Once approved, mark it `approved` in `.setup-progress.md` on disk before moving on. This is what makes resuming safe: an approved file is never reopened or re-interviewed in a later session, only a `drafted` or `pending` one.
+- This gate applies uniformly across all five phases, including Phase E's `.plan/000-backlog.md` — it isn't a special final review, it's the same per-file gate every other file already went through.
+
+### Cross-file consistency
+Keep terminology identical across every file — the same entity name, the same role names, the same status enum, the same service/port list — since these files cross-reference each other and repeat the same facts (e.g. `{{SERVICES_AND_PORTS}}` appears in `coding-rules`, `database-rules`, `testing-rules`, `versioning-rules`, and all four `agents/*/CLAUDE.md` files; the glossary's canonical terms must match `naming-rules.md` exactly). If a placeholder value or a naming decision changes mid-process (the user corrects an earlier answer), go back and update every already-filled file that used it, don't leave a stale value in one place.
+
+### When finished
+After all applicable files are filled:
+- Confirm every conditionally-deleted file (`seat-concurrency-layer`, `native-navigation-layer`, and — if single-agent — the whole `agents/` directory, `.claude/hooks/enforce-agent-boundaries.js`, and `scripts/dev-loop.js`) was either filled in or removed, per Part 1's answers.
+- Confirm `.mcp.json` holds no real API key.
+- Confirm no file still contains an unresolved `{{PLACEHOLDER}}` marker (Phases A/B/C/D/E) or an unresolved HTML instruction block (Phase 0).
+- If multi-agent: confirm `.plan/000-backlog.md` (Phase E) was generated from the real Screens section and real agent/service keys, and approved per the gate above before the user runs `scripts/dev-loop.js`.
+- Confirm every file in `.setup-progress.md` is marked `approved`.
+- Delete both this file (`NEW-PROJECT-SETUP-PROMPT.md`) and `.setup-progress.md` from the new project — their job is done.
+- Suggest the user run `/init` or review `CLAUDE.md` next, since the config now describes a real product and architecture the agent should follow going forward.

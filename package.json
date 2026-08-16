@@ -1,0 +1,12 @@
+{
+  "name": "reference-app",
+  "private": true,
+  "type": "module",
+  "description": "Reference App monorepo root — hosts scripts/dev-loop.js (the multi-agent orchestrator). Actual app code lives in frontend/ and backend/*/, each with its own package.json.",
+  "scripts": {
+    "dev-loop": "node scripts/dev-loop.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

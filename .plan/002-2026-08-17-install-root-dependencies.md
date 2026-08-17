@@ -1,6 +1,6 @@
 # Plan 002 — Install root dependencies
 
-Status: active
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-17
 Scope-Agents: none

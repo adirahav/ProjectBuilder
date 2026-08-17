@@ -351,6 +351,13 @@ async function main() {
     }
     await markPlanStatus(planPath, "active")
 
+    // A task can carry a literal `cmd:` field for pure setup/tooling work
+    // (installs, scaffolding) that no Claude agent owns — these have no
+    // product-code judgment call to make, just a shell command to run.
+    // Run it for real here, synchronously, before any agent step, instead of
+    // relying on a human to notice a `scope: none` task and run it by hand.
+    if (task.cmd) await runTaskCommand(task)
+
     // The backlog's own `scope:` field (if present) is a manual override and
     // always wins. Otherwise, defer to the orchestrator's own judgment: parse
     // `Scope-Agents:` out of the plan it just wrote/approved. Only if neither
@@ -559,6 +566,24 @@ function inScope(task, agentKey) {
   return task.scope.has(agentKey)
 }
 
+// Runs a backlog task's literal `cmd:` field for real (root-level installs,
+// scaffolding commands) — these are plain shell commands with no product-code
+// judgment call, so they don't need a Claude agent. Blocks and asks the human
+// to fix + retry on failure, the same pattern as a blocked agent step, rather
+// than silently marking the task done when the command actually failed.
+async function runTaskCommand(task) {
+  log(`Running task command: ${task.cmd}`)
+  try {
+    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit" })
+    log(`Command succeeded: ${task.cmd}`)
+  } catch (err) {
+    printRed(`Command failed: ${task.cmd}`)
+    printRed(err.message)
+    await askUserInput(`Fix the issue above, then press Enter to retry this command: `)
+    return runTaskCommand(task)
+  }
+}
+
 function logSkip(label, reason) {
   log(`${label}: SKIP — ${reason}`)
 }
@@ -585,15 +610,17 @@ function getNextBacklogTask() {
     const title = parts[0]
 
     let scopeRaw = ""
+    let cmd = ""
     for (const p of parts.slice(1)) {
       const kv = p.split(":")
       if (kv.length < 2) continue
       const key = kv[0].trim().toLowerCase()
       const value = kv.slice(1).join(":").trim()
       if (key === "scope") scopeRaw = value
+      if (key === "cmd") cmd = value
     }
 
-    return { lineIndex: i, line, title, slug: slugify(title), scope: parseScope(scopeRaw) }
+    return { lineIndex: i, line, title, slug: slugify(title), scope: parseScope(scopeRaw), cmd: cmd || null }
   }
 
   return null

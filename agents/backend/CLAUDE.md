@@ -37,6 +37,12 @@ Also read `.rule/database-rules.md` for the collection schema of your service, a
 ### Step 2: Scaffold
 Install the packages your stack requires (see Stack above). Use `tsx` for both dev and production start scripts rather than a compile-then-run step, if this repo's `tsconfig`/`moduleResolution` setup requires it — verify against the existing convention before assuming. Document any known runtime/tooling gotchas for this stack here once discovered (e.g. an incompatible dev-server tool, an ESM/CJS mismatch), so future agents don't rediscover them.
 
+**Known gotchas (discovered — do not rediscover):**
+- **Never run `npm install --prefix <dir>`.** On this machine's npm, `--prefix` redirects where packages are written but NOT which package npm treats as the install *target*, so it installs the current working directory as a `file:` dependency of the target. This silently injects a bogus self-referencing entry (`"booking-service": "file:"` or `"reference-app": "file:../.."`) into `dependencies`, and re-adds it on every subsequent install because of the matching symlink left in `node_modules/`. Instead `cd` into the service directory and run a bare `npm install`. (`npm --prefix <dir> run <script>` is safe — only `install` is affected.) To recover: `npm pkg delete dependencies.<bogus-name>`, delete `node_modules/<bogus-name>` and `package-lock.json`, then reinstall from inside the directory.
+- **`Start-Process -FilePath "npm"` fails on Windows** with "%1 is not a valid Win32 application" — `npm` is a `.cmd` shim. Use `npm.cmd`, or just run the server as a background task and poll the port.
+- **`dotenv/config` only loads `.env`**, but this repo's convention is `.env.<NODE_ENV>` (e.g. `.env.development`). Load the env-specific file explicitly — see `booking-service`'s `api/lib/env.ts` for the pattern.
+- **A guardrail hook blocks any tool call that so much as names a local env file** (including `AskUserQuestion` text). Don't try to read one; refer to it indirectly.
+
 ### Step 3: Set up data models
 **`api/` is the top-level folder directly under `backend/<your-service>/`.** See the `backend-service-layer` skill's "File Structure Per Domain" for the full layout.
 

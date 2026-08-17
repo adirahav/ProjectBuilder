@@ -1,6 +1,6 @@
 # Plan 004 — Create booking-service package.json and scaffold (Express, TypeScript, Mongoose)
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-17
 Scope-Agents: booking-service, qa
@@ -37,10 +37,13 @@ Scaffold the `backend/booking-service` package so it is a runnable, empty-but-co
 ## Open Questions
 1. Should `backend/package.json`'s stale `workspaces`/`scripts` (referencing `user-management-service`, `tour-service`, `common-service`) be cleaned up to include `booking-service` as part of this task?
    - Recommended: no — leave `backend/package.json` untouched in this task; fixing the root backend orchestration file is a separate, cross-cutting task once `admin-service` also exists, so `booking-service` should be independently runnable first.
+   - *HUMAN ANSWER*: as recommended
 2. Dev-mode TypeScript runner: `tsx` vs `ts-node-dev` vs plain `tsc -w` + `node --watch`?
    - Recommended: `tsx` — fastest startup, ESM-native, minimal config, already the common modern choice for new Express+TS services.
+   - *HUMAN ANSWER*: as recommended
 3. Should the stray existing `backend/booking-service/node_modules/` be deleted and reinstalled fresh, or reused as-is?
    - Recommended: delete and run a clean `npm install` after `package.json` is written, so the lockfile and `node_modules/` are guaranteed consistent with the new manifest rather than inheriting an unknown prior state.
+   - *HUMAN ANSWER*: as recommended
 
 ## Steps
 1. `backend/booking-service/`: write `package.json` with `"type": "module"`, `name: "booking-service"`, scripts (`dev`, `build`, `start`, `test`), dependencies (`express`, `mongoose`, `cors`, `dotenv`), and devDependencies (`typescript`, `tsx`, `@types/express`, `@types/node`, `@types/cors`, `vitest`).

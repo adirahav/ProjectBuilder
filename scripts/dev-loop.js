@@ -1495,22 +1495,30 @@ function findExistingBackendEnvValue(key) {
 }
 
 // Real, blocking config collection — the terminal literally cannot proceed
-// until you answer, unlike a question an agent prints mid-stream. Runs once
-// a service's example env file exists (i.e. after its scaffold task), skips
-// entirely once its local secrets file already exists.
+// until you answer, unlike a question an agent prints mid-stream. Checked by
+// VALUE, not by file existence: a Backend Agent's own scaffold step may
+// already have created a blank local secrets file from the example one
+// before this ever runs — an existence check alone would see that blank
+// file and wrongly skip prompting. Only keys still genuinely empty get
+// asked; anything already filled in (by a human or a previous run) is left
+// untouched.
 async function ensureBackendEnv(serviceDir) {
   const dir = `backend/${serviceDir}`
   const devPath = localEnvPath(dir)
   const examplePath = `${dir}/.env.example`
-  if (existsSync(devPath) || !existsSync(examplePath)) return
+  if (!existsSync(examplePath)) return
 
   const example = readEnvFile(examplePath)
+  const existing = readEnvFile(devPath)
   const keys = Object.keys(example)
   if (keys.length === 0) return
 
+  const missingKeys = keys.filter((k) => !existing[k])
+  if (missingKeys.length === 0) return
+
   banner(`⚠️  ${serviceDir} NEEDS REAL CONFIG VALUES — REQUIRED, NOT OPTIONAL`)
-  const collected = {}
-  for (const key of keys) {
+  const collected = { ...existing }
+  for (const key of missingKeys) {
     const reused = findExistingBackendEnvValue(key)
     if (reused) {
       collected[key] = reused

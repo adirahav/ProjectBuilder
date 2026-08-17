@@ -6,6 +6,13 @@ It was extracted from a finished reference project (a tour/bus seat-booking app)
 
 ---
 
+## Approval mode
+Before Part 1, ask: **"After each file is drafted, do you want to stop and approve it before I continue (gated), or should I keep going through all of them and let you review everything at the end (ungated)?"**
+- **Gated (default if not asked/answered)** — the per-file approval gate described later in this document applies exactly as written: stop after every file, show it, wait for explicit approval or feedback before moving on.
+- **Ungated** — skip the stop-and-wait step for every file. Still ask the section/file's own clarifying questions where the answer genuinely can't be inferred (a question with no reasonable default, e.g. "what's the product name" has no default to fall back on) — this toggle removes the *approval* wait, not the *content* questions. Where a file's own instructions offer a "Recommended" default (mirroring `AUTO_APPROVE_PLANS` in `scripts/dev-loop.js`, which does the same thing for plan review), take it automatically instead of stopping to ask. Still mark each file `drafted` then `approved` in `.setup-progress.md` as normal — "ungated" changes whether you wait on the human, not whether progress is tracked. At the very end, present a single summary of every file written so the user can review in bulk and flag anything to redo.
+
+Record the answer at the top of `.setup-progress.md` alongside Part 1's answers (e.g. `Approval mode: gated` / `ungated`) so a resumed session in a later conversation doesn't have to ask again.
+
 ## Conversation language vs. file language
 The Q&A itself can happen in whatever language the user writes in — follow their lead, switch naturally, don't force English on the conversation. But every file this process writes or edits — every template, every doc, every code comment, every commit-worthy artifact — is always written in English, regardless of what language the conversation was conducted in. This is independent of Part 1 Q5 (the product's own language/RTL-LTR settings, i.e. what end users of the *new app* will see) — that's a product decision; this is a rule about the setup process's own output.
 
@@ -23,6 +30,8 @@ This process spans many files and is expected to be interrupted (closed mid-sess
 `.setup-progress.md` format:
 ```markdown
 # Setup Progress
+
+Approval mode: gated | ungated
 
 ## Part 1 answers (confirmed YYYY-MM-DD)
 1. App: ...
@@ -47,7 +56,7 @@ Before touching any template, collect a plain-language description of the new pr
 4. **Is there a contested/limited resource** — something two actors could race to claim at the same instant (inventory, seats, slots, coupons, appointment times)? If yes, name it. If no, note that `seat-concurrency-layer` will be deleted rather than filled in.
 5. **Language & direction** — primary language(s), RTL or LTR, single-language or translated.
 6. **Platform targets** — web only, or also native (Capacitor/Android/iOS)?
-7. **Backend shape** — one service (monolith) or multiple microservices? If multiple, what does each own, and is one of them a production gateway/reverse-proxy?
+7. **Backend shape** — one service (monolith) or multiple microservices? If multiple, what does each own, and is one of them a production gateway/reverse-proxy? If there's a gateway, ask one more thing: should it also be the **only** service that verifies the JWT (gateway-centralized auth — downstream services trust an internal header the gateway attaches instead of verifying the token themselves), or should every service still verify the JWT independently even behind the gateway (per-service — more defense-in-depth, more duplicated logic)? Gateway-centralized only makes sense if downstream services can actually be deployed as network-private/unreachable directly — flag that requirement now if the user isn't sure their deploy target supports it (see `jwt-middleware-layer` skill's gateway-centralized section for why).
 8. **Icon library / design-system starting point**, if the user already knows.
 9. **Design source of truth.** Ask: "Do you have an AI-Studio export, a Figma file, or no design source yet?"
    - **AI-Studio export** — ask for the folder name (defaults to `raw_from_ai_studio/`, matching this template). `{{DESIGN_SOURCE}}` = that folder path.
@@ -85,7 +94,7 @@ Fill templates in this order, across five phases. Later files reference earlier 
 9. `api-layer` — backend services, domain services, error codes
 10. `backend-service-layer` — service topology, models list
 11. `mongoose-models-layer` — schema definitions, soft-delete, indexes
-12. `jwt-middleware-layer` — token shape, issuing/validating services
+12. `jwt-middleware-layer` — token shape, issuing/validating services, and (if a gateway exists, Q7) which auth model — per-service or gateway-centralized; delete whichever model's section doesn't apply
 13. `seat-concurrency-layer` — **only if a contested resource exists** (Part 1, Q4). If not, delete this file (`.claude/skills/seat-concurrency-layer/`) and remove its `@seat-concurrency-layer/SKILL.md` references from `backend-service-layer`, `mongoose-models-layer`, and `.rule/database-rules.md` (Phase A, item 6) — grep for `seat-concurrency-layer` across the repo before finishing this item to catch any reference these three don't cover.
 14. `service-layer` — frontend service files per entity
 15. `state-management-layer` — Zustand slices per feature
@@ -116,12 +125,14 @@ The worked example in each template is a starting point, not a contract. If the 
 33. `scripts/trace-agent.js`, `scripts/install-deps.ts` — generic as-is, no project-specific content; `install-deps.ts` encodes its own stack opinions (Vite/react-ts, Zustand, Capacitor+Android, Express+MongoDB driver) independent of this template's own stack choices — leave alone unless the user specifically wants this bootstrap script kept in sync with Part 1's stack answers.
 34. `scripts/preserveStaticTxt.js` — **not a template at all.** It hardcodes paths into an unrelated external project (`../../../NodeProjects/diraleashkaa-backend/...`), not the reference project this template is built from. Flag it to the user and ask whether to delete it before treating this repo as a template source — do not adapt or copy it forward.
 35. `team-members.json` — **only if Linear is the tracker** (Q9); otherwise delete it (and its `LINEAR_TEAM_FILE` reference in `.mcp.json`). If kept, every `{{..._LINEAR_USER_ID}}` and `{{OWNER_NAME}}` placeholder must become the new project's real Linear user IDs — ask the user for each, or ask them to fill this file locally themselves since these are their real Linear account identifiers, not values to invent. `dev-loop.js`'s ticket-assignment code treats any non-empty value here as a real ID to assign issues to, so a leftover `{{PLACEHOLDER}}` will fail at Linear API call time, not silently no-op.
+36. `backend/.env.shared.example` — **only if multi-agent** (Q9, since `scripts/dev-loop.js`'s `ensureBackendEnv` is what reads/writes the matching `backend/.env.shared` at runtime). Reference for the values shared identically across every backend service (matching `dev-loop.js`'s `ALWAYS_CONFIRM_KEY_PATTERN` — connection strings, secrets, `JWT_EXPIRES_IN`, `FRONTEND_ORIGIN`). Per-service cosmetic values (each service's own `PORT`, etc.) belong in that service's own `.env.example` written by the Backend Agent, never here — don't add per-service keys to this file.
+37. `.env.example` (root) — `VITE_LINEAR_ENABLED` only relevant if Linear is the tracker (Q9); delete otherwise. `VITE_DESIGN` mirrors Q9's design-source branch exactly — set to `FIGMA` / `AISTUDIO` / `NONE` matching whichever the user picked, not left blank.
 
 ### On `docs/api-contract/*.yaml`
 These files are not part of the template scaffolding at all — no phase above touches them. They're a normal **build artifact**: per `agents/frontend/CLAUDE.md`, the Frontend Agent writes one `docs/api-contract/api-contract.<service-name>.yaml` per service as a byproduct of implementing each real feature ticket, only for the service(s) that ticket touches. Once `agents/frontend/CLAUDE.md` (Phase C) is correctly filled with the new project's real service names, the existing reference-project contract files under `docs/api-contract/` can simply be deleted — they will be regenerated automatically the first time a ticket reaches the Frontend Agent. Do not attempt to pre-generate them during setup.
 
 **Phase E — `.plan/000-backlog.md` (only if multi-agent, Q9 — `scripts/dev-loop.js` is what consumes this file; skip for single-agent):**
-36. Generate this file **last**, after every Phase 0-D file is filled — it depends on real screens (`docs/PRD.md`), real services (Q7), and real agent role keys (`scripts/dev-loop.js`'s `ALL_AGENT_KEYS`, Phase D item 31).
+38. Generate this file **last**, after every Phase 0-D file is filled — it depends on real screens (`docs/PRD.md`), real services (Q7), and real agent role keys (`scripts/dev-loop.js`'s `ALL_AGENT_KEYS`, Phase D item 31).
 
 ### How to build `.plan/000-backlog.md`
 Each line is one task, in the exact format already used by `scripts/dev-loop.js`'s parser (`getNextBacklogTask`):
@@ -156,11 +167,15 @@ This file is deliberately the **last** thing the setup process produces. Present
 5. **Approval gate (mandatory, every file — see below).**
 6. **Move to the next file.** Briefly state which file you just finished and what's next, so the user can follow progress.
 
-### Approval gate — every file, no exceptions
-Once a file is drafted, mark it `drafted` in `.setup-progress.md` immediately, then stop and ask the user explicitly: **"Here's `<file>` — approve as-is, or any notes/changes?"** Show enough of the actual content (not just a summary) that they can judge it — the whole file if short, the changed sections if long.
+### Approval gate — every file (gated mode) or a single end-of-run summary (ungated mode)
+Which of these two applies was decided once, up front, by the **Approval mode** question above — check `.setup-progress.md` before assuming; don't ask again mid-run.
+
+**Gated (default):** Once a file is drafted, mark it `drafted` in `.setup-progress.md` immediately, then stop and ask the user explicitly: **"Here's `<file>` — approve as-is, or any notes/changes?"** Show enough of the actual content (not just a summary) that they can judge it — the whole file if short, the changed sections if long.
 - **Do not touch the next file until this one is approved.** If they give feedback, revise the file and ask again — same gate, same file.
 - Once approved, mark it `approved` in `.setup-progress.md` on disk before moving on. This is what makes resuming safe: an approved file is never reopened or re-interviewed in a later session, only a `drafted` or `pending` one.
 - This gate applies uniformly across all five phases, including Phase E's `.plan/000-backlog.md` — it isn't a special final review, it's the same per-file gate every other file already went through.
+
+**Ungated:** Mark each file `drafted` then immediately `approved` in `.setup-progress.md` (no wait in between) and move straight to the next file — no per-file stop, no per-file question beyond what the section's own instructions genuinely require (no reasonable default). Once every file across all five phases is done, present one consolidated summary (file list + one-line description of what each contains) so the user can review everything in bulk and ask for changes to anything before the final "When finished" checks.
 
 ### Cross-file consistency
 Keep terminology identical across every file — the same entity name, the same role names, the same status enum, the same service/port list — since these files cross-reference each other and repeat the same facts (e.g. `{{SERVICES_AND_PORTS}}` appears in `coding-rules`, `database-rules`, `testing-rules`, `versioning-rules`, and all four `agents/*/CLAUDE.md` files; the glossary's canonical terms must match `naming-rules.md` exactly). If a placeholder value or a naming decision changes mid-process (the user corrects an earlier answer), go back and update every already-filled file that used it, don't leave a stale value in one place.

@@ -12,16 +12,6 @@ references:
   - @jwt-middleware-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}
-  {{SERVICES_AND_PORTS}}     — one service (monolith) or a list of "service-name (port) — models it owns, domains"
-  {{MODELS}}                 — full list of Mongoose models across all services
-  {{CONTESTED_ENTITY}}       — entity with race-condition risk needing an atomic-update guard, if any — omit the "Concurrency" section if none
-  {{HAS_MULTIPLE_SERVICES}}  — yes/no, affects whether JWT section discusses shared-secret coordination
-Ask the user: "Monolith or microservices — how many, and what does each own?" "List your Mongoose models." "Is there a concurrency-sensitive resource (inventory, seats, slots, tickets)?"
--->
-
 # Backend Service Layer Guidelines
 *Goal:* Implement each service's business logic, data access, and API surface exactly to its contract, with clean separation between routing, request/response handling, and domain logic — and with any contested-resource concurrency guarantee treated as non-negotiable.
 
@@ -34,7 +24,8 @@ Ask the user: "Monolith or microservices — how many, and what does each own?" 
 ## Which Service Am I In?
 Each invocation targets exactly one service (see `agents/backend/CLAUDE.md`) — never write to another service's directory.
 
-{{SERVICES_AND_PORTS}}
+- `booking-service` (port 4001) — owns `Service`, `TimeSlot`, `Appointment`. Serves the public customer API (browse Services/TimeSlots, create Appointment) and the admin-scoped API (approve/cancel/reschedule Appointments, manage Services), validating JWTs issued by `admin-service`.
+- `admin-service` (port 4002) — owns `Admin`. Issues JWTs on login; serves dashboard-aggregation views by calling `booking-service`'s admin-scoped API. Holds no `Service`/`TimeSlot`/`Appointment` data itself.
 
 ## File Structure Per Domain
 `api/` is the top-level folder directly under each service:
@@ -60,13 +51,13 @@ Controllers never touch Mongoose directly — they call the service. Routes neve
 **Report/test write paths are always repo-root-relative, never relative to your current shell directory.** If a step has you `cd backend/<service>` to run `npm` commands, every subsequent file write (reports, `docs/tests/security/...`, etc.) must still resolve against the repository root. A stray `backend/docs/`, `backend/<service>/docs/`, or similar path appearing anywhere under `backend/` is exactly this bug — reports and tests never belong there.
 
 ## Mongoose Models
-**See the dedicated `mongoose-models-layer` skill for full schema definitions, the soft-delete hook pattern, required indexes, and query conventions.** Models: {{MODELS}}. Naming is camelCase throughout, per `.rule/naming-rules.md`; every model exposes `id` (a `uuid`) to clients and never `_id` — a controller receiving a client `id` param must resolve it to `_id` via the service layer before querying, and any `.lean()` result returned straight from a controller must be mapped through the same `uuid`→`id` shape by hand.
+**See the dedicated `mongoose-models-layer` skill for full schema definitions, the soft-delete hook pattern, required indexes, and query conventions.** Models: `Service`, `TimeSlot`, `Appointment` (`booking-service`), `Admin` (`admin-service`). Naming is camelCase throughout, per `.rule/naming-rules.md`; every model exposes `id` (a `uuid`) to clients and never `_id` — a controller receiving a client `id` param must resolve it to `_id` via the service layer before querying, and any `.lean()` result returned straight from a controller must be mapped through the same `uuid`→`id` shape by hand.
 
-## Concurrency (fill in only if a contested resource exists)
-If `{{CONTESTED_ENTITY}}` is set, this is high-risk logic. **See the dedicated `seat-concurrency-layer` skill before writing or reviewing any code that changes its status** — it covers the atomic-update pattern, the full per-action rule table, any multi-document case, and the concurrency test pattern in depth. The short version: every status-changing action is one atomic `findOneAndUpdate` with the precondition in the filter, never a separate read-then-write; a multi-document action needs a transaction or explicit rollback; no endpoint ever accepts the status field directly from the client.
+## Concurrency
+`TimeSlot` is the contested resource — this is high-risk logic. **See the dedicated `seat-concurrency-layer` skill before writing or reviewing any code that changes its status** — it covers the atomic-update pattern, the full per-action rule table, any multi-document case, and the concurrency test pattern in depth. The short version: every status-changing action is one atomic `findOneAndUpdate` with the precondition in the filter, never a separate read-then-write; a multi-document action needs a transaction or explicit rollback; no endpoint ever accepts the status field directly from the client.
 
 ## JWT & Auth Middleware
-**See the dedicated `jwt-middleware-layer` skill for the full trust model, token shape, validation middleware{{JWT_COORDINATION_NOTE}}.** Short version: only the designated issuing service signs tokens; every service validates independently with the identical `JWT_SECRET`; always pin `algorithms: ['HS256']` explicitly on both sign and verify.
+**See the dedicated `jwt-middleware-layer` skill for the full trust model, token shape, validation middleware and shared-secret coordination across `booking-service`/`admin-service`.** Short version: only `admin-service` (the designated issuing service) signs tokens; both services validate independently with the identical `JWT_SECRET`; always pin `algorithms: ['HS256']` explicitly on both sign and verify.
 
 ## Error Handling & Status Codes
 - `400` — validation failure (missing/malformed fields).
@@ -77,7 +68,7 @@ If `{{CONTESTED_ENTITY}}` is set, this is high-risk logic. **See the dedicated `
 - Never leak stack traces or raw Mongoose error objects in a response body — return a clean `{ error: string }` shape.
 
 ## Testing Expectations
-Per `.rule/testing-rules.md`, any service touching `{{CONTESTED_ENTITY}}` requires the deepest coverage in the repo:
+Per `.rule/testing-rules.md`, `booking-service` (which touches `TimeSlot`) requires the deepest coverage in the repo:
 - Every valid transition succeeds; every invalid transition is rejected with the right status.
 - **Concurrency test is mandatory (if a contested entity exists):** fire two genuinely simultaneous calls for the same resource (e.g. `Promise.all([...])` against the running server, not sequential `await`s) and assert exactly one succeeds.
 - Soft-delete: a deleted record is excluded from list/get results but its document still exists in the DB (assert both).

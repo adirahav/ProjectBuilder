@@ -7,75 +7,62 @@ references:
   - @state-management-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{GUARDED_ROUTES}}       — routes requiring an auth guard, and which role
-  {{UNGUARDED_ROUTES}}     — routes needing no auth check
-  {{MULTI_PHASE_FETCH}}    — any page needing staged/two-phase data fetching, if any
-  {{SPECIAL_ERROR_CODE}}   — a domain-specific conflict status code, if any (e.g. 409)
-  {{RTL_OR_LTR}}
-  {{SPATIAL_EXCEPTION}}    — component excluded from the page's normal direction, if any
-  {{HEADER_COMPONENT}}     — standardized page header component name
-  {{NAMING_SUFFIX}}        — page file naming convention, e.g. "Page.tsx"
-Ask the user: "Which pages require auth guards and for which role(s)?" "Any pages needing multi-phase/staged data fetching?" "What's your page file naming convention?"
--->
-
 # Page Layer Responsibilities
 1. **Authorization & Guards**
-- *Guarded pages:* {{GUARDED_ROUTES}} must verify the logged-in user's role from the store. Unauthorized access must trigger an immediate redirect to the login route.
-- *Unguarded pages:* {{UNGUARDED_ROUTES}} require no auth check at all. Do not add a logged-in-user check to these pages.
+- *Guarded pages (role `admin`):* `/admin` (Admin Appointments Dashboard), `/admin/services` (Admin Services Management) must verify the logged-in user's role from the store. Unauthorized access must trigger an immediate redirect to `/admin/login`.
+- *Unguarded pages:* `/` (Services List), `/services/:id/timeslots` (TimeSlot Picker), `/services/:id/timeslots/:timeSlotId/book` (Booking Form), `/booking/:appointmentId/confirmation` (Booking Confirmation), `/admin/login` (Admin Login) require no auth check at all. Do not add a logged-in-user check to these pages.
 - Don't build speculative `isLock`/`isComingSoon` feature-flag gating for features that don't exist — every feature in the product spec should be available at launch unless the spec says otherwise.
 
 2. **Data Orchestration (The "Smart" Hub)**
 - *Centralized Fetching:* Primary API calls occur at the Page level. Child components should receive "finished" data as props.
 - *Async Strategy:*
   - Use `useEffect` for initial mounting fetches.
-  - {{MULTI_PHASE_FETCH}} (if applicable) — treat these as separate phases so the page can render its structure before secondary/live data arrives.
-- *Loading UI:* The Page controls global loading states (Overlays/Skeletons) via `app.slice`. Any live/real-time data is owned by its dedicated slice (see `@state-management-layer/SKILL.md`), not by page-local state.
+  - The TimeSlot Picker page fetches in two phases: the `Service` summary first (so the page can render its header immediately), then the available `TimeSlots` for the selected date — treat these as separate phases so the page renders its structure before the slot grid arrives.
+- *Loading UI:* The Page controls global loading states (Overlays/Skeletons) via `app.slice`. `TimeSlot` state is owned by `timeSlot.slice.ts` (see `@state-management-layer/SKILL.md`), not by page-local state.
 
 3. **Event & Logic Handling**
 - *Action Controller:* Define event handlers (e.g., `handleApprove`, `handleSelect`, `handleCancel`) within the Page and pass them down.
 - *Computed State:* Perform data transformations (filtering, sorting, aggregations) before rendering children to keep child components "dumb" and presentational.
 - *Navigation:* All `react-router` logic (`useNavigate`, `useParams`) resides exclusively in the Page layer.
-- *Conflict Handling (if applicable):* On a `{{SPECIAL_ERROR_CODE}}` from any action, the page-level handler re-syncs the relevant slice from the response and shows a clear, hardcoded message.
+- *Conflict Handling:* On a `409` from any `TimeSlot` hold/book action, the page-level handler re-syncs `timeSlot.slice.ts` from the response and shows a clear, hardcoded Hebrew message.
 
 4. **Layout & Accessibility**
-- *Directional Integrity:* Every page root follows {{RTL_OR_LTR}} and proper text alignment — **except** {{SPATIAL_EXCEPTION}} (if any), which stays direction-independent (see `@ui-component-layer/SKILL.md`).
+- *Directional Integrity:* Every page root follows RTL (Hebrew) and proper text alignment — no spatial exceptions exist in this product (no seat-map-style layout requiring direction-independence).
 - *Responsive Shell:* Use a standardized container: `max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10`.
-- *Standard Components:* Every Page must utilize `{{HEADER_COMPONENT}}` for consistent titling, with the title/subtitle passed as plain, hardcoded strings (unless a translation/phrase layer exists — see `@ui-component-layer/SKILL.md`).
+- *Standard Components:* Every Page must utilize `PageHeader` for consistent titling, with the title/subtitle passed as plain, hardcoded Hebrew strings (no translation/phrase layer for v1).
 
 # Implementation Pattern
 ```typescript
-// ExampleGuardedPage.tsx — example of an auth-guarded page
-const ExampleGuardedPage = () => {
+// AdminAppointmentsDashboardPage.tsx — example of an auth-guarded page
+const AdminAppointmentsDashboardPage = () => {
   // 1. Hooks & Store
   const navigate = useNavigate()
   const loggedinUser = useStore((state) => state.loggedinUser)
-  const { data, isLoading, refresh } = useFetchList()
+  const { appointments, isLoading, refresh } = useFetchAppointments()
 
   // 2. Guard
-  if (!loggedinUser) return <Navigate to="/login" />
+  if (!loggedinUser) return <Navigate to="/admin/login" />
 
   // 3. Logic
-  const handleAction = async (payload) => {
-    await exampleService.save(payload)
+  const handleApprove = async (id) => {
+    await appointmentService.approve(id)
     refresh()
   }
 
   // 4. Render
   return (
     <main className="page-container animate-in fade-in">
-      <{{HEADER_COMPONENT}}
-        title="..."
-        subtitle="..."
+      <PageHeader
+        title="ניהול תורים"
+        subtitle="כל התורים במקום אחד"
       />
 
       {isLoading ? (
         <SkeletonGrid />
       ) : (
-        <PresentationalComponent
-          items={data}
-          onAction={handleAction}
+        <AppointmentsTable
+          items={appointments}
+          onApprove={handleApprove}
         />
       )}
     </main>
@@ -84,35 +71,36 @@ const ExampleGuardedPage = () => {
 ```
 
 ```typescript
-// ExampleUnguardedPage.tsx — example of an unguarded public page
-const ExampleUnguardedPage = () => {
+// TimeSlotPickerPage.tsx — example of an unguarded public page
+const TimeSlotPickerPage = () => {
   const { id } = useParams()
-  const { item, isLoading } = useFetchItem(id)
+  const { timeSlots, isLoading } = useFetchTimeSlots(id)
 
-  const handleRequest = async (payload) => {
+  const handleHold = async (timeSlotId) => {
     try {
-      await exampleService.request(id, payload)
+      await timeSlotService.hold(timeSlotId)
+      navigate(`/services/${id}/timeslots/${timeSlotId}/book`)
     } catch (err) {
-      if (err.response?.status === {{SPECIAL_ERROR_CODE}}) {
-        toast.error('...')
-        refresh() // re-sync the relevant slice from the server
+      if (err.response?.status === 409) {
+        toast.error('התור הזה כבר נתפס — בחר/י שעה אחרת')
+        refresh() // re-sync timeSlot.slice.ts from the server
       } else {
-        toast.error('...')
+        toast.error('משהו השתבש, נסה/י שוב')
       }
     }
   }
 
   return (
     <main className="page-container">
-      <{{HEADER_COMPONENT}} title="..." />
-      {isLoading ? <SkeletonGrid /> : <ItemView item={item} onSelect={handleRequest} />}
+      <PageHeader title="בחר/י שעה" />
+      {isLoading ? <SkeletonGrid /> : <TimeSlotGrid timeSlots={timeSlots} onSelect={handleHold} />}
     </main>
   )
 }
 ```
 
 # Business Rules
-- *Naming:* Files must use `PascalCase` and end with `{{NAMING_SUFFIX}}`.
+- *Naming:* Files must use `PascalCase` and end with `Page.tsx`.
 
 - *No Direct CSS:* All styling must be handled via Tailwind classes or the `cn` utility.
 

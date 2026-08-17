@@ -6,22 +6,11 @@ references:
   - @css-layer/SKILL.md
 examples:
    - input: "Create a functional icon button for closing a modal"
-     output: "<button onClick={onClose} className={cn('p-2 hover:bg-slate-100 rounded-full transition-colors')} aria-label='{{CLOSE_LABEL_TEXT}}' title='{{CLOSE_LABEL_TEXT}}'><X size={20} aria-hidden='true' /></button>"
+     output: "<button onClick={onClose} className={cn('p-2 hover:bg-slate-100 rounded-full transition-colors')} aria-label='סגור' title='סגור'><X size={20} aria-hidden='true' /></button>"
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders used in this file:
-  {{PROJECT_NAME}}          — the app's name
-  {{RTL_OR_LTR}}            — "RTL (Hebrew)" / "LTR" / "bidirectional"
-  {{PRIMARY_LANGUAGE}}      — e.g. Hebrew, English
-  {{MULTI_STATE_ENTITY}}    — a domain entity with a visual multi-state status (e.g. seat/order/ticket), if any — omit section 3b if none
-  {{STATUS_VALUES}}         — the entity's status enum (e.g. available/pending/taken)
-  {{KEY_FORMS_LIST}}        — the app's main forms needing aria-describedby error association
-Ask the user: "Is this app RTL or LTR (or both)?" / "Does any entity have a multi-state visual status that needs non-color cues?" / "What are the main forms in the app?"
--->
-
 # Accessibility & Inclusive Design Layer (A11y)
-*Objective:* Build digital experiences that are perceivable, operable, understandable, and robust for all users. This layer ensures {{PROJECT_NAME}} is not just "compliant" but truly inclusive by design.
+*Objective:* Build digital experiences that are perceivable, operable, understandable, and robust for all users. This layer ensures BookMe is not just "compliant" but truly inclusive by design.
 
 **Key Focus Areas:**
 - *WCAG 2.1 Level AA:* Strict adherence to color contrast (4.5:1), text scaling, and focus indicators.
@@ -55,24 +44,24 @@ Ask the user: "Is this app RTL or LTR (or both)?" / "Does any entity have a mult
 
 - *No Color-Only Cues:* Information must not be conveyed by color alone (e.g., an error should have an icon or text, not just red color).
 
-- *Multi-State Entity ({{PROJECT_NAME}}-specific — fill in if applicable):* If a domain entity like `{{MULTI_STATE_ENTITY}}` has a `status` (`{{STATUS_VALUES}}`), it must never rely on color alone. Each status should carry a distinct icon plus a text label reachable via tooltip/`aria-label`, so the UI is usable by colorblind users and in grayscale/high-contrast display modes.
+- *Multi-State Entities (BookMe-specific):* `TimeSlot` (`available`/`held`/`booked`) and `Appointment` (`pending`/`confirmed`/`completed`/`cancelled`) must never rely on color alone. Each status should carry a distinct icon plus a text label reachable via tooltip/`aria-label`, so the UI is usable by colorblind users and in grayscale/high-contrast display modes.
 
 - *Text Scaling:* Ensure layout remains functional when font size is increased by 200% via the Accessibility Menu or browser settings.
 
 ### 4. ARIA & Screen Reader Mastery
-- *Aria-Labels:* Every icon-only button must have a descriptive, hardcoded `aria-label` in `{{PRIMARY_LANGUAGE}}` (unless the project has a translation/phrase layer — see `ui-component-layer` skill).
+- *Aria-Labels:* Every icon-only button must have a descriptive, hardcoded `aria-label` in Hebrew (no translation/phrase layer for v1 — see `ui-component-layer` skill).
 
 - *Aria-Hidden:* Decorative icons and images that do not add information must have `aria-hidden="true"` to reduce screen reader noise.
 
 - *Live Regions:* Use `aria-live="polite"` for dynamic content updates (loading states, toasts, real-time status changes) so screen readers announce changes without the user needing to re-navigate.
 
-- *Error Association:* Every inline validation error must be linked to its input via `aria-describedby`, so screen readers announce the error when the field receives focus — not only when it's visually next to the field. Applies to every form in the app: {{KEY_FORMS_LIST}}.
+- *Error Association:* Every inline validation error must be linked to its input via `aria-describedby`, so screen readers announce the error when the field receives focus — not only when it's visually next to the field. Applies to every form in the app: the Booking Form (name, phone/email), the Admin Login form, and the Admin Services Management create/edit form.
 
 ### 5. Motion Sensitivity
 - *Respect `prefers-reduced-motion`:* When set, disable or drastically reduce animation-library transitions in favor of instant state changes. Motion must never be the only signal that a change occurred; it's an enhancement, not a requirement, for perceiving the update.
 
-### 6. Directional Accessibility ({{RTL_OR_LTR}})
-- *Directional Clarity:* Ensure the reading order for screen readers follows the {{RTL_OR_LTR}} flow.
+### 6. Directional Accessibility (RTL — Hebrew)
+- *Directional Clarity:* Ensure the reading order for screen readers follows the RTL flow.
 
 - *Logical Mapping:* Focus order must follow the visual flow for the project's primary direction.
 

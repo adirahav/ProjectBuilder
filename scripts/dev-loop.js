@@ -1,55 +1,25 @@
 #!/usr/bin/env node
 /**
- * TEMPLATE — this file is executable code, not fill-in-the-blank prose, so it
- * cannot be mechanically substituted like the .rule/.claude/skills/agents
- * templates. Only relevant if Part 1 Q9 says multi-agent; if single-agent,
- * delete this file (and the agents/ directory) instead of adapting it.
+ * Dev Loop Orchestrator — BookMe
  *
- * This is a whole-file REWRITE task, proportional to Part 1's answers:
- *   - Q7 (backend shape): every hardcoded service key/name below
- *     (MODEL_FOR, AGENT_IDENTITY, BACKEND_PORTS, API_CONTRACTS, ALL_AGENT_KEYS,
- *     the parallel runAgent() calls under "Step: Backend", makeReportPaths(),
- *     createLinearTickets()'s per-service createIssue() calls) must be
- *     regenerated for the real service list — one block per real service, not
- *     three. For a monolith backend, collapse all of this to a single service.
- *   - Q9 (issue tracker): the Linear-specific code (loadMcpLinear, all
- *     createLinearClient/getTeamStates/createLinearTickets/updateLinearIssue/
- *     waitForLinearIssueState functions) is only relevant if the user picked
- *     Linear. If another tracker, these need an equivalent client; if none,
- *     delete this code path and always use simulateTickets()/terminal approval.
- *   - Any deploy-gateway service (Part 1 Q7's "production gateway") should
- *     follow the common-service pattern below (no API contract, no DB) only
- *     if the new project actually has one — otherwise remove that branch.
- * Keep BACKEND_PORTS, API_CONTRACTS, and the agent-role list consistent with
- * agents/backend/CLAUDE.md and .rule/coding-rules.md's own service list.
- * Also rename the "Dev Loop Orchestrator — Reference App" title in the docstring
- * right below (and the banner("DEV LOOP ORCHESTRATOR — REFERENCE APP") call
- * further down in main()) to {{PROJECT_NAME}} — easy to miss inside a long
- * docstring rewrite, but it's real leftover text, not just a comment.
- * Delete this comment block once the rewrite is confirmed correct.
- */
-/**
- * Dev Loop Orchestrator — Reference App
- *
- * This repo is a monorepo: `frontend/` + `backend/` with three microservices
- * (`user-management-service`, `tour-service`, `common-service`). All three backend
- * services are built and run from here, via `agents/backend/CLAUDE.md` (one shared
- * prompt, parameterized per service). `common-service` is a stateless production
- * gateway (static hosting + reverse proxy) and only runs on tasks whose scope
- * includes it — typically deploy/production-setup tasks, not regular features.
+ * This repo is a monorepo: `frontend/` + `backend/` with two microservices
+ * (`booking-service`, `admin-service`). Both backend services are built and
+ * run from here, via `agents/backend/CLAUDE.md` (one shared prompt,
+ * parameterized per service). There is no gateway service and no external
+ * design source — the Frontend Agent designs the UI itself per
+ * `.rule/style-rules.md`. There is no issue tracker; task approval happens
+ * entirely through local plan files and terminal/chat approval gates.
  *
  * Loop per backlog item:
  *   1) Pick next task from .plan/000-backlog.md
- *   2) Read design files (raw_from_ai_studio/ or Figma if provided)
- *   3) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
- *   4) Launch the Frontend agent (builds UI, defines API contract(s))
- *   5) Launch Backend agents in parallel — user-management-service, tour-service,
- *      and (only when in scope) common-service — independent services, per
- *      .rule/architecture.md
- *   6) Launch QA validation
- *   7) Report done and wait for approval
- *   8) Launch Security audit
- *   9) Mark backlog item done and continue to next task
+ *   2) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
+ *   3) Launch the Frontend agent (builds UI per .rule/style-rules.md, defines API contract(s))
+ *   4) Launch Backend agents in parallel — booking-service and admin-service —
+ *      independent services, per .rule/architecture.md
+ *   5) Launch QA validation
+ *   6) Report done and wait for approval
+ *   7) Launch Security audit
+ *   8) Mark backlog item done and continue to next task
  */
 
 import { execSync, spawn } from "child_process"
@@ -65,64 +35,29 @@ process.chdir(__projectRoot)
 dotenv.config({ path: `.env.${process.env.NODE_ENV || "development"}` })
 
 // ─── Model mapping ──────────────────────────────────────────────────────────
-// Which Claude model each operation uses. Opus is reserved for the two
-// operations that write multi-file production code end-to-end (frontend,
-// backend x2) — that's where its extra reasoning actually pays for itself.
-// Everything else (planning, QA, security review, tickets, chat) is
-// judgment/analysis over work Claude (or a human) already reviews downstream,
-// so Sonnet 5 gets equivalent real-world quality at a fraction of the cost.
+// Which Claude model each operation uses. Opus is reserved for the operations
+// that write multi-file production code end-to-end (frontend, backend x2) —
+// that's where its extra reasoning actually pays for itself. Everything else
+// (planning, QA, security review, chat) is judgment/analysis over work Claude
+// (or a human) already reviews downstream, so Sonnet 5 gets equivalent
+// real-world quality at a fraction of the cost.
 // Single place to retune cost/quality per operation without hunting through
 // every spawnClaude() call site.
 const MODEL_FOR = {
-  planning:                  "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
-  "planning-revise":         "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
-  "ticket-creation":         "claude-sonnet-5", // askClaudeToCreateTickets (unused currently) — mechanical Linear calls
-  frontend:                  "claude-opus-5",   // Frontend Agent — multi-file code generation
-  "user-management-service": "claude-opus-5",   // Backend Agent — user-management-service — multi-file code generation
-  "tour-service":            "claude-opus-5",   // Backend Agent — tour-service — multi-file code generation
-  "common-service":          "claude-sonnet-5", // Backend Agent — common-service — single-file stateless proxy/static gateway, no business logic
-  qa:                        "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
-  security:                  "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
-  "orchestrator-chat":       "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
+  planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
+  "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
+  frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
+  "booking-service":   "claude-opus-5",   // Backend Agent — booking-service — multi-file code generation, owns TimeSlot concurrency logic
+  "admin-service":     "claude-opus-5",   // Backend Agent — admin-service — multi-file code generation (auth + dashboard aggregation)
+  qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
+  security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
+  "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
 }
 
 function modelFor(operation) {
   return MODEL_FOR[operation] || MODEL_FOR.frontend
 }
 
-function loadMcpLinear() {
-  try {
-    const mcp = JSON.parse(readFileSync(".mcp.json", "utf-8"))
-    const linear = mcp?.mcpServers?.linear || {}
-    const auth = linear?.headers?.Authorization || ""
-    const apiKey = auth.replace(/^Bearer\s+/i, "") || undefined
-    const teamId = linear.LINEAR_TEAM_ID || undefined
-    const projectId = linear.LINEAR_PROJECT_ID || undefined
-    const teamFile = linear.LINEAR_TEAM_FILE || undefined
-    const agentsTeam = teamFile && existsSync(teamFile)
-      ? JSON.parse(readFileSync(teamFile, "utf-8"))
-      : {}
-    return { apiKey, teamId, projectId, agentsTeam }
-  } catch {
-    return {}
-  }
-}
-
-// ============
-const LINEAR_ENABLED = String(process.env.VITE_LINEAR_ENABLED ?? "true").toLowerCase() !== "false"
-const FIGMA_ENABLED = String(process.env.VITE_FIGMA_ENABLED ?? "true").toLowerCase() !== "false"
-console.log("LINEAR_ENABLED=" + process.env.VITE_LINEAR_ENABLED)
-console.log("FIGMA_ENABLED=" + process.env.VITE_FIGMA_ENABLED)
-// ============
-
-const mcpLinear = loadMcpLinear()
-
-const FIGMA_URL = FIGMA_ENABLED ? (process.env.FIGMA_URL || getArg("--figma") || "") : ""
-const LINEAR_KEY = mcpLinear.apiKey
-const LINEAR_TEAM = mcpLinear.teamId
-
-const LINEAR_PROJECT = mcpLinear.projectId
-const LINEAR_AGENTS_TEAM = mcpLinear.agentsTeam
 const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || getArg("--claude-permission-mode") || "bypassPermissions"
 const CLAUDE_ALLOWED_TOOLS = process.env.CLAUDE_ALLOWED_TOOLS || getArg("--claude-allowed-tools")
 
@@ -131,17 +66,15 @@ const REPORTS_DIR = "docs/agent-reports"
 const COST_DIR = "docs/cost"
 const BACKLOG_FILE = `${PLAN_DIR}/000-backlog.md`
 const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
-const TICKETS_FILE = "docs/tickets.json"
 const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
-const ALL_AGENT_KEYS = ["orchestrator", "frontend", "user-management-service", "tour-service", "common-service", "qa", "security"]
+const ALL_AGENT_KEYS = ["orchestrator", "frontend", "booking-service", "admin-service", "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
-// ticket creation, or any agent step) picks up from the last completed step
-// instead of regenerating the plan / duplicating Linear tickets / rerunning
-// agents that already finished.
+// task-id assignment, or any agent step) picks up from the last completed step
+// instead of regenerating the plan or rerunning agents that already finished.
 
 function getStatePath(slug) {
   return `${STATE_DIR}/${slug}.json`
@@ -172,13 +105,12 @@ function clearTaskState(slug) {
 const RESET = "\x1b[0m"
 
 const AGENT_IDENTITY = {
-  "orchestrator":            { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
-  "frontend":                { icon: "🎨", color: "\x1b[35m", label: "frontend" },
-  "user-management-service": { icon: "🔧", color: "\x1b[34m", label: " 👥 user-management-service" },
-  "tour-service":            { icon: "🔧", color: "\x1b[34m", label: " 🚌 tour-service" },
-  "common-service":          { icon: "🔧", color: "\x1b[34m", label: " 🌐 common-service" },
-  "qa":                      { icon: "🐛", color: "\x1b[32m", label: "qa" },
-  "security":                { icon: "🛡️", color: "\x1b[36m", label: "security" },
+  "orchestrator":    { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
+  "frontend":        { icon: "🎨", color: "\x1b[35m", label: "frontend" },
+  "booking-service": { icon: "🔧", color: "\x1b[34m", label: " 📅 booking-service" },
+  "admin-service":   { icon: "🔧", color: "\x1b[34m", label: " 🔑 admin-service" },
+  "qa":              { icon: "🐛", color: "\x1b[32m", label: "qa" },
+  "security":        { icon: "🛡️", color: "\x1b[36m", label: "security" },
 }
 
 function agentPrefix(agentKey) {
@@ -341,19 +273,17 @@ function printCostTable(taskLabel) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  banner("DEV LOOP ORCHESTRATOR — REFERENCE APP")
+  banner("DEV LOOP ORCHESTRATOR — BOOKME")
 
   USD_TO_NIS = await fetchUsdToNis()
   log(`Exchange rate: 1 USD = ₪${USD_TO_NIS} (ILS)`)
 
   ensurePlanDirAndBacklog()
 
-  log(`Linear tickets: ${LINEAR_ENABLED ? "enabled" : "disabled (LINEAR_ENABLED=false) — skipping ticket creation"}`)
-  log(`Figma: ${FIGMA_ENABLED ? "enabled" : "disabled (FIGMA_ENABLED=false) — ignoring Figma links, using raw_from_ai_studio/ only"}`)
+  log("No issue tracker configured for this project — using local plan-file approval only.")
+  log("No design source configured — Frontend Agent designs the UI per .rule/style-rules.md.")
 
   const prd = readFileSync("docs/PRD.md", "utf-8")
-  const linearClient = LINEAR_ENABLED && LINEAR_KEY ? createLinearClient(LINEAR_KEY) : null
-  const linearStates = linearClient && LINEAR_TEAM ? await getTeamStates(linearClient, LINEAR_TEAM) : null
 
   let loopCount = 0
   while (true) {
@@ -375,7 +305,7 @@ async function main() {
     const ticketsResumable = planResumable && Boolean(state?.tickets)
     if (state) {
       if (planResumable) {
-        log(`Resuming task '${task.slug}' from saved state — reusing approved plan${ticketsResumable ? " and existing tickets" : ""}.`)
+        log(`Resuming task '${task.slug}' from saved state — reusing approved plan${ticketsResumable ? " and existing task ids" : ""}.`)
       } else if (draftResumable) {
         log(`Resuming task '${task.slug}' — reusing unapproved draft plan (still needs your APPROVED).`)
       } else {
@@ -389,8 +319,6 @@ async function main() {
 
     const branchName = `task/${task.slug}`
     createGitBranch(branchName)
-
-    const figmaUrl = FIGMA_ENABLED ? (task.figmaUrl || FIGMA_URL) : ""
 
     let planPath
     if (planResumable) {
@@ -406,7 +334,6 @@ async function main() {
         const planContent = await askClaudeForPlan({
           task,
           prd,
-          figmaUrl,
           planPath,
           previousPlans: readAllPlanFiles(),
           userInstructions,
@@ -418,7 +345,7 @@ async function main() {
         saveTaskState(task.slug, state)
       }
       writeFileSync(LATEST_PLAN_FILE, readFileSync(planPath, "utf-8"), "utf-8")
-      await reviewPlanUntilApproved({ task, prd, figmaUrl, planPath, userInstructions })
+      await reviewPlanUntilApproved({ task, prd, planPath, userInstructions })
       state = { slug: task.slug, planPath, approved: true }
       saveTaskState(task.slug, state)
     }
@@ -439,17 +366,9 @@ async function main() {
     let tickets
     if (ticketsResumable) {
       tickets = state.tickets
-      writeFileSync(TICKETS_FILE, JSON.stringify(tickets, null, 2))
-      log("Tickets reused from saved state — no new Linear tickets created.")
-    } else if (linearClient && LINEAR_TEAM) {
-      tickets = await createLinearTickets({ client: linearClient, teamId: LINEAR_TEAM, states: linearStates, task, planPath })
-      writeFileSync(TICKETS_FILE, JSON.stringify(tickets, null, 2))
-      state = { ...state, tickets }
-      saveTaskState(task.slug, state)
+      log("Task ids reused from saved state.")
     } else {
-      warn("No Linear configured. Using simulated tickets after terminal approval.")
       tickets = simulateTickets(task.slug)
-      writeFileSync(TICKETS_FILE, JSON.stringify(tickets, null, 2))
       state = { ...state, tickets }
       saveTaskState(task.slug, state)
     }
@@ -465,9 +384,8 @@ async function main() {
     } else {
       reports = makeReportPaths(task.slug, {
         frontend: tickets.frontend.id,
-        userManagementService: tickets.userManagementService.id,
-        tourService: tickets.tourService.id,
-        commonService: tickets.commonService.id,
+        bookingService: tickets.bookingService.id,
+        adminService: tickets.adminService.id,
         qa: tickets.qa.id,
         security: tickets.security.id,
       })
@@ -476,19 +394,14 @@ async function main() {
     }
 
     // ── Step: Frontend ──────────────────────────────────────────────────────
-    if (linearClient && linearStates?.inProgress) {
-      await updateLinearIssue(linearClient, tickets.frontend.issueId, { stateId: linearStates.inProgress })
-    }
-
     if (inScope(task, "frontend")) {
       await runAgent({
         systemPrompt: "agents/frontend/CLAUDE.md",
         input: [
           `You are the Frontend Agent.`,
           `Task: ${task.title}`,
-          `Linear ticket: ${tickets.frontend.url}`,
-          figmaUrl ? `Figma: ${figmaUrl}` : "",
-          `Design source: raw_from_ai_studio/`,
+          `Task id: ${tickets.frontend.id}`,
+          `No external design source is provided — design the UI per .rule/style-rules.md.`,
           `Approved plan: ${planPath}`,
           `Follow your CLAUDE.md instructions exactly.`,
           `End your final response with exact line: STATUS: DONE`,
@@ -503,96 +416,53 @@ async function main() {
       writeSkippedReport(reports.fe, "Frontend Agent")
     }
 
-    if (linearClient && linearStates?.done) {
-      await updateLinearIssue(linearClient, tickets.frontend.issueId, { stateId: linearStates.done })
-      if (linearStates.inProgress) {
-        await updateLinearIssue(linearClient, tickets.userManagementService.issueId, { stateId: linearStates.inProgress })
-        await updateLinearIssue(linearClient, tickets.tourService.issueId, { stateId: linearStates.inProgress })
-        if (inScope(task, "common-service")) {
-          await updateLinearIssue(linearClient, tickets.commonService.issueId, { stateId: linearStates.inProgress })
-        }
-      }
-    }
-
-    // ── Step: Backend (all microservices, in parallel — only those in scope) ──
+    // ── Step: Backend (both microservices, in parallel — only those in scope) ──
     log("Launching backend agents (only those in scope, in parallel)...")
 
     await Promise.all([
-      inScope(task, "user-management-service")
+      inScope(task, "booking-service")
         ? runAgent({
             systemPrompt: "agents/backend/CLAUDE.md",
             input: [
               `You are the Backend Agent.`,
               `Task: ${task.title}`,
-              `Linear ticket: ${tickets.userManagementService.url}`,
-              `Service: user-management-service`,
-              `Port: ${BACKEND_PORTS.userManagementService}`,
-              `API contract: ${API_CONTRACTS.userManagementService}`,
+              `Task id: ${tickets.bookingService.id}`,
+              `Service: booking-service`,
+              `Port: ${BACKEND_PORTS.bookingService}`,
+              `API contract: ${API_CONTRACTS.bookingService}`,
               `Approved plan: ${planPath}`,
               `Follow your CLAUDE.md instructions exactly.`,
               `End your final response with exact line: STATUS: DONE`,
             ].join("\n"),
-            outputFile: reports.userManagement,
+            outputFile: reports.bookingService,
             doneMarker: "STATUS: DONE",
-            label: "Backend Agent — user-management-service",
-            agentKey: "user-management-service",
+            label: "Backend Agent — booking-service",
+            agentKey: "booking-service",
           })
-        : (logSkip("Backend Agent — user-management-service", "out of scope for this task"),
-           writeSkippedReport(reports.userManagement, "Backend Agent — user-management-service")),
-      inScope(task, "tour-service")
+        : (logSkip("Backend Agent — booking-service", "out of scope for this task"),
+           writeSkippedReport(reports.bookingService, "Backend Agent — booking-service")),
+      inScope(task, "admin-service")
         ? runAgent({
             systemPrompt: "agents/backend/CLAUDE.md",
             input: [
               `You are the Backend Agent.`,
               `Task: ${task.title}`,
-              `Linear ticket: ${tickets.tourService.url}`,
-              `Service: tour-service`,
-              `Port: ${BACKEND_PORTS.tourService}`,
-              `API contract: ${API_CONTRACTS.tourService}`,
+              `Task id: ${tickets.adminService.id}`,
+              `Service: admin-service`,
+              `Port: ${BACKEND_PORTS.adminService}`,
+              `API contract: ${API_CONTRACTS.adminService}`,
               `Approved plan: ${planPath}`,
               `Follow your CLAUDE.md instructions exactly.`,
               `End your final response with exact line: STATUS: DONE`,
             ].join("\n"),
-            outputFile: reports.tourService,
+            outputFile: reports.adminService,
             doneMarker: "STATUS: DONE",
-            label: "Backend Agent — tour-service",
-            agentKey: "tour-service",
+            label: "Backend Agent — admin-service",
+            agentKey: "admin-service",
           })
-        : (logSkip("Backend Agent — tour-service", "out of scope for this task"),
-           writeSkippedReport(reports.tourService, "Backend Agent — tour-service")),
-      inScope(task, "common-service")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Linear ticket: ${tickets.commonService.url}`,
-              `Service: common-service`,
-              `Port: ${BACKEND_PORTS.commonService}`,
-              `No API contract for this service — it is a stateless production gateway (static hosting + reverse proxy), not a business-logic service.`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.commonService,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — common-service",
-            agentKey: "common-service",
-          })
-        : (logSkip("Backend Agent — common-service", "out of scope for this task"),
-           writeSkippedReport(reports.commonService, "Backend Agent — common-service")),
+        : (logSkip("Backend Agent — admin-service", "out of scope for this task"),
+           writeSkippedReport(reports.adminService, "Backend Agent — admin-service")),
     ])
-
-    if (linearClient && linearStates?.done) {
-      await updateLinearIssue(linearClient, tickets.userManagementService.issueId, { stateId: linearStates.done })
-      await updateLinearIssue(linearClient, tickets.tourService.issueId, { stateId: linearStates.done })
-      if (inScope(task, "common-service")) {
-        await updateLinearIssue(linearClient, tickets.commonService.issueId, { stateId: linearStates.done })
-      }
-      if (linearStates.inProgress) {
-        await updateLinearIssue(linearClient, tickets.qa.issueId, { stateId: linearStates.inProgress })
-      }
-    }
 
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
@@ -601,12 +471,11 @@ async function main() {
         input: [
           `You are the QA Agent.`,
           `Task: ${task.title}`,
-          `Linear ticket: ${tickets.qa.url}`,
+          `Task id: ${tickets.qa.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.userManagementService}`,
-          `- ${API_CONTRACTS.tourService}`,
-          `common-service has no API contract — it's a stateless gateway; verify its proxy/static behavior directly if it's in scope for this task.`,
+          `- ${API_CONTRACTS.bookingService}`,
+          `- ${API_CONTRACTS.adminService}`,
           `Run validation across frontend, all in-scope backend services, and e2e.`,
           `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -620,39 +489,20 @@ async function main() {
       writeSkippedReport(reports.qa, "QA Agent")
     }
 
-    if (linearClient) {
-      const reviewState = linearStates?.inReview || linearStates?.todo
-      if (reviewState) {
-        await updateLinearIssue(linearClient, tickets.qa.issueId, { stateId: reviewState })
-      }
-      log("Feature gate: approve completion by moving QA ticket to Done in Linear.")
-      await waitForLinearIssueState({
-        client: linearClient,
-        issueId: tickets.qa.issueId,
-        targetKinds: ["completed", "done"],
-        label: `${tickets.qa.id} feature approval`,
-      })
-    } else {
-      await waitForApprovalWithChat({ task, tickets, planPath })
-    }
+    await waitForApprovalWithChat({ task, tickets, planPath })
 
     // ── Step: Security ───────────────────────────────────────────────────────
-    if (linearClient && linearStates?.inProgress) {
-      await updateLinearIssue(linearClient, tickets.security.issueId, { stateId: linearStates.inProgress })
-    }
-
     if (inScope(task, "security")) {
       await runAgent({
         systemPrompt: "agents/security/CLAUDE.md",
         input: [
           `You are the Security Agent.`,
           `Task: ${task.title}`,
-          `Linear ticket: ${tickets.security.url}`,
+          `Task id: ${tickets.security.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.userManagementService}`,
-          `- ${API_CONTRACTS.tourService}`,
-          `common-service has no API contract — if it's in scope for this task, audit it as a gateway (open-proxy/SSRF risk, unmodified Authorization header passthrough) per agents/security/CLAUDE.md.`,
+          `- ${API_CONTRACTS.bookingService}`,
+          `- ${API_CONTRACTS.adminService}`,
           `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
           `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -664,10 +514,6 @@ async function main() {
     } else {
       logSkip("Security Agent", "out of scope for this task")
       writeSkippedReport(reports.security, "Security Agent")
-    }
-
-    if (linearClient && linearStates?.done) {
-      await updateLinearIssue(linearClient, tickets.security.issueId, { stateId: linearStates.done })
     }
 
     await markPlanStatus(planPath, "done")
@@ -687,8 +533,8 @@ function ensurePlanDirAndBacklog() {
   }
 }
 
-// Which of the 5 gated agents (frontend/user-management-service/tour-service/
-// qa/security) a task actually needs, read from the backlog line's `scope:`
+// Which of the 5 gated agents (frontend/booking-service/admin-service/qa/
+// security) a task actually needs, read from the backlog line's `scope:`
 // field (comma-separated agent keys, or "none" for zero of them). No
 // `scope:` field at all means "unknown scope" — run everything, since that's
 // the only safe default when nobody has classified the task yet.
@@ -738,18 +584,16 @@ function getNextBacklogTask() {
     const parts = raw.split("|").map((p) => p.trim()).filter(Boolean)
     const title = parts[0]
 
-    let figmaUrl = ""
     let scopeRaw = ""
     for (const p of parts.slice(1)) {
       const kv = p.split(":")
       if (kv.length < 2) continue
       const key = kv[0].trim().toLowerCase()
       const value = kv.slice(1).join(":").trim()
-      if (key === "figma") figmaUrl = value
       if (key === "scope") scopeRaw = value
     }
 
-    return { lineIndex: i, line, title, slug: slugify(title), figmaUrl, scope: parseScope(scopeRaw) }
+    return { lineIndex: i, line, title, slug: slugify(title), scope: parseScope(scopeRaw) }
   }
 
   return null
@@ -801,41 +645,32 @@ function makeReportPaths(slug, ticketIds) {
   const date = new Date().toISOString().slice(0, 10)
   return {
     fe:             `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
-    userManagement: `${REPORTS_DIR}/${date}-${ticketIds.userManagementService}-${slug}-user-management-service.md`,
-    tourService:    `${REPORTS_DIR}/${date}-${ticketIds.tourService}-${slug}-tour-service.md`,
-    commonService:  `${REPORTS_DIR}/${date}-${ticketIds.commonService}-${slug}-common-service.md`,
+    bookingService: `${REPORTS_DIR}/${date}-${ticketIds.bookingService}-${slug}-booking-service.md`,
+    adminService:   `${REPORTS_DIR}/${date}-${ticketIds.adminService}-${slug}-admin-service.md`,
     qa:             `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
     security:       `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
   }
 }
 
 const API_CONTRACTS = {
-  userManagementService: "docs/api-contract/api-contract.user-management-service.yaml",
-  tourService:            "docs/api-contract/api-contract.tour-service.yaml",
+  bookingService: "docs/api-contract/api-contract.booking-service.yaml",
+  adminService:   "docs/api-contract/api-contract.admin-service.yaml",
 }
 
 const BACKEND_PORTS = {
-  userManagementService: 3032,
-  tourService: 3033,
-  commonService: 3034,
+  bookingService: 4001,
+  adminService: 4002,
 }
 
 // ─── Claude planning ──────────────────────────────────────────────────────────
 
-async function askClaudeForPlan({ task, prd, figmaUrl, planPath, previousPlans, userInstructions }) {
+async function askClaudeForPlan({ task, prd, planPath, previousPlans, userInstructions }) {
   const prevList = previousPlans.map((p) => `- ${p.name}`).join("\n") || "(none)"
-  const figmaTaskLine = figmaUrl ? `- figma: ${figmaUrl}` : "- figma: (none provided)"
-  const designGuidance = figmaUrl
-    ? [
-        "Use your Figma tool to discover and inspect relevant frames for this task.",
-        "Also read relevant design files from raw_from_ai_studio/ if available.",
-        "In the plan, include a short section listing selected frames (name + id).",
-      ].join("\n")
-    : [
-        "No Figma link was provided for this task.",
-        "Read relevant design files from raw_from_ai_studio/ (discovery allowed).",
-        "Call out any UI assumptions in Open Questions.",
-      ].join("\n")
+  const designGuidance = [
+    "No external design source is provided for this project.",
+    "Design the UI yourself per .rule/style-rules.md.",
+    "Call out any UI assumptions in Open Questions.",
+  ].join("\n")
 
   const args = [
     "--model", modelFor("planning"),
@@ -853,7 +688,6 @@ async function askClaudeForPlan({ task, prd, figmaUrl, planPath, previousPlans, 
 Task selected from backlog:
 - title: ${task.title}
 - slug: ${task.slug}
-${figmaTaskLine}
 
 Existing plans in .plan:
 ${prevList}
@@ -870,7 +704,6 @@ Plan requirements:
 - Use required metadata fields and required sections from .rule/planning-rules.md
 - Status must start as draft
 - Use repository-relative paths only
-- Note which design files are relevant to this task
 - Open Questions section: each question gets exactly ONE answer line, formatted "- Recommended: <answer>". Do not add a second line repeating/labeling that same answer again (e.g. a further "Recommended answer: ..." bullet) — one line per question, period.
 - Do NOT write a "*HUMAN ANSWER:*" line on this draft — you have not received any human review yet. Older plans in .plan/ may show that line because a real human typed a real answer during their review; it is a record of that event, not boilerplate to reproduce.
 - Scope-Agents metadata field is load-bearing: the orchestrator will run ONLY the agents you list there (plus qa unless you deliberately omit it). Get this right — cross-check it against your own Risks section before finalizing (a backend service flagged as a risk there must be included even if you also wrote "no new endpoints expected").
@@ -879,7 +712,7 @@ ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : 
   const rawStdout = await spawnClaude(args, input, { agentKey: "orchestrator", extraEnv: { CLAUDE_AGENT_ROLE: "orchestrator" } })
   if (!rawStdout) {
     warn("Claude unavailable for planning; using fallback plan template.")
-    return generatePlanFallback({ task, figmaUrl })
+    return generatePlanFallback({ task })
   }
   const stdout = recordCost("orchestrator", "Orchestrator (planning)", rawStdout)
   logLastCost("Orchestrator (planning)")
@@ -892,9 +725,7 @@ ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : 
   return stdout
 }
 
-async function askClaudeToRevisePlan({ task, prd, figmaUrl, planPath, currentPlan, feedback, userInstructions }) {
-  const figmaTaskLine = figmaUrl ? `- figma: ${figmaUrl}` : "- figma: (none provided)"
-
+async function askClaudeToRevisePlan({ task, prd, planPath, currentPlan, feedback, userInstructions }) {
   const args = [
     "--model", modelFor("planning-revise"),
     "--permission-mode", CLAUDE_PERMISSION_MODE,
@@ -911,7 +742,6 @@ Revise this existing plan based on latest user feedback and latest plan-file edi
 Task:
 - title: ${task.title}
 - slug: ${task.slug}
-${figmaTaskLine}
 
 Plan path: ${planPath}
 
@@ -938,8 +768,8 @@ ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : 
   return stdout.trim() || null
 }
 
-async function reviewPlanUntilApproved({ task, prd, figmaUrl, planPath, userInstructions }) {
-  log("Plan gate: review and refine. Tickets will be created only after terminal APPROVED.")
+async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }) {
+  log("Plan gate: review and refine. The task proceeds only after terminal APPROVED.")
 
   while (true) {
     const answer = await askUserInput(
@@ -958,7 +788,7 @@ async function reviewPlanUntilApproved({ task, prd, figmaUrl, planPath, userInst
     }
 
     const feedback = answer.trim() || "No extra terminal feedback was given (human pressed Enter without typing anything). Re-read the latest plan file and improve clarity and completeness — this is NOT an answer to any Open Question, so do not add or infer any *HUMAN ANSWER:* line."
-    const revised = await askClaudeToRevisePlan({ task, prd, figmaUrl, planPath, currentPlan, feedback, userInstructions })
+    const revised = await askClaudeToRevisePlan({ task, prd, planPath, currentPlan, feedback, userInstructions })
     if (!revised) {
       warn("Could not auto-revise the plan (Claude unavailable). You can edit the plan file manually, then continue review.")
       continue
@@ -970,197 +800,18 @@ async function reviewPlanUntilApproved({ task, prd, figmaUrl, planPath, userInst
   }
 }
 
-// ─── Tickets ──────────────────────────────────────────────────────────────────
-
-async function askClaudeToCreateTickets({ teamId, task, planPath, userInstructions }) {
-  const plan = existsSync(planPath) ? readFileSync(planPath, "utf-8") : ""
-  const args = [
-    "--model", modelFor("ticket-creation"),
-    "--permission-mode", CLAUDE_PERMISSION_MODE,
-    "--add-dir", process.cwd(),
-    "--system-prompt", "agents/orchestrator/CLAUDE.md",
-    "--print",
-  ]
-  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
-
-  const input = `Using your Linear tool, create six issues in team ${teamId} for this task:
-- ${task.title}
-
-Plan file: ${planPath}
-Plan content:
-${plan}
-
-Create exactly:
-1) Frontend implementation ticket
-2) Backend ticket — user-management-service (port ${BACKEND_PORTS.userManagementService})
-3) Backend ticket — tour-service (port ${BACKEND_PORTS.tourService})
-4) Backend ticket — common-service (port ${BACKEND_PORTS.commonService}) — stateless production gateway, no API contract, no database
-5) QA / E2E validation ticket
-6) Security audit ticket
-
-Use Todo state and medium priority.
-${LINEAR_PROJECT ? `Assign all issues to project: ${LINEAR_PROJECT}` : ""}
-${userInstructions ? `\nUser instructions for this run:\n${userInstructions}\n` : ""}
-Output exactly this block and nothing else around it:
-TICKETS_JSON
-{"frontend":{"id":"<identifier>","issueId":"<uuid>","url":"<url>"},"userManagementService":{"id":"<identifier>","issueId":"<uuid>","url":"<url>"},"tourService":{"id":"<identifier>","issueId":"<uuid>","url":"<url>"},"commonService":{"id":"<identifier>","issueId":"<uuid>","url":"<url>"},"qa":{"id":"<identifier>","issueId":"<uuid>","url":"<url>"},"security":{"id":"<identifier>","issueId":"<uuid>","url":"<url>"}}
-END_TICKETS_JSON`
-
-  const stdout = await spawnClaude(args, input, { agentKey: "orchestrator", extraEnv: { CLAUDE_AGENT_ROLE: "orchestrator" } })
-  if (!stdout) return null
-  return parseTicketsFromOutput(stdout)
-}
-
-function parseTicketsFromOutput(stdout) {
-  const match = stdout.match(/TICKETS_JSON\s*\n({[\s\S]+?})\s*\nEND_TICKETS_JSON/)
-  if (!match) return null
-  try {
-    const parsed = JSON.parse(match[1])
-    if (!parsed.frontend || !parsed.userManagementService || !parsed.tourService || !parsed.commonService || !parsed.qa || !parsed.security) return null
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-// ─── Linear ───────────────────────────────────────────────────────────────────
-
-function createLinearClient(apiKey) {
-  const headers = { "Content-Type": "application/json", Authorization: apiKey }
-
-  return {
-    async graphql(query, variables = {}) {
-      const body = JSON.stringify({ query, variables })
-      const res = await fetch("https://api.linear.app/graphql", { method: "POST", headers, body })
-      const json = await res.json()
-      if (json?.errors?.length) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`)
-      return json.data
-    },
-  }
-}
-
-async function getTeamStates(client, teamId) {
-  const query = `
-    query TeamStates($teamId: String!) {
-      team(id: $teamId) {
-        states { nodes { id name type } }
-      }
-    }
-  `
-  const data = await client.graphql(query, { teamId })
-  const nodes = data?.team?.states?.nodes || []
-  return {
-    todo:       findStateId(nodes, ["unstarted", "backlog", "todo", "triage"]),
-    inProgress: findStateId(nodes, ["started", "in progress", "inprogress", "doing"]),
-    inReview:   findStateId(nodes, ["in review", "review", "for review"]),
-    done:       findStateId(nodes, ["completed", "done"]),
-  }
-}
-
-function findStateId(nodes, candidates) {
-  const lowered = candidates.map((x) => x.toLowerCase())
-  for (const node of nodes) {
-    const name = String(node?.name || "").toLowerCase()
-    const type = String(node?.type || "").toLowerCase()
-    if (lowered.includes(type) || lowered.includes(name)) return node.id
-  }
-  return undefined
-}
-
-async function createLinearTickets({ client, teamId, states, task, planPath }) {
-  const plan = existsSync(planPath) ? readFileSync(planPath, "utf-8") : ""
-
-  async function createIssue(title, description, role) {
-    const query = `
-      mutation CreateIssue($input: IssueCreateInput!) {
-        issueCreate(input: $input) {
-          success
-          issue { id identifier url }
-        }
-      }
-    `
-    const input = { teamId, title, description, priority: 2 }
-    if (states?.todo) input.stateId = states.todo
-    if (LINEAR_PROJECT) input.projectId = LINEAR_PROJECT
-    const assigneeId = LINEAR_AGENTS_TEAM?.[role]?.linearUserId
-    if (assigneeId) input.assigneeId = assigneeId
-    const data = await client.graphql(query, { input })
-    const issue = data?.issueCreate?.issue
-    if (!issue) throw new Error("Linear API error: issueCreate returned no issue")
-    return issue
-  }
-
-  const planBlock = plan.trim()
-    ? `## Plan (\`${planPath}\`)\n\n${plan.trim()}`
-    : `Plan: ${planPath} (file not found on disk)`
-
-  const fe  = await createIssue(`[FE] ${task.title}`, `Implement frontend scope for:\n${task.title}\n\n${planBlock}`, "frontend-user")
-  const um  = await createIssue(`[BE] user-management-service — ${task.title}`, `Implement user-management-service (port ${BACKEND_PORTS.userManagementService}) for:\n${task.title}\n\nAPI contract: ${API_CONTRACTS.userManagementService}\n\n${planBlock}`, "backend-user")
-  const ts  = await createIssue(`[BE] tour-service — ${task.title}`, `Implement tour-service (port ${BACKEND_PORTS.tourService}) for:\n${task.title}\n\nAPI contract: ${API_CONTRACTS.tourService}\n\n${planBlock}`, "backend-user")
-  const cs  = await createIssue(`[BE] common-service — ${task.title}`, `Implement common-service (port ${BACKEND_PORTS.commonService}) for:\n${task.title}\n\nStateless production gateway — no API contract, no database. See agents/backend/CLAUDE.md's common-service section.\n\n${planBlock}`, "backend-user")
-  const qa  = await createIssue(`[QA] ${task.title}`, `Validate feature and run E2E for:\n${task.title}\n\n${planBlock}`, "qa-user")
-  const sec = await createIssue(`[SEC] ${task.title}`, `Run security audit across frontend, both backend services, and API contracts for:\n${task.title}\n\n${planBlock}`, "security-user")
-
-  return {
-    frontend:               { id: fe.identifier, issueId: fe.id, url: fe.url },
-    userManagementService:  { id: um.identifier, issueId: um.id, url: um.url },
-    tourService:            { id: ts.identifier, issueId: ts.id, url: ts.url },
-    commonService:          { id: cs.identifier, issueId: cs.id, url: cs.url },
-    qa:                     { id: qa.identifier, issueId: qa.id, url: qa.url },
-    security:               { id: sec.identifier, issueId: sec.id, url: sec.url },
-  }
-}
-
-async function getLinearIssueState(client, issueId) {
-  const query = `
-    query IssueState($issueId: String!) {
-      issue(id: $issueId) {
-        id identifier
-        state { id name type }
-      }
-    }
-  `
-  const data = await client.graphql(query, { issueId })
-  return data?.issue?.state || null
-}
-
-async function waitForLinearIssueState({ client, issueId, targetKinds, label }) {
-  const targets = targetKinds.map((x) => x.toLowerCase())
-  log(`Waiting for Linear approval: ${label}`)
-  while (true) {
-    const state = await getLinearIssueState(client, issueId)
-    const type = String(state?.type || "").toLowerCase()
-    const name = String(state?.name || "").toLowerCase()
-    if (targets.includes(type) || targets.includes(name)) {
-      log(`Linear gate passed: ${label} -> ${state?.name || state?.type}`)
-      return
-    }
-    await sleep(8000)
-  }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function updateLinearIssue(client, issueId, input) {
-  const query = `
-    mutation UpdateIssue($issueId: String!, $input: IssueUpdateInput!) {
-      issueUpdate(id: $issueId, input: $input) { success }
-    }
-  `
-  await client.graphql(query, { issueId, input })
-}
+// ─── Local task identifiers ─────────────────────────────────────────────────
+// No issue tracker is configured for this project, so agent steps are keyed
+// by simple local task identifiers instead of tickets in an external system.
 
 function simulateTickets(slug) {
   const up = slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "TASK"
   return {
-    frontend:              { id: `${up}-FE`,  issueId: "sim-fe",  url: `https://linear.app/demo/issue/${up}-FE` },
-    userManagementService: { id: `${up}-UM`,  issueId: "sim-um",  url: `https://linear.app/demo/issue/${up}-UM` },
-    tourService:           { id: `${up}-TS`,  issueId: "sim-ts",  url: `https://linear.app/demo/issue/${up}-TS` },
-    commonService:         { id: `${up}-CS`,  issueId: "sim-cs",  url: `https://linear.app/demo/issue/${up}-CS` },
-    qa:                    { id: `${up}-QA`,  issueId: "sim-qa",  url: `https://linear.app/demo/issue/${up}-QA` },
-    security:              { id: `${up}-SEC`, issueId: "sim-sec", url: `https://linear.app/demo/issue/${up}-SEC` },
+    frontend:       { id: `${up}-FE` },
+    bookingService: { id: `${up}-BK` },
+    adminService:   { id: `${up}-AD` },
+    qa:             { id: `${up}-QA` },
+    security:       { id: `${up}-SEC` },
   }
 }
 
@@ -1577,14 +1228,14 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
 
 // ─── Plan fallback ────────────────────────────────────────────────────────────
 
-function generatePlanFallback({ task, figmaUrl }) {
+function generatePlanFallback({ task }) {
   const today = new Date().toISOString().slice(0, 10)
   return `# Plan: ${task.title}
 
 Status: draft
 Owner: Orchestrator
 Last updated: ${today}
-Scope-Agents: frontend,user-management-service,tour-service,qa,security
+Scope-Agents: frontend,booking-service,admin-service,qa,security
 
 ## Goal
 Deliver ${task.title} in the existing product.
@@ -1595,7 +1246,7 @@ Deliver ${task.title} in the existing product.
 
 ## Assumptions
 - Existing app and test setup are functional
-- Design source: raw_from_ai_studio/${figmaUrl ? `\n- Figma: ${figmaUrl}` : ""}
+- No external design source — Frontend Agent designs the UI per .rule/style-rules.md
 
 ## Open Questions
 - Should this feature include analytics events? Recommended: no for first increment.
@@ -1603,17 +1254,17 @@ Deliver ${task.title} in the existing product.
 
 ## Steps
 1. Frontend agent implements UI and defines API contract(s) if needed.
-2. Backend agents (user-management-service, tour-service) run in parallel — independent microservices.
+2. Backend agents (booking-service, admin-service) run in parallel — independent microservices.
 3. QA agent runs unit, integration, and e2e checks across frontend and both backend services.
 4. Security agent audits frontend, both backend services, and API contracts.
 
 ## Validation
 - frontend: npm --prefix frontend run lint && npm --prefix frontend run build && npm --prefix frontend run test
-- backend/user-management-service: npm --prefix backend/user-management-service run test
-- backend/tour-service: npm --prefix backend/tour-service run test
+- backend/booking-service: npm --prefix backend/booking-service run test
+- backend/admin-service: npm --prefix backend/admin-service run test
 
 ## Risks
-- Seat-lifecycle concurrency (tour-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
+- TimeSlot concurrency (booking-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
 - Existing tests may fail due to unrelated baseline issues.
 
 ## Rollout Order
@@ -1624,7 +1275,7 @@ Deliver ${task.title} in the existing product.
 
 ## Rollback
 - Revert branch commits for this task.
-- Restore previous ticket states and mark plan superseded if replaced.
+- Mark plan superseded if replaced.
 `
 }
 
@@ -1703,12 +1354,11 @@ async function waitForApprovalWithChat({ task, tickets, planPath }) {
     const context = `
 Current task: ${task.title}
 Plan: ${planPath}
-Tickets (may be simulated): ${JSON.stringify(tickets, null, 2)}
-Tickets file: ${TICKETS_FILE}
+Task ids (local, no issue tracker): ${JSON.stringify(tickets, null, 2)}
 
 The user says: "${answer}"
 
-Act on the request. If you create real Linear tickets, save them to ${TICKETS_FILE}.
+Act on the request.
 When done responding, print exactly: AWAITING_APPROVAL
 Do NOT print APPROVED unless the user has explicitly said the task is complete.
 `.trim()

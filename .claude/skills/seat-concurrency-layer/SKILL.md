@@ -8,105 +8,105 @@ references:
   - @agents/security/CLAUDE.md
 ---
 
-<!--
-TEMPLATE — fill in ONLY if this project has a contested/limited resource (inventory, seats, slots, tickets, coupons, etc.). If not, delete this skill file and its references from other skills.
-Placeholders:
-  {{CONTESTED_ENTITY}}     — e.g. Seat, InventoryItem, Slot, Ticket
-  {{STATUS_VALUES}}        — the entity's status enum, e.g. available/pending/taken
-  {{ACTIONS_TABLE}}        — table of action / transition / atomic filter, one row per status-changing action
-  {{MULTI_DOC_ACTION}}     — the one action (if any) touching two documents at once, e.g. "swap-move"
-  {{RENAME_SKILL_TO}}      — suggest renaming this skill/folder to "<entity>-concurrency-layer" for the new project
-Ask the user: "Is there a resource with race-condition risk (inventory, seats, slots, tickets)?" "What are its valid status transitions and which actions trigger them?" "Is there any action that must change two records atomically together?"
--->
+# TimeSlot Concurrency Layer
+*Goal:* Guarantee that a `TimeSlot` can never be claimed by two customers at once, no matter how close together the requests arrive — without resorting to locks, queues, or anything that would make the UI feel slow or unresponsive.
 
-# {{CONTESTED_ENTITY}} Concurrency Layer
-*Goal:* Guarantee that a `{{CONTESTED_ENTITY}}` can never be claimed by two actors/actions at once, no matter how close together the requests arrive — without resorting to locks, queues, or anything that would make the UI feel slow or unresponsive.
-
-**Why this exists as its own skill, not just a note in `backend-service-layer`:** most bugs are inconvenient. A double-allocated `{{CONTESTED_ENTITY}}` is the one bug that reaches a real person expecting something that's no longer available. It gets its own skill because it deserves a slower, more deliberate pass than "remember to use `findOneAndUpdate`."
+**Why this exists as its own skill, not just a note in `backend-service-layer`:** most bugs are inconvenient. A double-booked `TimeSlot` is the one bug that reaches a real person expecting an appointment slot that's no longer available. It gets its own skill because it deserves a slower, more deliberate pass than "remember to use `findOneAndUpdate`."
 
 ## The Core Guarantee
-For any two operations that target the same `{{CONTESTED_ENTITY}}` at nearly the same instant, **exactly one must succeed and the other must receive a conflict response.** Never both-succeed (double-allocation), never both-fail (an item stuck in limbo), never a lost update (one action silently overwriting the other with no error).
+For any two operations that target the same `TimeSlot` at nearly the same instant, **exactly one must succeed and the other must receive a conflict response.** Never both-succeed (double-booking), never both-fail (a slot stuck in limbo), never a lost update (one action silently overwriting the other with no error).
 
 ## Why Read-Then-Write Fails
 ```typescript
 // This looks correct. It is not.
-async function claimBROKEN(itemId: string, requesterInfo: RequesterInfo) {
-  const item = await Item.findById(itemId)          // Request A reads: status = 'available'
+async function holdBROKEN(timeSlotId: string) {
+  const slot = await TimeSlot.findById(timeSlotId)   // Request A reads: status = 'available'
                                                        // Request B reads: status = 'available'  ← both see the same state
-  if (item.status !== 'available') {
-    throw new ConflictError('Item is no longer available')
+  if (slot.status !== 'available') {
+    throw new ConflictError('TimeSlot is no longer available')
   }
-  item.status = 'pending'                             // Request A writes: status = 'pending'
-  item.requesterName = requesterInfo.name
-  await item.save()                                   // Request B writes: status = 'pending', overwriting A's requester info
-  return item                                          // Both calls return success. Both requesters think they got it.
+  slot.status = 'held'                                // Request A writes: status = 'held'
+  slot.heldAt = new Date()
+  await slot.save()                                   // Request B writes: status = 'held', overwriting A's hold
+  return slot                                          // Both calls return success. Both customers think they got the slot.
 }
 ```
-The failure mode isn't exotic — it's two HTTP requests arriving within a few milliseconds of each other, which happens constantly the moment demand spikes and multiple users act on the same visually-available item.
+The failure mode isn't exotic — it's two HTTP requests arriving within a few milliseconds of each other, which happens constantly the moment a popular time slot is visible to multiple customers at once.
 
 ## The Fix: One Atomic Operation, Not Two
 The check and the write must happen as a single database operation the DB itself makes atomic — never two round-trips from the application.
 
 ```typescript
 // Correct — the database, not the application, decides who wins the race
-async function claim(itemId: string, requesterInfo: RequesterInfo) {
-  const item = await Item.findOneAndUpdate(
-    { _id: itemId, status: 'available' },   // the condition is part of the same atomic operation as the write
+async function hold(timeSlotId: string) {
+  const slot = await TimeSlot.findOneAndUpdate(
+    { _id: timeSlotId, status: 'available' },   // the condition is part of the same atomic operation as the write
     {
       $set: {
-        status: 'pending',
-        requesterName: requesterInfo.name,
-        requestedAt: new Date(),
+        status: 'held',
+        heldAt: new Date(),
       },
     },
     { new: true }
   )
 
-  if (!item) {
+  if (!slot) {
     // findOneAndUpdate returned null: the condition { status: 'available' } didn't match
     // at the instant MongoDB evaluated it — someone else got there first.
-    throw new ConflictError('Item is no longer available')
+    throw new ConflictError('TimeSlot is no longer available')
   }
 
-  return item
+  return slot
 }
 ```
-`findOneAndUpdate` (and `updateOne`, `findOneAndReplace`) are atomic **per document** in MongoDB — the filter and the update are evaluated as one indivisible operation. That's the entire mechanism. No manual locking, no `LockService`, no queue needed for the single-item case.
+`findOneAndUpdate` (and `updateOne`, `findOneAndReplace`) are atomic **per document** in MongoDB — the filter and the update are evaluated as one indivisible operation. That's the entire mechanism. No manual locking, no `LockService`, no queue needed for the single-slot case.
 
 ## Per-Action Rules
-{{ACTIONS_TABLE}}
 
-Every row above is a single `findOneAndUpdate` — if it returns `null`, the controller returns the conflict status. There is no case in this table where reading first and writing second is acceptable, regardless of who the caller is. Actors racing each other (two admins both clicking "approve" on the same request) are just as real a race as two end users.
+| Action | Trigger | Transition | Atomic filter → update |
+|---|---|---|---|
+| Hold | Customer reaches Booking Form for a TimeSlot | `available → held` | `findOneAndUpdate({ _id, status: 'available' }, { $set: { status: 'held', heldAt: new Date() } })` |
+| Book | Customer submits the Booking Form | `held → booked` | `findOneAndUpdate({ _id, status: 'held' }, { $set: { status: 'booked' } })` — reject (409) if the hold already expired |
+| Release expired hold | Hold window elapses before submit (checked lazily on read, or a scheduled job — see `.doc/architecture.md` Open Questions) | `held → available` | `findOneAndUpdate({ _id, status: 'held', heldAt: { $lt: cutoff } }, { $set: { status: 'available', heldAt: null } })` |
+| Cancel | Admin cancels the owning Appointment | `booked → available` | `findOneAndUpdate({ _id, status: 'booked' }, { $set: { status: 'available' } })` |
 
-## The Multi-Document Case: {{MULTI_DOC_ACTION}} (fill in if applicable)
-If an action changes **two** records at once (e.g. moving an occupant from item X to item Y, or exchanging two occupants), MongoDB's single-document atomicity doesn't cover two documents at once. Two options, in order of preference:
+Every row above is a single `findOneAndUpdate` — if it returns `null`, the controller returns `409`. There is no case in this table where reading first and writing second is acceptable, regardless of who the caller is. Actors racing each other (two customers both trying to hold the same slot) are just as real a race as any other case.
+
+## The Multi-Document Case: Reschedule
+Reschedule changes **two** `TimeSlot` records at once — releasing the Appointment's current slot and holding/booking the new one — so MongoDB's single-document atomicity doesn't cover it on its own. Two options, in order of preference:
 
 1. **MongoDB transaction** (if the deployment tier/replica-set config supports it): wrap both `findOneAndUpdate` calls in a `session`, and abort the transaction if either update's precondition fails.
    ```typescript
    const session = await mongoose.startSession()
    try {
      await session.withTransaction(async () => {
-       const fromItem = await Item.findOneAndUpdate(
-         { _id: fromItemId, status: { $in: ['pending', 'taken'] } },
-         { $set: { status: 'available', requesterName: null } },
+       const oldSlot = await TimeSlot.findOneAndUpdate(
+         { _id: oldTimeSlotId, status: 'booked' },
+         { $set: { status: 'available' } },
          { session, new: true }
        )
-       if (!fromItem) throw new ConflictError('Source item is not currently occupied')
+       if (!oldSlot) throw new ConflictError('Original TimeSlot is not currently booked')
 
-       const toItem = await Item.findOneAndUpdate(
-         { _id: toItemId, status: 'available' },
-         { $set: { status: fromItem.status, requesterName: fromItem.requesterName } },
+       const newSlot = await TimeSlot.findOneAndUpdate(
+         { _id: newTimeSlotId, status: 'available' },
+         { $set: { status: 'booked' } },
          { session, new: true }
        )
-       if (!toItem) throw new ConflictError('Destination item is no longer available')
+       if (!newSlot) throw new ConflictError('New TimeSlot is no longer available')
+
+       await Appointment.findOneAndUpdate(
+         { _id: appointmentId },
+         { $set: { timeSlot: newSlot._id } },
+         { session }
+       )
      })
    } finally {
      await session.endSession()
    }
    ```
-2. **Manual compensation** (if transactions aren't available on the deployment tier): perform the first atomic update, and if the second one fails its precondition, atomically revert the first before returning the conflict response — never leave the source item in a "already vacated but destination also failed" state.
+2. **Manual compensation** (if transactions aren't available on the deployment tier): perform the first atomic update (release the old slot), and if the second one fails its precondition (holding the new slot), atomically revert the first before returning the conflict response — never leave the old slot released while the reschedule as a whole failed.
 
-Never implement a multi-document action as two independent `findOneAndUpdate` calls with no rollback path — a failure on the second call after the first succeeded is a silent data-loss bug.
+Never implement reschedule as two independent `findOneAndUpdate` calls with no rollback path — a failure on the second call after the first succeeded is a silent data-loss bug (a released slot with no replacement booked).
 
 ## What NOT to Reach For
 - **Application-level locks / mutexes / `LockService`-style patterns:** unnecessary complexity for this problem — MongoDB's per-document atomicity already solves the single-item case. Reserve locking patterns for contexts without a real atomic-update primitive; this isn't that context.
@@ -118,20 +118,20 @@ This is the one part of the codebase where "the code compiles and a sequential t
 
 ```typescript
 // The test that actually proves the guarantee — genuinely concurrent, not sequential
-it('allows exactly one of two simultaneous requests for the same item', async () => {
-  const item = await buildItem({ status: 'available' })
+it('allows exactly one of two simultaneous hold requests for the same TimeSlot', async () => {
+  const slot = await buildTimeSlot({ status: 'available' })
 
   const [resultA, resultB] = await Promise.allSettled([
-    request(app).post(`/api/items/${item.id}/claim`).send({ ...requesterA }),
-    request(app).post(`/api/items/${item.id}/claim`).send({ ...requesterB }),
+    request(app).post(`/api/timeslots/${slot.id}/hold`).send({ ...customerA }),
+    request(app).post(`/api/timeslots/${slot.id}/hold`).send({ ...customerB }),
   ])
 
   const statuses = [resultA, resultB].map((r) => r.value?.status ?? r.reason)
   expect(statuses.filter((s) => s === 200)).toHaveLength(1)
   expect(statuses.filter((s) => s === 409)).toHaveLength(1)
 
-  const finalItem = await Item.findById(item.id)
-  expect(finalItem.status).toBe('pending') // exactly one requester's info made it in
+  const finalSlot = await TimeSlot.findById(slot.id)
+  expect(finalSlot.status).toBe('held') // exactly one customer's hold made it in
 })
 ```
 A test that `await`s the two requests one after another (`await postA(); await postB()`) proves nothing about the race — it proves sequential correctness, which was never in question. Use `Promise.all`/`Promise.allSettled` to actually fire them together.

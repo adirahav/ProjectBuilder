@@ -6,22 +6,10 @@ references:
   - @state-management-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}
-  {{ROLES}}                — list of authenticated roles (e.g. "admin" only, or "admin, user")
-  {{UNAUTHENTICATED_ROLE}}  — e.g. "guest"/"passenger" — a role that never logs in, if any
-  {{PUBLIC_ROUTES}}         — list of routes needing no auth
-  {{PRIVATE_ROUTES}}        — list of routes needing auth, grouped by role
-  {{RTL_OR_LTR}}
-  {{VERSION_GOVERNANCE}}    — "not in scope" or a description of forced-update requirements
-Ask the user: "What roles exist, and which are authenticated?" "List public vs. private routes." "Does the app need forced-update/version-governance UI?"
--->
-
 # Requirements (Core Logic)
 
 1. **Authentication Hydration:**
-   - {{PROJECT_NAME}} has the following authenticated roles: {{ROLES}}. {{UNAUTHENTICATED_ROLE}} (if any) is never authenticated — no login/signup, so there is no session to hydrate for that role.
+   - BookMe has one authenticated role: `admin`. `Customer` is never authenticated — no login/signup, so there is no session to hydrate for that role.
    - Hydration Flow:
       - On mount: read the token from storage (`localStorage` on web, `@capacitor/preferences` on Android, if targeting native) via `auth.service.ts`.
       - Splash State: while `isHydrating`, show `SplashLoader`.
@@ -33,15 +21,15 @@ Ask the user: "What roles exist, and which are authenticated?" "List public vs. 
    - Manage the visibility state of global Modals (e.g., Session Expired, Login).
 
 3. **Routing Strategy (Auth Guard):**
-   - **Public Routes (no auth required):** {{PUBLIC_ROUTES}}.
-   - **Private Routes (role-gated):** {{PRIVATE_ROUTES}}.
+   - **Public Routes (no auth required):** `/` (Services List), `/services/:id/timeslots` (TimeSlot Picker), `/services/:id/timeslots/:timeSlotId/book` (Booking Form), `/booking/:appointmentId/confirmation` (Booking Confirmation), `/admin/login` (Admin Login — the login page itself is always public).
+   - **Private Routes (role-gated, `admin`):** `/admin` (Admin Appointments Dashboard, default landing after login), `/admin/services` (Admin Services Management).
    - Guard Logic:
       - Auth Check: if `!loggedinUser` and route is private ⮕ redirect to the login route.
       - Only add an onboarding/funnel check if the product actually has a multi-step account setup — don't build one speculatively.
 
 4. **Global Layout Wrapper:**
    - Manage the main viewport container (e.g., `min-h-screen`, `bg-slate-50`).
-   - Handle directionality at the HTML level: {{RTL_OR_LTR}}.
+   - Handle directionality at the HTML level: RTL (Hebrew, `dir="rtl"` on `<html>`).
 
 5. **Route Guard Implementation:**
    - Create a wrapper component `ProtectedRoute` for private routes.
@@ -51,7 +39,7 @@ Ask the user: "What roles exist, and which are authenticated?" "List public vs. 
       - No further step-gating is needed beyond this single check unless the product defines one.
 
 6. **Version Governance & Upgrade Orchestration**
-   - {{VERSION_GOVERNANCE}}
+   - Not in scope for v1 — web only, no forced-update/version-governance requirement.
    - Do not build `UpgradeRequired`/`UpgradeRecommended` components speculatively — if this becomes a real requirement, scope it explicitly first, following a `Major/Minor/Patch` comparison approach, before adding it here.
 
 # Tailwind Implementation Logic
@@ -60,7 +48,7 @@ Ask the user: "What roles exist, and which are authenticated?" "List public vs. 
 - *Modal Layer:* Login modal and any confirmation modals sit below the Toaster but above all page content.
 
 # Files Structure
-{{PROJECT_NAME}}/
+BookMe/
 └── frontend/
     └── src/
     │   ├── App.tsx                 # Main Logic & Routing

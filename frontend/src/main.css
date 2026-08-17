@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  /* Colors — calm blue/pink palette, chosen for a clinic/spa context (no external design source) */
+  --color-primary: #3B82C4;       /* calm blue — primary actions, headers */
+  --color-primary-hover: #2E6699;
+  --color-accent: #E8A0BC;        /* soft pink — secondary accents, highlights */
+  --color-accent-hover: #D98AA8;
+  --color-background: #FAFBFC;
+  --color-surface: #FFFFFF;
+  --color-foreground: #1F2937;
+  --color-muted: #6B7280;
+  --color-border: #E5E7EB;
+  --color-danger: #DC2626;
+  --color-success: #16A34A;
+  --color-warning: #D97706;
+}

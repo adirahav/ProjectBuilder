@@ -1,18 +1,8 @@
 # Database Rules
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}, {{SERVICES_AND_PORTS}}, {{ENTITIES}}, {{MODEL_OWNERSHIP}}
-  {{ROLE_NAME}}, {{ROLES_LIST}}, {{PERMISSION_KEYS}} — if RBAC is used
-  {{CONTESTED_ENTITY}}, {{STATUS_VALUES}}, {{STATUS_TRANSITIONS}} — if a contested entity exists
-  {{REQUIRED_INDEXES}}
-Ask the user: "What are your core data entities and their key fields?" "Is there a stateful/contested entity requiring atomic concurrency-safe transitions?" "Do you need role-based permissions, or a simpler auth model?"
-Delete this comment block once filled.
--->
-
 ## Purpose
 - Define database source-of-truth expectations, migration behavior, and bootstrap guidance.
-- Project: {{PROJECT_NAME}} — one-line description of the domain.
+- Project: BookMe — appointment booking for a small clinic/salon (`booking-service` + `admin-service`), ports 4001/4002.
 
 ## Source of Truth
 - Mongoose models are the source of truth for collection structure and validation.
@@ -25,31 +15,59 @@ Delete this comment block once filled.
 - When a client sends an `id` (uuid) — in a URL param or a request body — resolve it to the internal `_id` (`Model.findOne({ uuid: id })`) before using it in any query or ref. Never accept a raw Mongo ObjectId from a client as if it were the identity.
 
 ## Core Collections
-List every collection here, one subsection per entity in {{ENTITIES}}, following this shape:
 
-### <entity>  *(owned by <service>)*
+### Service  *(owned by booking-service)*
 - `_id` — ObjectId (auto-generated, internal only — never sent to clients)
 - `uuid` — String (auto-generated, unique, indexed — this is the `id` clients see)
-- ...domain fields...
+- `name` — String, required
+- `durationMinutes` — Number, required
+- `price` — Number, required
+- `isActive` — Boolean, default: true
 - `createdAt` — Date, default: Date.now
-- `deletedAt` — Date, default: null (soft delete — omit if this entity isn't soft-deleted)
+- `deletedAt` — Date, default: null (soft delete)
 
-If a contested entity exists, describe its status field here:
-### {{CONTESTED_ENTITY}}
-- `status` — String, required, enum: {{STATUS_VALUES}}, default: `<initial value>`
-- Other fields tracking who/what triggered the current state (e.g. requester info, timestamps, who last modified it).
+### Appointment  *(owned by booking-service)*
+- `_id` — ObjectId (auto-generated, internal only — never sent to clients)
+- `uuid` — String (auto-generated, unique, indexed — this is the `id` clients see)
+- `service` — ObjectId ref → Service, required
+- `timeSlot` — ObjectId ref → TimeSlot, required
+- `customerName` — String, required
+- `customerPhone` — String, required if `customerEmail` absent
+- `customerEmail` — String, required if `customerPhone` absent
+- `status` — String, required, enum: `pending`, `confirmed`, `completed`, `cancelled`, default: `pending`
+- `createdAt` — Date, default: Date.now
+- `deletedAt` — Date, default: null (soft delete)
 
-## Status Rules (fill in if {{CONTESTED_ENTITY}} exists)
-- `status` must always be one of the canonical values above — never store any other string.
-- Valid transitions (enforced in the owning service's `<entity>.service.ts`, not just at the DB layer): {{STATUS_TRANSITIONS}}
-- **Concurrency:** any transition away from the "available"/initial state must use an atomic, condition-checked update (e.g. Mongoose `findOneAndUpdate({ _id, status: '<expected>' }, { $set: { status: '<next>', ... } })`) so two simultaneous requests for the same resource can't both succeed. Never read-then-write the status in two separate steps. See `seat-concurrency-layer` skill for the full pattern.
+### TimeSlot  *(owned by booking-service — the contested entity)*
+- `_id` — ObjectId (auto-generated, internal only — never sent to clients)
+- `uuid` — String (auto-generated, unique, indexed — this is the `id` clients see)
+- `service` — ObjectId ref → Service, required
+- `date` — Date, required
+- `startTime` — String (e.g. `"14:30"`), required
+- `status` — String, required, enum: `available`, `held`, `booked`, default: `available`
+- `heldAt` — Date, default: null (used to expire a stale `held` slot back to `available`)
+- `createdAt` — Date, default: Date.now
 
-## Roles & Permissions (RBAC — fill in if this project uses role-based access, otherwise delete this section)
-- List the roles here: {{ROLES_LIST}}.
-- An account's `roles` field is an array (not a single string) to support multiple roles per account later without a schema change.
-- Permission `key`s follow `<category>:<action>` — e.g. {{PERMISSION_KEYS}}.
-- List which routes remain fully public — the permission system governs admin-only write/management routes only.
-- The seed script must create baseline role/permission documents on first run — the app should never start with zero roles defined.
+### Admin  *(owned by admin-service)*
+- `_id` — ObjectId (auto-generated, internal only — never sent to clients)
+- `uuid` — String (auto-generated, unique, indexed — this is the `id` clients see)
+- `username` — String, required, unique
+- `passwordHash` — String, required
+- `createdAt` — Date, default: Date.now
+
+## Status Rules — TimeSlot (contested entity)
+- `status` must always be one of `available`, `held`, `booked` — never store any other string.
+- Valid transitions (enforced in `booking-service`'s `timeSlot.service.ts`, not just at the DB layer):
+  - `available → held` — a customer starts a booking (Booking Form reached)
+  - `held → booked` — the customer submits the Booking Form and the Appointment is created
+  - `held → available` — the hold expires (`heldAt` older than the configured hold window) before the Appointment is submitted
+  - `booked → available` — an admin cancels or reschedules the owning Appointment
+- **Concurrency:** any transition away from `available` must use an atomic, condition-checked update (Mongoose `findOneAndUpdate({ _id, status: 'available' }, { $set: { status: 'held', heldAt: new Date() } })`) so two simultaneous requests for the same `TimeSlot` can't both succeed. Never read-then-write the status in two separate steps. See `seat-concurrency-layer` skill for the full pattern.
+
+## Roles & Permissions
+- Single authenticated role: `admin`. No permission matrix — a valid JWT with `role: admin` grants access to every admin-scoped route; there is no finer-grained permission model for v1.
+- Public routes (Screens 1-4: browsing Services/TimeSlots, submitting a booking) require no auth at all.
+- If a second admin-level role is introduced later, revisit this section to add a `roles` array and `<category>:<action>` permission keys rather than hardcoding a second boolean flag.
 
 ## Migration Rules
 - Migrations are managed via Mongoose model changes.
@@ -58,19 +76,21 @@ If a contested entity exists, describe its status field here:
 - When backfilling existing documents, use a dedicated migration script.
 
 ## Bootstrap
-- The seed script upserts reference data — core business-entity collections start empty and are created only through the app itself.
-- Required indexes: {{REQUIRED_INDEXES}}
+- The seed script upserts reference data — core business-entity collections start empty and are created only through the app itself. `admin-service`'s seed script creates the single `Admin` account on first run if none exists.
+- Required indexes: `Service.uuid` (unique), `Appointment.uuid` (unique), `TimeSlot.uuid` (unique), `TimeSlot.{service, date, status}` (compound, for the TimeSlot Picker query), `Admin.uuid` (unique), `Admin.username` (unique).
 
 ## Soft Delete
-- Documents are never permanently deleted — set `deletedAt` to current timestamp, for every entity marked as soft-deleted above.
+- Documents are never permanently deleted — set `deletedAt` to current timestamp, for `Service` and `Appointment`.
 - All queries must filter: `{ deletedAt: null }`.
 - Use Mongoose `pre('find')` middleware to exclude soft-deleted documents automatically.
-- Any entity excluded from soft-delete should say so explicitly here, along with why (e.g. deleted/recreated with its parent, or small admin-managed reference data).
+- `TimeSlot` is excluded from soft-delete — its lifecycle is tracked entirely via `status`, not deletion; it's small, auto-generated schedule data with no independent history worth preserving after cancellation.
+- `Admin` is excluded from soft-delete — a single admin-managed account record for v1, not user-facing data.
 
 ## Operational Notes
-- Each service owns its own collections — never access another service's collections directly ({{MODEL_OWNERSHIP}}).
-- Do not store in-memory state between requests — especially any contested-entity status, which must always be read from the DB, never cached in a way that could serve a stale value during a status check.
+- Each service owns its own collections — `booking-service` owns `Service`/`TimeSlot`/`Appointment`; `admin-service` owns `Admin` only. `admin-service` never accesses `booking-service`'s collections directly — it calls `booking-service`'s admin-scoped HTTP API instead (see `.doc/architecture.md`).
+- Do not store in-memory state between requests — especially `TimeSlot.status`, which must always be read from the DB, never cached in a way that could serve a stale value during a status check.
 - Define indexes in Mongoose schemas (`index: true` or `unique: true`).
 
 ## Open Questions / TBD
-- List anything still undecided about the schema, indexing, or audit-log needs here.
+- Exact hold-window duration for `TimeSlot.heldAt` before it reverts to `available` (also open in `.doc/architecture.md`).
+- Whether a scheduled job or a lazy check-on-read expires stale `held` TimeSlots.

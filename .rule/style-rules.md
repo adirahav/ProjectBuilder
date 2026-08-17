@@ -1,15 +1,7 @@
 # Style Rules
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}, {{DESIGN_TOKENS}} (color hex values), {{DESIGN_SOURCE}} (e.g. Figma, AI Studio export — if no design source exists per Part 1 Q9, {{DESIGN_TOKENS}} come from the user's brand preferences instead, and every {{DESIGN_SOURCE}} reference below should read "the user's stated brand preferences" rather than an external file/tool)
-  {{CONTESTED_ENTITY}}, {{STATUS_VALUES}} — if a status-driven entity with color mapping exists
-Ask the user: "What are your brand color tokens (hex values)?" "Does any domain status value need a dedicated color mapping?"
-Delete this comment block once filled.
--->
-
 ## Purpose
-- Define CSS organization and maintainable styling patterns for this app (`frontend/`, {{PROJECT_NAME}}).
+- Define CSS organization and maintainable styling patterns for this app (`frontend/`, BookMe).
 
 ## Stack
 - Tailwind CSS v4 (CSS-first, via `@tailwindcss/vite` — no `tailwind.config.js`) — utility-first styling.
@@ -26,17 +18,37 @@ Delete this comment block once filled.
 @import "tailwindcss";
 
 @theme {
-  /* Colors */
-  {{DESIGN_TOKENS}}
+  /* Colors — calm blue/pink palette, chosen for a clinic/spa context (no external design source) */
+  --color-primary: #3B82C4;       /* calm blue — primary actions, headers */
+  --color-primary-hover: #2E6699;
+  --color-accent: #E8A0BC;        /* soft pink — secondary accents, highlights */
+  --color-accent-hover: #D98AA8;
+  --color-background: #FAFBFC;
+  --color-surface: #FFFFFF;
+  --color-foreground: #1F2937;
+  --color-muted: #6B7280;
+  --color-border: #E5E7EB;
+  --color-danger: #DC2626;
+  --color-success: #16A34A;
+  --color-warning: #D97706;
 }
 ```
 
-- List which tokens are confirmed (from {{DESIGN_SOURCE}}) vs. still open, e.g. hover-state variants, danger/success/warning colors, a typography token, a subtle-border token — add them once decided, and remove the "TBD" framing once done.
-- Decide whether `--radius-*` tokens are defined, or whether raw Tailwind radius utilities are used directly (e.g. `rounded-xl`).
+- All tokens above are confirmed (user-stated brand preference: calm blue/pink, no external design source) — none are TBD.
+- `--radius-*` tokens are not defined; use raw Tailwind radius utilities directly (e.g. `rounded-xl`) for consistency with the utility-first approach.
 
-## Domain-Specific Color Mapping (fill in if a status-driven entity exists)
-- If `{{CONTESTED_ENTITY}}` exists, it's likely the one place in the UI where color directly encodes domain state. Map each status ({{STATUS_VALUES}}) to a token, not a raw hex value, so the mapping stays centralized and themeable.
-- Once this mapping is decided, encode it as a small lookup (e.g. `statusStyles: Record<Status, string>`) rather than scattering inline conditionals across components.
+## Domain-Specific Color Mapping
+`TimeSlot` and `Appointment` are the status-driven entities in the UI. Map each status to a token, not a raw hex value, so the mapping stays centralized and themeable. Encode both as a lookup (e.g. `timeSlotStatusStyles: Record<TimeSlotStatus, string>`, `appointmentStatusStyles: Record<AppointmentStatus, string>`) rather than scattering inline conditionals across components. Per `.rule/accessibility-layer` and `docs/PRD.md` AC-8, status must always be paired with a text label or icon, never color alone.
+
+| Status | Token |
+|---|---|
+| `TimeSlot: available` | `--color-success` |
+| `TimeSlot: held` | `--color-warning` |
+| `TimeSlot: booked` | `--color-muted` |
+| `Appointment: pending` | `--color-warning` |
+| `Appointment: confirmed` | `--color-success` |
+| `Appointment: completed` | `--color-muted` |
+| `Appointment: cancelled` | `--color-danger` |
 
 ## Conditional Classes
 - Use `cn()` for all conditional or merged class strings.
@@ -75,6 +87,3 @@ export function cn(...inputs: ClassValue[]) {
   - Do not add anything here that a Tailwind utility class could express instead.
 - `frontend/src/lib/utils.ts` — `cn()` utility for class merging.
 
-## Open Questions / TBD
-- Confirm any not-yet-decided design tokens.
-- Decide the final color-to-status mapping above (if applicable) and remove the "TBD" framing once locked in.

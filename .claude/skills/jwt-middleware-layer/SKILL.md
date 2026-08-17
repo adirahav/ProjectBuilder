@@ -7,34 +7,23 @@ references:
   - @agents/security/CLAUDE.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{ISSUING_SERVICE}}        — service that owns login/signup and signs tokens
-  {{VALIDATING_SERVICES}}    — service(s) that validate the token (may be same as issuing service if a monolith)
-  {{TOKEN_PAYLOAD_FIELDS}}   — minimal fields the token carries, e.g. userId, username, roles
-  {{ROLES}}                  — role values, e.g. ['admin'], ['admin','user']
-  {{UNAUTHENTICATED_ENDPOINTS}} — endpoints that intentionally take no Authorization header, if any
-  {{MULTI_SERVICE_COORDINATION}} — include the shared-secret-rotation section only if there is more than one service
-Ask the user: "Single service or multiple services validating tokens?" "What roles/claims belong in the token?" "Any endpoints that must stay unauthenticated?"
--->
-
 # JWT & Middleware Layer
 *Goal:* One place issues the token, every service validates it locally, and neither trusts the client for anything the token itself should prove. This skill exists separately because the trust model here is easy to get subtly wrong — get it wrong and either protected routes become unguarded, or the signing secret drifts between services and every user gets logged out at random.
 
 ## The Trust Model
-- **Only `{{ISSUING_SERVICE}}` issues tokens** — via `login`/`signup`. It's the only service with `jwt.ts`'s `sign` function.
-- **{{VALIDATING_SERVICES}} validate tokens** locally, using the shared secret — no service calls another over the network just to check a token.
-- **Unauthenticated endpoints (if any):** {{UNAUTHENTICATED_ENDPOINTS}}. Do not add token issuance for a role that's intentionally never authenticated; keep that decision explicit and out of scope rather than half-implemented.
+- **Only `admin-service` issues tokens** — via `login` (there is no signup; a single `Admin` account is seeded, per `.rule/database-rules.md`). It's the only service with `jwt.ts`'s `sign` function.
+- **Both `admin-service` and `booking-service` validate tokens** locally, using the shared secret — no service calls another over the network just to check a token.
+- **Unauthenticated endpoints:** every customer-facing route on `booking-service` (browse Services, browse TimeSlots, create Appointment) and `admin-service`'s `/api/auth/login` itself. `Customer` never authenticates — do not add token issuance for that role; it's an explicit, permanent product decision, not a gap.
 
-## Token Issuance ({{ISSUING_SERVICE}} only)
+## Token Issuance (`admin-service` only)
 
 ```typescript
-// backend/<issuing-service>/src/lib/jwt.ts
+// backend/admin-service/src/lib/jwt.ts
 import jwt from 'jsonwebtoken'
 
 export interface AuthTokenPayload {
-  {{TOKEN_PAYLOAD_FIELDS}}
-  roles: string[] // e.g. {{ROLES}} — embedded so other services can authorize locally
+  userId: string // Admin's uuid
+  roles: string[] // ['admin'] — embedded so booking-service can authorize locally
 }
 
 export function signAuthToken(payload: AuthTokenPayload): string {
@@ -89,9 +78,9 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
 - Every protected write route mounts this middleware; the unauthenticated endpoints listed above never do.
 - The middleware never distinguishes *why* a token failed (expired vs. tampered vs. malformed) in its response body — all map to the same generic `401`, so a client can't use the error message to probe the validation logic.
 
-## The Shared-Secret Coordination Problem (fill in only if there are multiple services)
-Because independently-deployable services can update their signing secret independently, it's possible to update one's `JWT_SECRET` without the other — the failure mode is silent and confusing (every user suddenly gets `401`s from one service while another still logs them in fine).
-- When rotating `JWT_SECRET`, update every service's environment config together, in the same deploy window.
+## The Shared-Secret Coordination Problem
+Because `booking-service` and `admin-service` are independently-deployable, it's possible to update one's `JWT_SECRET` without the other — the failure mode is silent and confusing (every admin request suddenly gets `401`s from `booking-service` while `admin-service` still logs them in fine).
+- When rotating `JWT_SECRET`, update both services' environment config together, in the same deploy window.
 - If zero-downtime secret rotation is ever needed, that requires a dual-secret validation window (accept old-or-new secret for a transition period) — not implemented by default; flag this explicitly if a real rotation need comes up rather than guessing at an approach.
 
 ## Security Notes (see `agents/security/CLAUDE.md`)

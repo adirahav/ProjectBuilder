@@ -1,143 +1,155 @@
 # System Architecture
 
-<!--
-TEMPLATE — QUESTION-DRIVEN. Build this AFTER product-definition.md and glossary.md, and roughly
-alongside/before the .rule/*.md and .claude/skills/*/SKILL.md templates — architecture.md is the
-narrative version of decisions that also get encoded structurally in database-rules.md,
-backend-service-layer/SKILL.md, etc. Keep terminology and the service/port list IDENTICAL across
-all of them.
-
-Work section by section, asking the questions noted in each block, then writing prose/tables in
-that section's place. Delete every instruction block once the file is complete.
--->
-
 ## Purpose
-Provide a concise architecture reference for service boundaries, ownership, and major flows of `{{PROJECT_NAME}}`.
+Provide a concise architecture reference for service boundaries, ownership, and major flows of `BookMe`.
 
 ---
 
 ## System Overview
-<!--
-Ask: "Monorepo or polyrepo? One backend service or several — if several, what does each own?"
-Draw the same two diagrams as the reference: a folder-tree box (frontend/ + backend/<services>)
-and a client→services arrow diagram (browser, and native if applicable, hitting each service's
-base URL).
--->
+Monorepo, two backend services behind no production gateway (frontend calls each service's base URL directly), plus a single React frontend.
+
+```
+BookMe/
+├── frontend/                  (React + Vite, single app — public booking flow + admin dashboard)
+└── backend/
+    ├── booking-service/       (owns Service, TimeSlot, Appointment — public + internal admin API)
+    └── admin-service/         (admin auth/JWT issuance, dashboard aggregation, calls booking-service)
+```
+
+```
+Browser (Customer)  ──▶  booking-service  (public API: browse Services/TimeSlots, create Appointment)
+
+Browser (Admin)     ──▶  admin-service    (login → JWT)
+                    ──▶  booking-service  (admin-scoped API: approve/cancel/reschedule, manage Services)
+                              [JWT issued by admin-service, validated by booking-service]
+```
 
 ---
 
 ## Context
-<!--
-Ask: "What problem does this solve, in one sentence?" "What are the 3-5 hardest architectural
-constraints — role split, concurrency-sensitive resource, ops/team-size constraints, patterns
-reused from prior projects?"
-Write "Problem solved" (1 sentence) + a "Key architectural constraints" bullet list.
--->
+**Problem solved:** Replace manual phone/WhatsApp appointment scheduling for a small clinic/salon with self-service customer booking and a single admin dashboard.
+
+**Key architectural constraints:**
+- `TimeSlot` is a contested resource — two customers may race to book the same slot; correctness under concurrency is non-negotiable (`seat-concurrency-layer`).
+- Two backend services must share a consistent view of `Service`/`TimeSlot`/`Appointment` without dual-write conflicts — resolved by giving `booking-service` sole ownership of that data (see Primary Components).
+- No production gateway — the frontend talks to each service's base URL directly, so CORS and per-service base-URL env vars matter.
+- Customers are never authenticated — every customer-facing endpoint must work for an anonymous actor identified only by the contact details submitted at booking time.
 
 ---
 
 ## Primary Components
 
-<!--
-For the frontend, ask: "What's the stack (framework, styling, state mgmt, HTTP client, auth
-storage)?" and "What are the 2-3 main functional areas of the UI (e.g. an admin console vs. a
-public-facing flow)?" Write a stack table + a short paragraph per functional area.
+### Frontend
+| Concern | Choice |
+|---|---|
+| Framework | React + Vite |
+| Styling | Tailwind CSS v4 |
+| State management | Zustand |
+| HTTP client | fetch-based service layer (`service-layer` skill) |
+| Auth storage | JWT stored client-side for the Admin session only; no storage for Customers |
 
-If native (Capacitor/RN) is in scope, add an "Android/iOS App" subsection: what wraps the web
-build, what's different about storage/APIs on native, what's explicitly out of scope (e.g. no
-iOS in v1).
+**Functional areas:**
+- **Public booking flow** — browse `Services`, browse available `TimeSlots` for a chosen `Service`/date, submit contact details to create an `Appointment`. No login.
+- **Admin dashboard** — login, manage the `Service` catalog, view all `Appointments`, approve/cancel/reschedule.
 
-For the backend, ask: "One table row per service — service name, its base-URL env var, its
-responsibility." Then, if there's a contested/stateful entity: ask for its full lifecycle — every
-state, every transition, and what triggers each one — and draw it as a small state-transition
-diagram, the same shape as:
-  available ──(action)──▶ pending ──(action)──▶ taken
-Note which service each backend folder follows for its internal layout convention (controller/
-service/routes/middleware per domain).
--->
+### Backend
+| Service | Base URL env var | Responsibility |
+|---|---|---|
+| `booking-service` | `VITE_BOOKING_SERVICE_URL` (frontend) / `BOOKING_SERVICE_PORT` (default `4001`) | Owns `Service`, `TimeSlot`, `Appointment` models and all writes to them. Exposes the public customer API (browse + book) and an admin-scoped API (approve/cancel/reschedule/manage Services) that trusts JWTs issued by `admin-service`. Owns `TimeSlot` concurrency logic (`seat-concurrency-layer`). |
+| `admin-service` | `VITE_ADMIN_SERVICE_URL` (frontend) / `ADMIN_SERVICE_PORT` (default `4002`) | Owns the `Admin` account, issues JWTs on login, serves dashboard-aggregation views by calling `booking-service`'s admin-scoped API. Holds no `Service`/`TimeSlot`/`Appointment` data itself. |
+
+Both services follow the same internal layout convention: `controller/ service/ routes/ middleware/` per domain.
+
+**`TimeSlot` lifecycle:**
+```
+available ──(customer starts booking)──▶ held ──(appointment confirmed within hold window)──▶ booked
+   ▲                                        │
+   └──────────(hold expires / booking abandoned)──┘
+
+booked ──(admin cancels or reschedules the Appointment)──▶ available
+```
 
 ---
 
 ## File Structure
-<!--
-Once the frontend and backend structures are settled (via the skill templates), mirror the real
-folder tree here — this section should stay a straightforward reflection of the repo layout, not
-a fresh design decision. Update it whenever the structure actually changes.
--->
+_Mirror the real folder tree here once `backend-service-layer` and `page-layer` skill templates are filled and the actual repo structure exists — kept in sync going forward, not a fresh design decision._
 
 ---
 
 ## Data Flow
-<!--
-Ask: "Walk me through the 3-5 most important user journeys end to end (e.g. auth, the core
-create flow, the core request/consume flow, the core management flow)." For each, write a small
-arrow-diagram block in this shape:
 
-<Actor> UI
-  → METHOD BASE_URL/api/path             (what this call does)
-  → METHOD BASE_URL/api/path/:id          (what this call does)
-        → <resulting state change, if any>
+**Customer booking flow:**
+```
+Customer UI
+  → GET  booking-service/api/services                  (browse Service catalog)
+  → GET  booking-service/api/services/:id/timeslots     (browse available TimeSlots for a date)
+  → POST booking-service/api/appointments                (hold TimeSlot, create Appointment)
+        → TimeSlot: available → held → booked; Appointment created in `pending`
+```
 
-Cover at minimum: the auth flow (what the token payload contains and why), and — if a contested
-entity exists — its full request/approve/manage flow.
--->
+**Admin auth flow:**
+```
+Admin UI
+  → POST admin-service/api/auth/login                    (username/password)
+        → admin-service issues JWT { sub: adminId, role: "admin" }
+```
+The JWT payload carries only the minimal `role: "admin"` claim; `booking-service` validates the token's signature and role claim on every admin-scoped route without calling back to `admin-service`. A permission change only takes effect on the admin's next login.
+
+**Admin appointment management flow:**
+```
+Admin UI (JWT attached)
+  → GET   booking-service/api/admin/appointments          (list all Appointments)
+  → PATCH booking-service/api/admin/appointments/:id/approve    (pending → confirmed)
+  → PATCH booking-service/api/admin/appointments/:id/cancel     (any → cancelled; TimeSlot → available)
+  → PATCH booking-service/api/admin/appointments/:id/reschedule (releases old TimeSlot, holds new one)
+```
 
 ---
 
 ## Auth and Org Boundaries
-<!--
-Ask: "Is authentication scoped to one role only, or multiple?" "Is there RBAC (roles/
-permissions), or a simpler allow/deny model?" "If there are multiple services, how does a
-non-issuing service authorize a request without calling back to the issuing service?" (Usual
-answer: embed the minimal claims in the JWT payload at issuance — note the trade-off that a
-permission change only takes effect on next login.) "What's the concurrency risk, if any, and
-what's the mitigation (atomic update, transaction)?" "What's the deletion model — hard or soft
-delete?"
-Write this as a bulleted list of decisions, one per sub-topic, matching the reference file's
-"Authentication / Authorization (RBAC) / Cross-service permission checking / Validation /
-<actor> identity / Authorization scope / Concurrency / Deletion model" bullet structure.
--->
+- **Authentication:** Scoped to the `Admin` role only. Customers are never authenticated.
+- **Authorization (RBAC):** Single role (`admin`) beyond anonymous — no permission matrix needed for v1.
+- **Cross-service permission checking:** `admin-service` issues the JWT at login; `booking-service` validates it locally (signature + `role` claim) without a callback, per the standard `jwt-middleware-layer` pattern.
+- **Validation:** All customer-submitted input (contact details, selected `TimeSlot`) is validated server-side in `booking-service` before any write.
+- **Customer identity:** No account — identified per-`Appointment` by name + phone/email captured at booking time. Not persisted as a reusable identity across bookings in v1.
+- **Authorization scope:** Public routes require no token; admin routes require a valid `admin`-role JWT.
+- **Concurrency:** `TimeSlot` claiming uses an atomic update (conditional write guarded on current status) inside `booking-service`, per `seat-concurrency-layer` — no dual-write path exists since only `booking-service` touches this data.
+- **Deletion model:** Soft delete (`deletedAt` field) across all entities, per `.rule/database-rules.md`.
 
 ---
 
 ## API Reference
-<!--
-Once docs/api-contract/*.yaml or the equivalent OpenAPI files exist (built during the skill-
-template phase), summarize each service's routes here as a method/route/purpose table, grouped
-by resource. Treat this section as a living index into the real contract files, not the source
-of truth itself.
--->
+_Living index into `docs/api-contract/api-contract.booking-service.yaml` and `docs/api-contract/api-contract.admin-service.yaml`, generated by the Frontend Agent as real feature tickets are implemented. Not the source of truth itself._
 
 ---
 
 ## External Dependencies
-<!--
-Ask: "Where does this deploy (hosting provider(s) for frontend/backend)?" "What's the primary
-database and who owns the connection (confirm the frontend never connects directly)?" "Any other
-third-party services (email, payments, storage, etc.)?"
-Write as a Service / Purpose / Notes table.
--->
+| Service | Purpose | Notes |
+|---|---|---|
+| MongoDB | Primary datastore, owned exclusively by `booking-service` for domain data and by `admin-service` for the `Admin` account | Frontend never connects directly |
+| Email provider (TBD) | Booking confirmation + appointment reminder emails | Provider not yet chosen (e.g. SendGrid/Nodemailer candidate) — see Open questions |
+| Hosting (TBD) | Frontend + backend deployment | Provider not yet chosen — see Open questions |
+
+SMS notifications are out of scope for v1 (`.doc/product-definition.md` Scope) — email is the only notification channel for now.
 
 ---
 
 ## Operational Concerns
-<!--
-Ask: "How is environment configuration handled (env vars per environment, no hardcoded URLs)?"
-"What's the failure-isolation story if one service goes down — what still works, what doesn't?"
-"Do frontend and backend deploy independently, and what does a breaking API change require?"
-Write short bulleted subsections: Environment configuration / Failure isolation / Deployments.
--->
+**Environment configuration:** Each service reads its port and MongoDB connection string from environment variables; the frontend reads each service's base URL from `VITE_BOOKING_SERVICE_URL` / `VITE_ADMIN_SERVICE_URL`. No hardcoded URLs.
+
+**Failure isolation:** If `admin-service` is down, the public customer booking flow is unaffected (it never calls `admin-service`). If `booking-service` is down, both the customer flow and the admin dashboard's data views break, since `admin-service` holds no domain data of its own.
+
+**Deployments:** Frontend and both backend services deploy independently. A breaking change to `booking-service`'s admin-scoped API requires a coordinated `admin-service`/frontend update, since both depend on its contract.
 
 **Open questions / TBD:**
-<!-- List anything still undecided — hosting provider, ownership model, identity model for an
-unauthenticated actor, or any other structural question raised while filling this file in. -->
+- Hosting provider for frontend and backend services
+- Email provider for confirmation/reminder sending
+- Slot hold duration (how long a `TimeSlot` stays `held` before reverting to `available` if booking isn't completed)
 
 ---
 
 ## Change Log
-<!-- Add one dated bullet per architecturally-significant decision, going forward, matching the
-reference file's style: date, then a one-line summary of what changed and why. -->
-- {{TODAY'S DATE}}: Initial architecture defined.
+- 2026-08-16: Initial architecture defined.
 
 ## Update Triggers
 - Update this file when API routes, auth boundaries, or major component ownership changes.

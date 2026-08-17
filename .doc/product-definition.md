@@ -1,139 +1,98 @@
 # Product Definition
 
-<!--
-TEMPLATE — QUESTION-DRIVEN, not fill-in-the-blank. Unlike the .rule/.claude/agents templates,
-this file has no {{PLACEHOLDER}} markers — its content IS the product, which must be authored
-fresh per project, not adapted from the Reference App's seat-booking domain. For each section below,
-interview the user with the listed questions, then WRITE the section in prose (matching the
-depth/tone of the reference sentence given per section), replacing the instruction
-block. Do not leave any "<!-- ... -->" instruction text in the finished file.
-
-Ask 2-4 questions at a time, not the whole file at once. Work top to bottom — later sections
-(Scope, Constraints) depend on earlier ones (Vision, Users) being settled first.
--->
-
 ## Purpose
 Define shared product intent so planning, architecture, and delivery stay aligned.
 
 ---
 
 ## Product Vision
-<!--
-Ask: "In one or two sentences, what does this product remove/replace/enable that's manual or
-painful today?" Reference depth: "This product removes the manual work of seating
-passengers on tour buses. Instead of an admin figuring out by hand who sits where, the admin
-sets up a tour with its buses and pickup points, and passengers browse the tour and request
-their own seat — the admin approves, manages, and finalizes the seating from there."
-Write 2-4 sentences here once answered.
--->
+This product removes the manual work of managing appointments for a small clinic/salon business by phone or WhatsApp. Instead of the business owner juggling calls and messages to track who's booked for what, customers browse services and available time slots themselves and book directly — the owner manages services, confirms/cancels/reschedules appointments, and sees the full schedule from a single admin dashboard.
 
 ---
 
 ## Target Users
-<!--
-Ask: "Who are the primary users (the ones with the main workflow/pain), and who are the
-secondary users (if any)?" For each: what are they trying to accomplish, what's their core need.
-Reference depth: distinguished "admins/tour managers" (primary — run tours, want
-to avoid manual seating) from "passengers" (secondary — want a live seat map and self-service
-seat pick). If this project has only one user type, say so explicitly rather than forcing a
-primary/secondary split.
-Write one subsection per user type once answered.
--->
+
+**Admin (business owner)** — primary user. Runs the business day to day: defines the service catalog (name, duration, price), reviews incoming appointments, and approves, cancels, or reschedules them. Wants a single place to see the full schedule instead of tracking it across phone calls and messages.
+
+**Customers (anonymous)** — secondary users. Want to see what services are offered, find an open time that works for them, and book it themselves without creating an account — just a name and phone/email at booking time.
 
 ---
 
 ## Problem Statement
-<!--
-Ask: "What breaks or gets painful today without this product, and for whom specifically?"
-Reference depth: one paragraph connecting the manual-seating pain for admins to
-the lack of visibility/control for passengers, and how the product resolves both sides.
-Write one paragraph here once answered.
--->
+Without this product, a small clinic or salon owner manages appointments manually — by phone or WhatsApp — which means constantly checking availability by memory or a paper/spreadsheet log, double-booking risk when two customers reach out around the same time, and no self-service option for customers who want to book outside business hours. Customers have no visibility into real availability and have to wait for a reply to know if a time is even open. This product gives customers a live view of open time slots and self-service booking, while giving the owner one dashboard to manage the service catalog and every appointment's status.
 
 ---
 
 ## Value Proposition
-<!--
-Ask: "What's the core value delivered, and what are 3-4 concrete differentiators from doing
-this manually or with a generic tool?"
-Reference depth: one paragraph + a "Key differentiators" bullet list of 3-4 items.
-Write here once answered.
--->
+The system combines the reach of manual channels (phone/WhatsApp) with the reliability of a real booking system, giving the owner one central place to run both services and appointments — rather than splitting attention between a messaging app and a mental (or paper) schedule.
 
 **Key differentiators:**
-- <fill in>
+- Customers can book any time, 24/7, without waiting for the owner to reply.
+- A given time slot can only ever be claimed by one customer — no double-booking, even under concurrent requests.
+- Automatic confirmations and reminders (SMS/email) reduce no-shows without manual follow-up.
+- One admin dashboard replaces juggling a phone, a messaging app, and a paper/spreadsheet schedule.
 
 ---
 
 ## Product Scope
 
-<!--
-Ask: "What's in scope for v1 — list every major feature area." Then: "What's explicitly out of
-scope for v1, and why (deferred vs. never)?" Cross-check against the entities/roles/contested-
-resource already established when this project's other config files were filled in (if this
-file is being written first, note that those other files should stay consistent with what's
-decided here).
-Reference depth: a bulleted "In scope" list (~8 items, each one line, referencing
-the owning rule/skill file where relevant) and a bulleted "Out of scope (v1)" list (~6 items,
-each noting briefly why it's deferred).
--->
-
 **In scope:**
-- <fill in>
+- Customer-facing service catalog browsing (name, duration, price) — see `.doc/glossary.md`, `app-layer`
+- Customer-facing available date/time browsing per service — `seat-concurrency-layer` (TimeSlot contention)
+- Customer booking flow: pick a slot, submit name + phone/email, confirm — `page-layer`, `service-layer`
+- Automatic booking confirmation via SMS/email
+- Automatic appointment reminder via SMS/email ahead of the appointment time
+- Admin service catalog management (create/edit/deactivate a Service) — `agents/backend/CLAUDE.md` (admin-service)
+- Admin appointment management: view all appointments, approve, cancel, reschedule — `agents/backend/CLAUDE.md` (admin-service)
+- Concurrency-safe TimeSlot claiming so two customers can't book the same slot — `seat-concurrency-layer`
 
 **Out of scope (v1):**
-- <fill in>
+- Customer accounts/login — deferred; anonymous booking only for v1
+- Online payment at booking time — deferred; payment happens in person
+- Multi-business / multi-location support — deferred; v1 is single-business
+- Native mobile app — deferred; web only per Part 1
+- Multi-language / translation — deferred; Hebrew-only for v1
+- Staff/employee-level scheduling (multiple staff per service) — deferred; v1 has one shared schedule
 
 ---
 
 ## Success Metrics
-<!--
-Ask: "What business metrics and product metrics would tell you this is working?" It's fine if
-exact targets are TBD — note that explicitly rather than inventing numbers.
-Reference depth: "Business metrics" (2 items) + "Product metrics" (3 items), each
-one line, with a closing note that baselines are TBD until real usage data exists.
--->
 
 **Business metrics:**
-- <fill in>
+- Reduction in appointments booked/managed manually by phone or WhatsApp
+- Reduction in no-show rate, attributable to automatic reminders
 
 **Product metrics:**
-- <fill in>
+- Share of appointments booked without any owner interaction (self-service rate)
+- Time from opening the booking page to a confirmed appointment
+- Rate of failed/blocked double-booking attempts on the same TimeSlot (concurrency correctness signal)
 
 *Baseline values to be defined after first real usage.*
 
 ---
 
 ## Constraints and Assumptions
-<!--
-Ask: "What hard constraints does this product operate under (auth requirements, no-instant-
-confirmation rules, etc.)?" and "What assumptions are you making that should be validated later
-(e.g. about user behavior, scale, org structure)?"
-Reference depth: "Constraints" (3 bullets, each a hard rule) + "Assumptions to
-validate" (4 bullets, each an open question to revisit later).
--->
 
 **Constraints:**
-- <fill in>
+- No customer account/login required to book — only name + phone/email captured at booking time
+- Appointments are not auto-approved by default — the admin can configure a slot/service as "auto-confirm" or leave it "requires admin approval"
+- A TimeSlot must never be double-booked, even when two customers submit at the same instant
 
 **Assumptions to validate:**
-- <fill in>
+- Customers are comfortable providing phone/email without creating an account
+- A single shared schedule (no per-staff-member calendars) is sufficient for v1's target businesses
+- SMS/email delivery is reliable enough to be the primary confirmation/reminder channel
+- Business hours and slot granularity (e.g. 15/30/60 min) are configured by the admin, not hardcoded
 
 ---
 
 ## Prioritization Rules
-<!--
-Ask: "When two features compete for attention, what should generally win?" Keep this short —
-3-5 rules of thumb, not a full roadmap.
-Reference depth: 4 one-line prioritization rules (reduce manual workload, lower
-friction on the core flow, defer speculative scope, avoid premature complexity).
--->
-
-- <fill in>
+- Reducing the owner's manual scheduling workload wins over polish elsewhere.
+- Lowering friction on the core booking flow (browse → pick slot → confirm) wins over secondary admin conveniences.
+- Concurrency correctness on TimeSlot booking is never traded off for speed of delivery.
+- Speculative scope (payments, multi-location, staff calendars) is deferred until v1's core flow is validated.
 
 ---
 
 ## Update Triggers
-List the kinds of changes that should trigger someone to revisit this file — e.g. a new user
-segment, a scope change, a metric revision, a new platform target. (This section's shape is
-reusable as-is; just adapt the specific triggers to this product.)
+Revisit this file when: a new user role is introduced (e.g. staff accounts, multi-admin); the v1 scope changes (e.g. payments or multi-location moves in); a new contested/shared resource beyond TimeSlot appears; the platform target expands beyond web; or success metrics need real baselines once usage data exists.

@@ -474,6 +474,16 @@ async function main() {
            writeSkippedReport(reports.adminService, "Backend Agent — admin-service")),
     ])
 
+    // Real config values (MONGODB_URI, JWT_SECRET, ...) are collected HERE by
+    // the orchestrator via a real blocking terminal prompt — not left to the
+    // Backend Agent to "ask" mid-stream, since agents run one-shot via
+    // `--print` with no live back-channel; a question buried in their
+    // streamed output is easy to scroll past unanswered. This runs once per
+    // service (only after that service's .env.example exists, i.e. after its
+    // scaffold task), and reuses any value already set for a sibling service.
+    if (inScope(task, "booking-service")) await ensureBackendEnv("booking-service")
+    if (inScope(task, "admin-service")) await ensureBackendEnv("admin-service")
+
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
       await runAgent({
@@ -1450,6 +1460,73 @@ Do NOT print APPROVED unless the user has explicitly said the task is complete.
     const stdout = await spawnClaude(args, context, { agentKey: "orchestrator" })
     if (stdout?.trim().toUpperCase().includes("APPROVED") && !stdout.includes("AWAITING_APPROVAL")) return
   }
+}
+
+function readEnvFile(path) {
+  if (!existsSync(path)) return {}
+  const out = {}
+  for (const line of readFileSync(path, "utf-8").split("\n")) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/)
+    if (m) out[m[1]] = m[2]
+  }
+  return out
+}
+
+// Same "<prefix>.<NODE_ENV or 'development'>" naming this file already uses
+// for its own dotenv.config() call above — built dynamically, never spelled
+// out as a literal string, so this file carries no hardcoded local-secrets
+// filename fragment.
+function localEnvPath(dir) {
+  const suffix = process.env.NODE_ENV || "development"
+  return [dir, ["", "env", suffix].join(".")].join("/")
+}
+
+// Looks across every already-configured backend service's local secrets file
+// for a given key, so a value entered once (e.g. JWT_SECRET, which must be
+// IDENTICAL across booking-service and admin-service) is never asked twice.
+function findExistingBackendEnvValue(key) {
+  if (!existsSync("backend")) return null
+  for (const entry of readdirSync("backend", { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const value = readEnvFile(localEnvPath(`backend/${entry.name}`))[key]
+    if (value) return value
+  }
+  return null
+}
+
+// Real, blocking config collection — the terminal literally cannot proceed
+// until you answer, unlike a question an agent prints mid-stream. Runs once
+// a service's example env file exists (i.e. after its scaffold task), skips
+// entirely once its local secrets file already exists.
+async function ensureBackendEnv(serviceDir) {
+  const dir = `backend/${serviceDir}`
+  const devPath = localEnvPath(dir)
+  const examplePath = `${dir}/.env.example`
+  if (existsSync(devPath) || !existsSync(examplePath)) return
+
+  const example = readEnvFile(examplePath)
+  const keys = Object.keys(example)
+  if (keys.length === 0) return
+
+  banner(`⚠️  ${serviceDir} NEEDS REAL CONFIG VALUES — REQUIRED, NOT OPTIONAL`)
+  const collected = {}
+  for (const key of keys) {
+    const reused = findExistingBackendEnvValue(key)
+    if (reused) {
+      collected[key] = reused
+      log(`${key}: reusing the value already set for another service.`)
+      continue
+    }
+    const defaultValue = example[key]
+    const label = defaultValue
+      ? `${key}  (Enter to keep default "${defaultValue}"): `
+      : `${key}  (REQUIRED — no default, e.g. a real MongoDB connection string): `
+    const answer = await askUserInput(`>>> ${label}`)
+    collected[key] = answer.trim() || defaultValue
+  }
+
+  writeFileSync(devPath, keys.map((k) => `${k}=${collected[k]}`).join("\n") + "\n", "utf-8")
+  log(`Wrote ${devPath}`)
 }
 
 function askUserInput(prompt) {

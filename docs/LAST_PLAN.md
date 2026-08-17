@@ -1,48 +1,48 @@
 # Plan 003 — Install frontend dependencies (Tailwind v4, Zustand, Axios, sonner, lucide-react, framer-motion, jwt-decode)
 
-Status: draft
+Status: approved
 Owner: orchestrator
 Last updated: 2026-08-17
 Scope-Agents: none
 
 ## Goal
-Install the npm dependencies already declared in `frontend/package.json` (Tailwind v4 via `@tailwindcss/vite`, `zustand`, `axios`, `sonner`, `lucide-react`, `framer-motion`, `jwt-decode`, plus `react-router-dom`, `clsx`, `tailwind-merge`) so the frontend project scaffolded in Plan 001 has a working `node_modules/` and can build/run.
+Install the frontend npm dependencies already declared in `frontend/package.json` — Tailwind CSS v4 (`tailwindcss`, `@tailwindcss/vite`), `zustand`, `axios`, `sonner`, `lucide-react`, `framer-motion`, `jwt-decode`, plus their existing peers (`react-router-dom`, `clsx`, `tailwind-merge`) — so the frontend project (scaffolded in Plan 001) has a working `node_modules/` and can build/run without missing-module errors.
 
 ## Scope
-- In scope: running `npm install` inside `frontend/`, verifying `frontend/node_modules/` and `frontend/package-lock.json` are consistent with `frontend/package.json`, sanity-checking the dev server / build starts without missing-module errors.
-- Out of scope: adding, removing, or upgrading any dependency versions (all target packages are already listed in `frontend/package.json` per Plan 001's scaffold); writing any application/product code (components, stores, routes); configuring Tailwind's theme/tokens (that belongs to `css-layer`-driven UI work); installing dependencies in `backend/*` or repo root (covered by other plans).
+- In scope: running `npm install` inside `frontend/`, verifying `node_modules/` and `frontend/package-lock.json` are consistent with `frontend/package.json`.
+- Out of scope: adding, removing, or changing any dependency version in `frontend/package.json` (all target packages are already declared there per Plan 001's scaffold); writing any application code, Tailwind config, or store/service code that *uses* these libraries; installing dependencies elsewhere (root or `backend/*`, covered by other plans).
 
 ## Assumptions
-- `frontend/package.json` already lists all required packages (confirmed: `axios`, `clsx`, `framer-motion`, `jwt-decode`, `lucide-react`, `react-router-dom`, `sonner`, `tailwind-merge`, `zustand` as dependencies; `@tailwindcss/vite`, `tailwindcss` as devDependencies) — this task installs them, it does not add them.
-- npm is the package manager in use for `frontend/` (matches existing `frontend/package-lock.json`).
-- Node version is whatever is already available in the environment; no new `.nvmrc` pinning is introduced by this task.
-- This is a pure dependency-install task with no product/API code changes, matching the pattern of Plan 002.
+- `frontend/package.json` (created by Plan 001) already lists every target dependency — Tailwind v4, Zustand, Axios, sonner, lucide-react, framer-motion, jwt-decode — under `dependencies`/`devDependencies` with pinned semver ranges, so this task is a pure install, not a dependency-selection task.
+- npm is the package manager in use (matches existing `frontend/package-lock.json`).
+- `frontend/node_modules` may already exist from Plan 001's scaffold step; this task's job is to ensure it's fully populated and lockfile-consistent, re-running install if needed.
+- No Tailwind config wiring, PostCSS setup, or CSS entrypoint changes are performed here — that's application/UI work for a later task under the `css-layer` skill.
 
 ## Open Questions
-1. Should Tailwind's CSS entry (`@import "tailwindcss"` in the main stylesheet) and `vite.config.ts` plugin wiring be verified/added as part of this task, or left strictly to a later UI-layer task?
-   - Recommended: verify only that the packages installed correctly (e.g. `@tailwindcss/vite` resolves); leave actual CSS/theme wiring to the `css-layer` skill work in a dedicated UI setup plan, keeping this task a pure install step.
-
+1. Since all target packages are already in `frontend/package.json`, is a plain `npm install` sufficient, or should versions be re-pinned/upgraded as part of this task?
+   - Recommended: plain `npm install` only — version selection was already decided when Plan 001 scaffolded `frontend/package.json`; re-pinning is out of scope and would blur task boundaries.
+   - *HUMAN ANSWER*: as recommended
+   
 ## Steps
-1. `frontend/`: run `npm install` to install all dependencies and devDependencies declared in `frontend/package.json`.
-2. `frontend/`: confirm `frontend/node_modules/` is created/updated and `frontend/package-lock.json` remains consistent (no unexpected version diffs since no versions are being changed).
-3. `frontend/`: spot-check that the target packages resolve, e.g. `node -e "require.resolve('axios'); require.resolve('zustand')"` or equivalent, and that `@tailwindcss/vite`, `sonner`, `lucide-react`, `framer-motion`, `jwt-decode` are present under `frontend/node_modules/`.
-4. `frontend/`: run `npm run build` (or `vite --version` / a quick `npm run dev` smoke start) to confirm the toolchain (Vite + Tailwind v4 plugin + TypeScript) loads without missing-module errors.
+1. `frontend/`: run `npm install` to install all declared dependencies and devDependencies (Tailwind v4, Zustand, Axios, sonner, lucide-react, framer-motion, jwt-decode, and their peers).
+2. `frontend/`: confirm `node_modules/` contains each target package (`tailwindcss`, `@tailwindcss/vite`, `zustand`, `axios`, `sonner`, `lucide-react`, `framer-motion`, `jwt-decode`).
+3. `frontend/`: confirm `package-lock.json` remains consistent (no unexpected diff since no versions are being changed).
 
 ## Validation
-- `npm install` in `frontend/` exits with code 0 and no errors.
-- `frontend/node_modules/` contains `axios`, `zustand`, `sonner`, `lucide-react`, `framer-motion`, `jwt-decode`, `@tailwindcss/vite`, `tailwindcss`, `react-router-dom`, `clsx`, `tailwind-merge`.
+- `npm install` inside `frontend/` exits with code 0 and no errors.
+- Each target package directory exists under `frontend/node_modules/` (spot-check `tailwindcss`, `zustand`, `axios`, `sonner`, `lucide-react`, `framer-motion`, `jwt-decode`, `@tailwindcss/vite`).
 - `git diff -- frontend/package-lock.json` shows no unintended version changes.
-- `npm run build` (or a dev-server smoke start) in `frontend/` completes without "module not found" errors.
+- `npm run build` (or `npx tsc -b --noEmit`) inside `frontend/` does not fail with a "module not found" error for any of the installed packages.
 
 ## Risks
-- Low risk: pure tooling/dependency-install task with no product code, no API changes, no auth, and no data changes — does not touch `booking-service` or `admin-service`, and introduces no new attack surface.
+- Low risk: pure dependency-install task with no product code, no API, no auth, and no data changes — no backend service is touched and no `Scope-Agents` beyond `none` is warranted.
 - Stale or divergent `frontend/package-lock.json` could cause `npm install` to modify the lockfile unexpectedly; mitigated by checking `git diff` after install (Validation step).
-- Tailwind v4's plugin-based setup (`@tailwindcss/vite`) differs from v3's PostCSS config; if a later task assumes v3-style config it will fail — flagged here so the follow-up CSS-wiring task is aware, but no config changes are made in this task.
+- Tailwind v4's `@tailwindcss/vite` plugin requires corresponding `vite.config.ts` wiring to actually take effect — not installing it correctly would only surface later, in UI work; this task only guarantees the package is present, not wired.
 
 ## Rollout Order
-1. Run `npm install` in `frontend/`.
-2. Verify `frontend/node_modules/` and lockfile state.
-3. Smoke-check the build/dev toolchain loads all installed packages.
+1. Run `npm install` inside `frontend/`.
+2. Verify `node_modules/` contents and lockfile state.
+3. Sanity-check the frontend build/type-check does not fail on missing modules.
 
 ## Rollback
 - Delete `frontend/node_modules/`; `frontend/package.json` and `frontend/package-lock.json` are unaffected since no versions are changed, so rollback is a clean, no-risk removal.

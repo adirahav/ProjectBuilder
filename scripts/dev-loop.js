@@ -275,6 +275,9 @@ function printCostTable(taskLabel) {
 async function main() {
   banner("DEV LOOP ORCHESTRATOR — BOOKME")
 
+  const BASE_BRANCH = getBaseBranch()
+  log(`Base branch: '${BASE_BRANCH}' — every task branches from here and merges back here, only after your approval.`)
+
   USD_TO_NIS = await fetchUsdToNis()
   log(`Exchange rate: 1 USD = ₪${USD_TO_NIS} (ILS)`)
 
@@ -317,8 +320,8 @@ async function main() {
       ? ""
       : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ")
 
-    const branchName = `task/${task.slug}`
-    createGitBranch(branchName)
+    const branchName = `${BASE_BRANCH}-tasks/${task.slug}`
+    createGitBranch(branchName, BASE_BRANCH)
 
     let planPath
     if (planResumable) {
@@ -527,6 +530,7 @@ async function main() {
     markBacklogTaskDone(task)
     clearTaskState(task.slug)
     commitTaskChanges(task, branchName)
+    await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     printCostTable(task.title)
     log(`Task complete: ${task.title}`)
   }
@@ -1308,23 +1312,40 @@ Deliver ${task.title} in the existing product.
 
 // ─── Git ──────────────────────────────────────────────────────────────────────
 
-function createGitBranch(branch) {
+// The branch dev-loop.js was launched from — every task branches fresh from
+// here and merges back here, after approval. main/master is sacred: this
+// loop refuses to run against it at all, since an unattended per-task merge
+// loop is exactly the kind of thing that should never target main directly.
+function getBaseBranch() {
+  const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim()
+  if (branch === "main" || branch === "master") {
+    printRed(`Refusing to run: current branch is '${branch}'. main/master is sacred — dev-loop.js never branches from or merges into it.`)
+    printRed(`Check out your own base branch first (e.g. 'git checkout booking_clinic_appointment'), then rerun.`)
+    process.exit(1)
+  }
+  return branch
+}
+
+// Always branches fresh from BASE_BRANCH — never stacks a task on top of
+// wherever HEAD happens to be (e.g. the previous task's branch), since that
+// would silently carry forward unmerged/unreviewed work between tasks.
+function createGitBranch(branch, baseBranch) {
+  execSync(`git checkout ${baseBranch}`, { stdio: "inherit" })
   try {
     execSync(`git rev-parse --verify ${branch}`, { stdio: "ignore" })
     log(`Git branch '${branch}' already exists — checking it out.`)
     execSync(`git checkout ${branch}`, { stdio: "inherit" })
   } catch {
-    log(`Creating git branch: ${branch}`)
+    log(`Creating git branch: ${branch} (from '${baseBranch}')`)
     execSync(`git checkout -b ${branch}`, { stdio: "inherit" })
   }
 }
 
 // Commits everything this task touched, LOCALLY, on the task's own branch —
-// and nothing more. dev-loop.js never pushes and never merges/switches to
-// main; that is always a deliberate, separate action for a human to take.
-// Without this, a whole task's work (and everything from the previous task,
-// if this step is ever skipped) sits as uncommitted working-tree state that
-// the next task's `git checkout -b` can silently carry forward or clobber.
+// and nothing more. Pushing/merging back to BASE_BRANCH is a separate,
+// explicitly-approved step (pushAndMergeTaskBranch, below) — never bundled
+// into this commit step, so a crash between the two never leaves an
+// unreviewed merge sitting on the base branch.
 function commitTaskChanges(task, branch) {
   try {
     execSync("git add -A", { stdio: "inherit" })
@@ -1341,15 +1362,42 @@ function commitTaskChanges(task, branch) {
         task.title,
         "",
         "Automated local commit by dev-loop.js after this task's agents finished.",
-        "Not pushed, not merged to main — review and do that yourself when ready.",
       ].join("\n"),
       "utf-8",
     )
     execSync(`git commit -F "${msgFile}"`, { stdio: "inherit" })
     rmSync(msgFile)
-    log(`Committed locally on branch '${branch}'. Nothing was pushed or merged — that's on you: review, then push/merge to main when you're ready.`)
+    log(`Committed locally on branch '${branch}'.`)
   } catch (e) {
     warn(`Auto-commit failed (${e.message}). Your changes for '${task.title}' are still sitting uncommitted on branch '${branch}' — commit them manually before letting the loop continue.`)
+  }
+}
+
+// Approval gate: nothing gets pushed or merged into BASE_BRANCH without an
+// explicit APPROVED from the human. main/master can never be a merge target
+// here — getBaseBranch() already refused to run if that were the case.
+async function pushAndMergeTaskBranch(task, branch, baseBranch) {
+  const answer = await askUserInput(
+    `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
+  )
+  if (answer.trim().toUpperCase() !== "APPROVED") {
+    log(`Leaving '${branch}' unmerged and unpushed — merge it into '${baseBranch}' yourself when ready.`)
+    return
+  }
+
+  try {
+    const hasRemote = execSync("git remote", { encoding: "utf-8" }).trim().length > 0
+    if (hasRemote) {
+      execSync(`git push -u origin ${branch}`, { stdio: "inherit" })
+    } else {
+      log("No git remote configured — skipping push, merging locally only.")
+    }
+
+    execSync(`git checkout ${baseBranch}`, { stdio: "inherit" })
+    execSync(`git merge --no-ff ${branch} -m "Merge ${branch} into ${baseBranch}: ${task.title}"`, { stdio: "inherit" })
+    log(`Merged '${branch}' into '${baseBranch}'.`)
+  } catch (e) {
+    warn(`Push/merge failed (${e.message}). '${branch}' is still committed and intact — resolve manually (conflicts, auth, etc.), then merge it into '${baseBranch}' yourself.`)
   }
 }
 

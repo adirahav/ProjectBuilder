@@ -7,10 +7,13 @@ info:
     booking-service owns the Service, TimeSlot and Appointment entities for the
     Dog Grooming Appointment Booking System.
 
-    Scope of this revision: PRD F1 only — the public, unauthenticated Service
-    list consumed by Screen 1 (Service List). TimeSlot and Appointment routes
-    (F2-F4b) and the Admin Service writes (F6-F8) are defined by their own
-    tickets and are deliberately absent here.
+    Scope of this revision: PRD F1 (the public Service list consumed by Screen 1)
+    plus F2/F3/F3b — the public TimeSlot availability query and the atomic hold
+    consumed by Screen 2 (Time Slot Picker). Appointment creation (F4/F4b) and
+    the Admin Service writes (F6-F8) are defined by their own tickets and are
+    deliberately absent here.
+
+    Every route below is public and unauthenticated by design.
 
 servers:
   - url: http://localhost:4001
@@ -19,6 +22,8 @@ servers:
 tags:
   - name: Service
     description: Treatments the clinic offers.
+  - name: TimeSlot
+    description: Bookable windows for a Service on a given day.
 
 paths:
   /api/services:
@@ -75,6 +80,184 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/time-slots:
+    get:
+      tags: [TimeSlot]
+      operationId: listOpenTimeSlots
+      summary: List the bookable TimeSlots for one Service on one day
+      description: >
+        Public and unauthenticated (PRD F2). Returns ONLY slots whose effective
+        status is `open` for that Service and calendar day. A slot that is
+        `held` or `booked` must never appear in this response — the frontend
+        filters defensively, but it treats every returned slot as claimable.
+
+        Lazy hold expiry (PRD F3b): a `held` slot whose `heldAt` is older than
+        the hold TTL has effectively expired and MUST be returned here as
+        available, with `status: "open"`. There is no background sweeper yet, so
+        this read is what heals a stale hold.
+
+        Both query parameters are required. Reject a missing or malformed
+        `date` (anything that is not a real `YYYY-MM-DD` day) or an invalid
+        `serviceId` with 400 rather than coercing it — and never merge raw query
+        input into the database filter.
+      security: []
+      parameters:
+        - name: serviceId
+          in: query
+          required: true
+          description: The Service whose availability is being browsed.
+          schema:
+            type: string
+            format: uuid
+          example: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+        - name: date
+          in: query
+          required: true
+          description: >
+            The calendar day, in the clinic's local timezone. A plain calendar
+            day, never a UTC instant — the clinic is single-location and the
+            wall-clock day is what a customer picks.
+          schema:
+            type: string
+            format: date
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+          example: '2026-08-18'
+      responses:
+        '200':
+          description: >
+            The bookable slots for that Service and day. An empty array is a
+            valid, expected result — a fully booked day is not an error.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TimeSlot'
+              examples:
+                populated:
+                  summary: Two bookable slots
+                  value:
+                    - id: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                      serviceId: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+                      date: '2026-08-18'
+                      startTime: '09:00'
+                      endTime: '10:30'
+                      status: open
+                    - id: 5e7f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b
+                      serviceId: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+                      date: '2026-08-18'
+                      startTime: '11:00'
+                      endTime: '12:30'
+                      status: open
+                fullyBooked:
+                  summary: Nothing left that day
+                  value: []
+        '400':
+          description: A missing/malformed `serviceId` or `date`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/time-slots/{id}/hold:
+    post:
+      tags: [TimeSlot]
+      operationId: holdTimeSlot
+      summary: Atomically claim an open TimeSlot
+      description: >
+        Public and unauthenticated (PRD F3). Transitions the slot `open` →
+        `held` and stamps `heldAt`, so the customer can complete Screen 3
+        without losing the time to someone else.
+
+        This MUST be a single atomic conditional update — e.g.
+        `findOneAndUpdate({ _id, status: 'open' }, { $set: { status: 'held',
+        heldAt: now } })` — so the datastore itself enforces exclusivity. A
+        read-then-write is a race and is not acceptable here: two simultaneous
+        requests for the same slot must resolve to exactly one 200 and one 409,
+        never two 200s (see `seat-concurrency-layer`).
+
+        A slot whose hold has already expired past the TTL counts as `open` for
+        this transition and may be re-held.
+
+        The request has no body. This endpoint mutates state without auth by
+        design; it is a deliberate abuse surface, and rate limiting is a known
+        follow-up rather than something silently assumed here.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The TimeSlot being claimed.
+          schema:
+            type: string
+            format: uuid
+          example: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+      responses:
+        '200':
+          description: >
+            The hold succeeded. Returns the updated slot, which the client
+            treats as the only proof the hold landed — it never assumes success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeSlot'
+              example:
+                id: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                serviceId: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+                date: '2026-08-18'
+                startTime: '09:00'
+                endTime: '10:30'
+                status: held
+        '400':
+          description: The `id` is not a well-formed identifier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No TimeSlot with that id exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            The conditional update matched zero documents: the slot is already
+            `held` (unexpired) or `booked`. This is an expected outcome of
+            normal concurrent use, not a fault — the frontend maps it to a
+            specific "that time was just taken" message and re-fetches the list,
+            distinct from how it treats any other failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: TimeSlot is no longer open
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   schemas:
     Service:
@@ -113,6 +296,63 @@ components:
             it filters on it; included so the same schema serves the Admin list
             (F6-F8), which does return inactive records.
           example: true
+
+    TimeSlot:
+      type: object
+      description: >
+        One bookable window for a Service on a given day. As with Service, the
+        client-facing identifier is always `id`, the record's uuid — Mongo's
+        `_id` and `__v` are internal and must be stripped by the model's toJSON
+        transform (.rule/database-rules.md, "External Identity").
+
+        `heldAt` is deliberately NOT part of this payload: the hold deadline is
+        server-side bookkeeping, and exposing it would invite a client to
+        second-guess an expiry only the server can decide.
+      required: [id, serviceId, date, startTime, endTime, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The TimeSlot's uuid. Never a Mongo ObjectId.
+          example: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+        serviceId:
+          type: string
+          format: uuid
+          description: The Service this window is bookable for.
+          example: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+        date:
+          type: string
+          format: date
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+          description: >
+            The calendar day in the clinic's local timezone. A plain day string,
+            never a UTC instant, so the day can never shift under a client.
+          example: '2026-08-18'
+        startTime:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          description: >
+            Wall-clock start in 24h `HH:mm`. Carries no timezone by design — the
+            client renders it verbatim rather than re-parsing it into a Date.
+          example: '09:00'
+        endTime:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          description: Wall-clock end in 24h `HH:mm`.
+          example: '10:30'
+        status:
+          type: string
+          enum: [open, held, booked]
+          description: >
+            `open` — bookable by anyone.
+            `held` — transiently claimed by a customer mid-checkout; expires
+            server-side back to `open` after the hold TTL.
+            `booked` — finalized into an Appointment.
+
+            The public list endpoint only ever returns `open`; `held` is what a
+            successful hold responds with.
+          example: open
 
     Error:
       type: object

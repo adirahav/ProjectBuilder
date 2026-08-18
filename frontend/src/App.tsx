@@ -5,7 +5,8 @@ import { Toaster } from 'sonner'
 import { AppHeader } from './components/layout/AppHeader'
 import { SkipLink } from './components/common/SkipLink'
 import { ServiceListPage } from './pages/ServiceListPage'
-import { BookPage } from './pages/BookPage'
+import { TimeSlotPickerPage } from './pages/TimeSlotPickerPage'
+import { CustomerDetailsPage } from './pages/CustomerDetailsPage'
 import { useDocumentDirection } from './hooks/useI18n'
 import { useStore } from './store/store'
 import { directionFor } from './store/slices/app.slice'
@@ -36,7 +37,8 @@ export function AppRoutes() {
 
       <Routes>
         <Route path="/" element={<ServiceListPage />} />
-        <Route path="/book/:serviceId" element={<BookPage />} />
+        <Route path="/book/:serviceId" element={<TimeSlotPickerPage />} />
+        <Route path="/book/:serviceId/details" element={<CustomerDetailsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

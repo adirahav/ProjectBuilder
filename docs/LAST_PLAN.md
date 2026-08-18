@@ -1,6 +1,6 @@
 # Plan 008 — Time Slot Picker page (date/slot selection, hold-on-select)
 
-- Status: draft
+- Status: active
 - Owner: orchestrator
 - Last updated: 2026-08-18
 - Scope-Agents: frontend, booking-service, qa, security

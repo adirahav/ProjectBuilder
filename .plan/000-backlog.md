@@ -2,7 +2,7 @@
 
 Current queue:
 
-- [ ] Scaffold frontend project (Vite + React + TypeScript + Tailwind v4) | scope: none | cmd: npm create vite@latest frontend -- --template react-ts
+- [x] Scaffold frontend project (Vite + React + TypeScript + Tailwind v4) | scope: none | cmd: npm create vite@latest frontend -- --template react-ts
 - [ ] Install root and frontend dependencies (Zustand, Axios, lucide-react, sonner, framer-motion, clsx, tailwind-merge) | scope: none
 - [ ] Scaffold api-gateway service (package.json, Express, health check) | scope: gateway
 - [ ] Scaffold booking-service (package.json, Express, Mongoose, health check) | scope: booking-service

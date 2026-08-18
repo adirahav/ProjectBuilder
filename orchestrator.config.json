@@ -1,5 +1,6 @@
 {
   "autoApprovePlans": true,
+  "autoMergeTasks": true,
   "linearEnabled": false,
   "designSource": "NONE"
 }

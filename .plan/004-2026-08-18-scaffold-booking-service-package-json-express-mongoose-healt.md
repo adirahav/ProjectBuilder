@@ -1,6 +1,6 @@
 # Plan 004 — Scaffold booking-service (package.json, Express, Mongoose, health check)
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-18
 - Scope-Agents: booking-service, security, qa

@@ -57,7 +57,7 @@ Show:
 
 In Terminal 1 (Orchestrator pane):
 ```bash
-node scripts/dev-loop.js
+node development/dev-loop.js
 ```
 
 The orchestrator will:

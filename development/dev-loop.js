@@ -60,12 +60,66 @@ function modelFor(operation) {
 
 const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || getArg("--claude-permission-mode") || "bypassPermissions"
 const CLAUDE_ALLOWED_TOOLS = process.env.CLAUDE_ALLOWED_TOOLS || getArg("--claude-allowed-tools")
-// When set, the plan-review gate never stops to wait on a human — it accepts
-// the orchestrator's own "- Recommended: ..." answer on every Open Question
-// and proceeds automatically. Questions are still asked/answered IN the plan
-// file itself (the orchestrator still reasons through them) — this only
-// skips the terminal STOP-AND-ASK wait for a human to type APPROVED.
-const AUTO_APPROVE_PLANS = /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_PLANS || getArg("--auto-approve-plans") || "")
+
+// Orchestration/tooling settings (auto-approve behavior, design source,
+// whether Linear is wired up) — deliberately NOT environment variables.
+// None of these are secrets and none are read by the product's own runtime
+// code; they only steer this script's own behavior, so they live in a plain,
+// committed JSON file instead of an env file. This also sidesteps the
+// secret-file-access hook entirely (it only guards local env files), so any
+// Claude Code session — including the setup process itself — can read or
+// update this file directly, no workaround needed. NEW-PROJECT-SETUP-PROMPT.md
+// creates this file during setup, seeded from the "Approval mode" answer and
+// Part 1 Q9 (Linear tracker, design source) — it isn't a worked example to
+// adapt like most other template files.
+const ORCHESTRATOR_CONFIG_PATH = "orchestrator.config.json"
+
+function loadOrchestratorConfig() {
+  if (!existsSync(ORCHESTRATOR_CONFIG_PATH)) return {}
+  try {
+    return JSON.parse(readFileSync(ORCHESTRATOR_CONFIG_PATH, "utf-8"))
+  } catch {
+    return {}
+  }
+}
+
+// If orchestrator.config.json's autoApprovePlans is still unset/false and
+// the setup process's own "Approval mode: ungated" is on record in
+// .setup-progress.md, adopt it right now — before anything below reads the
+// config — instead of asking the same "should I stop and ask you" question a
+// second time. Plain JSON write, no hook involved, and it takes effect this
+// same run (not just the next one), since it happens before AUTO_APPROVE_PLANS
+// is computed below.
+function adoptApprovalModeFromSetup() {
+  const current = loadOrchestratorConfig()
+  if (current.autoApprovePlans) return // already true — nothing to adopt
+  if (process.env.AUTO_APPROVE_PLANS != null || getArg("--auto-approve-plans")) return // explicit override wins, don't touch the file
+
+  const progressPath = ".setup-progress.md"
+  if (!existsSync(progressPath)) return
+  const match = readFileSync(progressPath, "utf-8").match(/^Approval mode:\s*(gated|ungated)/im)
+  if (!match || match[1].toLowerCase() !== "ungated") return
+
+  const updated = { ...current, autoApprovePlans: true }
+  writeFileSync(ORCHESTRATOR_CONFIG_PATH, JSON.stringify(updated, null, 2) + "\n", "utf-8")
+  // Plain console.log, not the log() helper — this runs at module load time,
+  // before log()'s own AGENT_IDENTITY dependency further down the file has
+  // been defined yet (a `const` in its temporal dead zone at this point).
+  console.log(`Adopted "ungated" from .setup-progress.md — wrote autoApprovePlans: true to ${ORCHESTRATOR_CONFIG_PATH}.`)
+}
+adoptApprovalModeFromSetup()
+
+const orchestratorConfig = loadOrchestratorConfig()
+
+// When true, the plan-review gate never stops to wait on a human — it
+// accepts the orchestrator's own "- Recommended: ..." answer on every Open
+// Question and proceeds automatically. Questions are still asked/answered IN
+// the plan file itself (the orchestrator still reasons through them) — this
+// only skips the terminal STOP-AND-ASK wait for a human to type APPROVED.
+// A CLI flag/env var can still override the config file for a one-off run.
+const AUTO_APPROVE_PLANS = process.env.AUTO_APPROVE_PLANS != null || getArg("--auto-approve-plans")
+  ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_PLANS || getArg("--auto-approve-plans"))
+  : Boolean(orchestratorConfig.autoApprovePlans)
 
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
@@ -547,6 +601,7 @@ async function main() {
     clearTaskState(task.slug)
     commitTaskChanges(task, branchName)
     await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
+    openBrowserForTask(task)
     printCostTable(task.title)
     log(`Task complete: ${task.title}`)
   }
@@ -604,6 +659,32 @@ async function runTaskCommand(task) {
   }
 }
 
+// Opens the built page in the human's actual desktop browser (not headless)
+// right after a task finishes, so progress is visible without switching
+// windows to type a URL by hand. Assumes the frontend dev server is already
+// running separately (e.g. `npm --prefix frontend run dev`), same as every
+// other manual step in this workflow — this never starts that server itself.
+// Pages requiring login are opened as-is; no auto-login is attempted, so the
+// human logs in manually if the page redirects to an auth screen.
+const FRONTEND_DEV_URL = process.env.FRONTEND_DEV_URL || "http://localhost:5173"
+
+function openBrowserForTask(task) {
+  if (!task.url) return // no `url:` field on this backlog line — nothing to open
+
+  const fullUrl = `${FRONTEND_DEV_URL}${task.url}`
+  const openCmd =
+    process.platform === "win32" ? `start "" "${fullUrl}"` :
+    process.platform === "darwin" ? `open "${fullUrl}"` :
+    `xdg-open "${fullUrl}"`
+
+  try {
+    execSync(openCmd, { stdio: "ignore" })
+    log(`Opened in browser: ${fullUrl}`)
+  } catch (e) {
+    warn(`Could not open browser at ${fullUrl} (${e.message}) — open it manually to see this task's result.`)
+  }
+}
+
 function logSkip(label, reason) {
   log(`${label}: SKIP — ${reason}`)
 }
@@ -631,6 +712,7 @@ function getNextBacklogTask() {
 
     let scopeRaw = ""
     let cmd = ""
+    let url = ""
     for (const p of parts.slice(1)) {
       const kv = p.split(":")
       if (kv.length < 2) continue
@@ -638,9 +720,10 @@ function getNextBacklogTask() {
       const value = kv.slice(1).join(":").trim()
       if (key === "scope") scopeRaw = value
       if (key === "cmd") cmd = value
+      if (key === "url") url = value
     }
 
-    return { lineIndex: i, line, title, slug: slugify(title), scope: parseScope(scopeRaw), cmd: cmd || null }
+    return { lineIndex: i, title, slug: slugify(title), scope: parseScope(scopeRaw), cmd: cmd || null, url: url || null }
   }
 
   return null

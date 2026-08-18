@@ -13,9 +13,9 @@
  * the thing the Session 4 concept slide is about.
  *
  * Usage:
- *   node scripts/trace-agent.js --task "add dark theme support to the app"
+ *   node development/trace-agent.js --task "add dark theme support to the app"
  * 
- *   node scripts/trace-agent.js --task "Implement the contact info page per .plan/000-backlog.md" \
+ *   node development/trace-agent.js --task "Implement the contact info page per .plan/000-backlog.md" \
  *     [--system-prompt agents/frontend/CLAUDE.md] [--role frontend]
  *
  * Defaults to the frontend agent's system prompt if --system-prompt is omitted.
@@ -32,7 +32,7 @@ const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || getArg("--c
 const TRACE_FILE = "docs/trace-live.json"
 
 if (!TASK) {
-  console.error("Usage: node scripts/trace-agent.js --task \"<what the agent should do>\" [--system-prompt path] [--role name]")
+  console.error("Usage: node development/trace-agent.js --task \"<what the agent should do>\" [--system-prompt path] [--role name]")
   process.exit(1)
 }
 

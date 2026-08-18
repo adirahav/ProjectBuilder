@@ -8,45 +8,51 @@ references:
   - @seat-concurrency-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{MODEL_OWNERSHIP}}      — which service owns which models (single line if monolith)
-  {{MODELS_LIST}}          — list of models with core fields, for the schema examples below
-  {{SOFT_DELETE_MODELS}}   — which models are soft-deleted vs hard-deleted
-  {{SENSITIVE_FIELD_MODEL}} — model with a sensitive field to strip (e.g. Admin.passwordHash), if any
-  {{CONTESTED_ENTITY}}     — entity covered by seat-concurrency-layer, if any
-  {{REQUIRED_INDEXES}}     — table of model/index/reason rows
-Ask the user: "List your models and which service owns each." "Which models need soft-delete vs hard-delete, and which fields are sensitive?" "What indexes does each model need?"
--->
-
 # Mongoose Models Layer
 *Goal:* Keep every collection's shape, soft-delete behavior, and indexing consistent across all services, so no query anywhere in the codebase has to "remember" a rule that should be enforced by the schema itself.
 
 **Core Principle:** A rule that must be repeated in every service function is a rule that will eventually be forgotten in one of them. Push soft-delete filtering, sensitive-field stripping, and enum validation into the schema — not into the callers.
 
 ## Which Models Live Where
-{{MODEL_OWNERSHIP}}
+- `booking-service` owns `Service`, `TimeSlot`, `Appointment`.
+- `user-service` owns `Admin`.
+- `notification-service` owns no persistent domain model in v1 (may add its own delivery-log collection later).
 - No service ever imports or queries another service's models directly — cross-service data needs are stored as a plain `ObjectId`, not a live cross-database `ref` that gets populated, since separate services don't share a connection.
 
 ## Schema Definitions
 
 ```typescript
-// backend/<service>/src/models/<Model>.ts — repeat this pattern per model in {{MODELS_LIST}}
+// backend/booking-service/api/models/service.model.ts
 import { Schema, model } from 'mongoose'
+import { randomUUID } from 'crypto'
 
-const exampleSchema = new Schema({
-  // ...domain fields per model...
+const serviceSchema = new Schema({
+  uuid: { type: String, default: randomUUID, unique: true, index: true },
+  name: { type: String, required: true },
+  durationMinutes: { type: Number, required: true },
+  price: { type: Number, required: true },
+  isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
-  deletedAt: { type: Date, default: null }, // omit if this model is not soft-deleted — see {{SOFT_DELETE_MODELS}}
+  deletedAt: { type: Date, default: null },
 })
 
-export const Example = model('Example', exampleSchema)
+export const Service = model('Service', serviceSchema)
+
+// backend/user-service/api/models/admin.model.ts
+const adminSchema = new Schema({
+  uuid: { type: String, default: randomUUID, unique: true, index: true },
+  email: { type: String, required: true, unique: true },
+  passwordHash: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+})
+
+export const Admin = model('Admin', adminSchema)
 ```
 
-`{{CONTESTED_ENTITY}}`'s schema (if any) is covered in `@seat-concurrency-layer/SKILL.md` and `@backend-service-layer/SKILL.md` — its status enum and indexes are the one part of the codebase with its own dedicated skill; don't duplicate that schema definition here.
+`TimeSlot`'s and `Appointment`'s schemas are covered in `@seat-concurrency-layer/SKILL.md` and `@backend-service-layer/SKILL.md` — `TimeSlot`'s status enum and indexes are the one part of the codebase with its own dedicated skill; don't duplicate that schema definition here.
 
 ## Soft Delete — Enforce It in the Schema, Not the Caller
-{{SOFT_DELETE_MODELS}} are soft-deleted. Don't rely on every service function remembering to add `{ deletedAt: null }` — add a schema-level hook once, per model:
+`Service` (via `isActive`) and `Appointment` (via `status`/`deletedAt`) are soft-deleted; `TimeSlot` and `Admin` are not. Don't rely on every service function remembering to add `{ deletedAt: null }` — add a schema-level hook once, per model:
 
 ```typescript
 // applies to every soft-deleted model — add this block to each
@@ -58,22 +64,22 @@ function excludeDeleted(this: any, next: () => void) {
   next()
 }
 
-exampleSchema.pre('find', excludeDeleted)
-exampleSchema.pre('findOne', excludeDeleted)
-exampleSchema.pre('countDocuments', excludeDeleted)
+serviceSchema.pre('find', excludeDeleted)
+serviceSchema.pre('findOne', excludeDeleted)
+serviceSchema.pre('countDocuments', excludeDeleted)
 ```
 
 - A `DELETE` route calls `findByIdAndUpdate(id, { deletedAt: new Date() })` — never `findByIdAndDelete`/`deleteOne`.
 - If a service genuinely needs to see soft-deleted records (e.g. an admin "show archived" view), query with an explicit `{ deletedAt: { $ne: null } }` or `.setOptions({ skipSoftDeleteFilter: true })` rather than removing the hook.
 - Any model excluded from soft-delete (e.g. a child entity deleted/recreated with its parent) should say so explicitly here rather than silently lacking the hook.
 
-## Sensitive Field Stripping (fill in if applicable)
-`{{SENSITIVE_FIELD_MODEL}}` must never be serialized into an API response. Enforce this in the schema's `toJSON`, not by remembering to `.select('-<field>')` on every query:
+## Sensitive Field Stripping
+`Admin.passwordHash` must never be serialized into an API response. Enforce this in the schema's `toJSON`, not by remembering to `.select('-<field>')` on every query:
 
 ```typescript
-exampleSchema.set('toJSON', {
+adminSchema.set('toJSON', {
   transform: (_doc, ret) => {
-    delete ret.sensitiveField
+    delete ret.passwordHash
     return ret
   },
 })
@@ -83,14 +89,7 @@ exampleSchema.set('toJSON', {
 Same principle as sensitive-field stripping, applied to identity: `_id` is an internal Mongo ObjectId used for refs and queries; it must never reach a client. Every model additionally carries a `uuid` field, which is what clients see as `id`. Add both the field and the `toJSON` transform to **every** model — don't rely on controllers to map it per response:
 
 ```typescript
-import { randomUUID } from 'crypto'
-
-const exampleSchema = new Schema({
-  uuid: { type: String, default: randomUUID, unique: true, index: true },
-  // ...rest of the fields
-})
-
-exampleSchema.set('toJSON', {
+serviceSchema.set('toJSON', {
   transform: (_doc, ret) => {
     ret.id = ret.uuid
     delete ret._id
@@ -108,7 +107,14 @@ Combine this with any sensitive-field transform (both transforms run in the same
 **Embedded/lean responses:** `.lean()` queries bypass Mongoose document methods, including `toJSON` — if a service returns a `.lean()` result directly to a controller that serializes it, the `uuid`→`id` mapping and `_id` stripping must be done explicitly in the service (a small `toPublic()`-style helper), not assumed to happen automatically.
 
 ## Required Indexes
-{{REQUIRED_INDEXES}}
+| Model | Index | Reason |
+|---|---|---|
+| `Service` | `uuid` (unique) | client identity lookup |
+| `TimeSlot` | `uuid` (unique) | client identity lookup |
+| `TimeSlot` | `serviceId` + `status` (compound) | availability queries per service/date |
+| `Appointment` | `uuid` (unique) | client identity lookup |
+| `Appointment` | `timeSlotId` (unique) | one appointment per slot |
+| `Admin` | `uuid` (unique), `email` (unique) | client identity lookup, login lookup |
 
 Define indexes directly on the schema (`schema.index({...})`), not via a separate manual `createIndex` script — so they're created automatically wherever the app connects (dev, test, prod), and they're visible next to the schema they belong to.
 

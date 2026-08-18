@@ -1,22 +1,13 @@
 # Planning Rules
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{AGENT_ROLES}} — comma-separated list of specialist agents/services plans can scope to (e.g. "frontend, <service-1>, <service-2>, qa, security")
-  {{PLAN_DIR}} — plan directory, default `.plan/`
-  {{SERVICES_AND_PORTS}}
-Ask the user: "What are the names of the specialist agents/services that plans should scope to?"
-Delete this comment block once filled.
--->
-
 ## Purpose
 - Define how plans are created, reviewed, and executed in this repository.
 
 ## Plan Location and Lifecycle
-- Treat `{{PLAN_DIR}}` at the repository root as the source of truth for plans.
-- For any plan-related request, first read existing `{{PLAN_DIR}}*.md` plans, even when no specific plan file is referenced.
-- Save every new or updated implementation plan as a Markdown file in `{{PLAN_DIR}}`.
-- If `{{PLAN_DIR}}` does not exist, create it before writing plan files.
+- Treat `.plan/` at the repository root as the source of truth for plans.
+- For any plan-related request, first read existing `.plan/*.md` plans, even when no specific plan file is referenced.
+- Save every new or updated implementation plan as a Markdown file in `.plan/`.
+- If `.plan/` does not exist, create it before writing plan files.
 
 ## File Naming
 - Use this filename format for new plans: `001-YYYY-MM-DD-<topic>.md`.
@@ -40,7 +31,7 @@ Delete this comment block once filled.
 	- `Status:` `draft|active|done|superseded`
 	- `Owner:`
 	- `Last updated:` `YYYY-MM-DD`
-	- `Scope-Agents:` comma-separated subset of `{{AGENT_ROLES}}` — or `none` for pure tooling/config tasks with no product code. This is machine-parsed by the orchestrator to decide which agents actually run for this task, so it must be accurate, not a default.
+	- `Scope-Agents:` comma-separated subset of `frontend, booking-service, user-service, notification-service, qa, security` — or `none` for pure tooling/config tasks with no product code. This is machine-parsed by the orchestrator to decide which agents actually run for this task, so it must be accurate, not a default.
 		- Include `qa` unless the task genuinely has nothing to validate (e.g. dependency installs).
 		- Include a backend service only if this task adds/changes code in it, OR — even when only "confirming" existing endpoints — the `Risks` section of this same plan calls out a concurrency, auth, or data-integrity risk in that service. Do not exclude a backend service solely because "no new endpoints are expected" if the Risks section says otherwise; that self-contradiction is a known planning mistake.
 		- Include a gateway/deploy service only when the task's own Steps section assigns it work — omitting it from this line while still describing it as a deliverable in Steps is the same self-contradiction: the orchestrator only launches agents listed here, regardless of what Steps says.

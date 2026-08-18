@@ -5,7 +5,7 @@
  * This repo is a monorepo: `frontend/` + `backend/` with three services —
  * `gateway` (stateless reverse proxy in front of the other two; most tasks
  * won't scope it in, only deploy/production-setup tasks per
- * `agents/backend/CLAUDE.md`), `appointment-service` (owns Service, TimeSlot,
+ * `agents/backend/CLAUDE.md`), `booking-service` (owns Service, TimeSlot,
  * Appointment) and `user-service` (owns Admin accounts/auth). All three
  * backend services are built and run from here, via `agents/backend/CLAUDE.md`
  * (one shared prompt, parameterized per service). There is no external design
@@ -17,7 +17,7 @@
  *   1) Pick next task from .plan/000-backlog.md
  *   2) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
  *   3) Launch the Frontend agent (builds UI per .rule/style-rules.md, defines API contract(s))
- *   4) Launch Backend agents in parallel — gateway, appointment-service, and
+ *   4) Launch Backend agents in parallel — gateway, booking-service, and
  *      user-service — independent services, per .rule/architecture.md
  *   5) Launch QA validation
  *   6) Report done and wait for approval
@@ -51,8 +51,9 @@ const MODEL_FOR = {
   "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
   frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
   gateway:             "claude-opus-5",   // Backend Agent — gateway — multi-file code generation (reverse proxy/routing)
-  "appointment-service": "claude-opus-5", // Backend Agent — appointment-service — multi-file code generation, owns TimeSlot concurrency logic
+  "booking-service": "claude-opus-5", // Backend Agent — booking-service — multi-file code generation, owns TimeSlot concurrency logic
   "user-service":      "claude-opus-5",   // Backend Agent — user-service — multi-file code generation (auth + admin accounts)
+  "notification-service": "claude-opus-5", // Backend Agent — notification-service — multi-file code generation (server-to-server notification sending)
   qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
   security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
   "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
@@ -133,7 +134,7 @@ const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
-const ALL_AGENT_KEYS = ["orchestrator", "frontend", "gateway", "appointment-service", "user-service", "qa", "security"]
+const ALL_AGENT_KEYS = ["orchestrator", "frontend", "gateway", "booking-service", "user-service", "notification-service", "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -171,9 +172,10 @@ const RESET = "\x1b[0m"
 const AGENT_IDENTITY = {
   "orchestrator":         { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
   "frontend":             { icon: "🎨", color: "\x1b[35m", label: "frontend" },
-  "gateway":              { icon: "🔧", color: "\x1b[34m", label: " 🚪 gateway" },
-  "appointment-service":  { icon: "🔧", color: "\x1b[34m", label: " 📅 appointment-service" },
+  "gateway":              { icon: "🔧", color: "\x1b[34m", label:  " 🚪 api-gateway" },
+  "booking-service":  { icon: "🔧", color: "\x1b[34m", label: " 📅 booking-service" },
   "user-service":         { icon: "🔧", color: "\x1b[34m", label: " 🔑 user-service" },
+  "notification-service": { icon: "🔧", color: "\x1b[34m", label: " ✉️ notification-service" },
   "qa":                   { icon: "🐛", color: "\x1b[32m", label: "qa" },
   "security":             { icon: "🛡️", color: "\x1b[36m", label: "security" },
 }
@@ -491,7 +493,7 @@ async function main() {
       reports = makeReportPaths(task.slug, {
         frontend: tickets.frontend.id,
         gateway: tickets.gateway.id,
-        appointmentService: tickets.appointmentService.id,
+        bookingService: tickets.bookingService.id,
         userService: tickets.userService.id,
         qa: tickets.qa.id,
         security: tickets.security.id,
@@ -550,27 +552,27 @@ async function main() {
           })
         : (logSkip("Backend Agent — gateway", "out of scope for this task"),
            writeSkippedReport(reports.gateway, "Backend Agent — gateway")),
-      inScope(task, "appointment-service")
+      inScope(task, "booking-service")
         ? runAgent({
             systemPrompt: "agents/backend/CLAUDE.md",
             input: [
               `You are the Backend Agent.`,
               `Task: ${task.title}`,
-              `Task id: ${tickets.appointmentService.id}`,
-              `Service: appointment-service`,
-              `Port: ${BACKEND_PORTS.appointmentService}`,
-              `API contract: ${API_CONTRACTS.appointmentService}`,
+              `Task id: ${tickets.bookingService.id}`,
+              `Service: booking-service`,
+              `Port: ${BACKEND_PORTS.bookingService}`,
+              `API contract: ${API_CONTRACTS.bookingService}`,
               `Approved plan: ${planPath}`,
               `Follow your CLAUDE.md instructions exactly.`,
               `End your final response with exact line: STATUS: DONE`,
             ].join("\n"),
-            outputFile: reports.appointmentService,
+            outputFile: reports.bookingService,
             doneMarker: "STATUS: DONE",
-            label: "Backend Agent — appointment-service",
-            agentKey: "appointment-service",
+            label: "Backend Agent — booking-service",
+            agentKey: "booking-service",
           })
-        : (logSkip("Backend Agent — appointment-service", "out of scope for this task"),
-           writeSkippedReport(reports.appointmentService, "Backend Agent — appointment-service")),
+        : (logSkip("Backend Agent — booking-service", "out of scope for this task"),
+           writeSkippedReport(reports.bookingService, "Backend Agent — booking-service")),
       inScope(task, "user-service")
         ? runAgent({
             systemPrompt: "agents/backend/CLAUDE.md",
@@ -592,6 +594,27 @@ async function main() {
           })
         : (logSkip("Backend Agent — user-service", "out of scope for this task"),
            writeSkippedReport(reports.userService, "Backend Agent — user-service")),
+      inScope(task, "notification-service")
+        ? runAgent({
+            systemPrompt: "agents/backend/CLAUDE.md",
+            input: [
+              `You are the Backend Agent.`,
+              `Task: ${task.title}`,
+              `Task id: ${tickets.notificationService.id}`,
+              `Service: notification-service`,
+              `Port: ${BACKEND_PORTS.notificationService}`,
+              `API contract: ${API_CONTRACTS.notificationService}`,
+              `Approved plan: ${planPath}`,
+              `Follow your CLAUDE.md instructions exactly.`,
+              `End your final response with exact line: STATUS: DONE`,
+            ].join("\n"),
+            outputFile: reports.notificationService,
+            doneMarker: "STATUS: DONE",
+            label: "Backend Agent — notification-service",
+            agentKey: "notification-service",
+          })
+        : (logSkip("Backend Agent — notification-service", "out of scope for this task"),
+           writeSkippedReport(reports.notificationService, "Backend Agent — notification-service")),
     ])
 
     // Real config values (MONGODB_URI, JWT_SECRET, ...) are collected HERE by
@@ -601,9 +624,10 @@ async function main() {
     // streamed output is easy to scroll past unanswered. This runs once per
     // service (only after that service's .env.example exists, i.e. after its
     // scaffold task), and reuses any value already set for a sibling service.
-    if (inScope(task, "gateway")) await ensureBackendEnv("gateway")
-    if (inScope(task, "appointment-service")) await ensureBackendEnv("appointment-service")
+    if (inScope(task, "gateway")) await ensureBackendEnv("api-gateway")
+    if (inScope(task, "booking-service")) await ensureBackendEnv("booking-service")
     if (inScope(task, "user-service")) await ensureBackendEnv("user-service")
+    if (inScope(task, "notification-service")) await ensureBackendEnv("notification-service")
 
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
@@ -616,8 +640,9 @@ async function main() {
           `Approved plan: ${planPath}`,
           `API contracts:`,
           `- ${API_CONTRACTS.gateway}`,
-          `- ${API_CONTRACTS.appointmentService}`,
+          `- ${API_CONTRACTS.bookingService}`,
           `- ${API_CONTRACTS.userService}`,
+          `- ${API_CONTRACTS.notificationService}`,
           `Run validation across frontend, all in-scope backend services, and e2e.`,
           `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -644,8 +669,9 @@ async function main() {
           `Approved plan: ${planPath}`,
           `API contracts:`,
           `- ${API_CONTRACTS.gateway}`,
-          `- ${API_CONTRACTS.appointmentService}`,
+          `- ${API_CONTRACTS.bookingService}`,
           `- ${API_CONTRACTS.userService}`,
+          `- ${API_CONTRACTS.notificationService}`,
           `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
           `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -663,6 +689,7 @@ async function main() {
     markBacklogTaskDone(task)
     clearTaskState(task.slug)
     commitTaskChanges(task, branchName)
+    openChangedFilesInEditor()
     await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     openBrowserForTask(task)
     printCostTable(task.title)
@@ -678,7 +705,7 @@ function ensurePlanDirAndBacklog() {
   }
 }
 
-// Which of the 6 gated agents (frontend/gateway/appointment-service/
+// Which of the 6 gated agents (frontend/gateway/booking-service/
 // user-service/qa/security) a task actually needs, read from the backlog line's `scope:`
 // field (comma-separated agent keys, or "none" for zero of them). No
 // `scope:` field at all means "unknown scope" — run everything, since that's
@@ -712,13 +739,61 @@ function inScope(task, agentKey) {
 async function runTaskCommand(task) {
   log(`Running task command: ${task.cmd}`)
   try {
-    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit" })
+    // CI=1 is the de-facto standard signal most JS scaffolding CLIs
+    // (create-vite, create-vue, npm init *, ...) check to switch to
+    // non-interactive mode — critically, this also makes them skip
+    // "install AND start the dev server now?"-style prompts entirely,
+    // since a CI environment must never end a "scaffold" step by launching
+    // a server that runs forever. Without this, a scaffold command can
+    // silently turn into a hang with no error — this script just waits on
+    // a process that was never going to exit on its own.
+    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit", env: { ...process.env, CI: "1" } })
     log(`Command succeeded: ${task.cmd}`)
   } catch (err) {
     printRed(`Command failed: ${task.cmd}`)
     printRed(err.message)
     await askUserInput(`Fix the issue above, then press Enter to retry this command: `)
     return runTaskCommand(task)
+  }
+}
+
+// Opens every file this task's just-made commit touched (created or
+// modified) as tabs in a running VS Code window, so the human can see what
+// was actually built without hunting through the file tree themselves.
+// Silently does nothing if the `code` CLI isn't on PATH (not every setup has
+// it) — this is a convenience, not a required step.
+let codeCliChecked = false
+let codeCliAvailable = false
+
+function openChangedFilesInEditor() {
+  if (!codeCliChecked) {
+    codeCliChecked = true
+    try {
+      execSync("code --version", { stdio: "ignore" })
+      codeCliAvailable = true
+    } catch {
+      warn("'code' CLI not found on PATH — skipping auto-open in VS Code for this and future tasks. (VS Code: Command Palette -> \"Shell Command: Install 'code' command in PATH\" to enable this.)")
+    }
+  }
+  if (!codeCliAvailable) return
+
+  let changedFiles
+  try {
+    changedFiles = execSync("git diff-tree --no-commit-id --name-only -r HEAD", { encoding: "utf-8" })
+      .split("\n")
+      .map((f) => f.trim())
+      .filter(Boolean)
+  } catch (e) {
+    warn(`Could not list this task's changed files (${e.message}) — skipping auto-open in VS Code.`)
+    return
+  }
+  if (changedFiles.length === 0) return
+
+  try {
+    execSync(`code ${changedFiles.map((f) => `"${f}"`).join(" ")}`, { stdio: "ignore" })
+    log(`Opened ${changedFiles.length} changed file(s) in VS Code.`)
+  } catch (e) {
+    warn(`Could not open changed files in VS Code (${e.message}).`)
   }
 }
 
@@ -839,23 +914,26 @@ function makeReportPaths(slug, ticketIds) {
   return {
     fe:                 `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
     gateway:            `${REPORTS_DIR}/${date}-${ticketIds.gateway}-${slug}-gateway.md`,
-    appointmentService: `${REPORTS_DIR}/${date}-${ticketIds.appointmentService}-${slug}-appointment-service.md`,
+    bookingService: `${REPORTS_DIR}/${date}-${ticketIds.bookingService}-${slug}-booking-service.md`,
     userService:        `${REPORTS_DIR}/${date}-${ticketIds.userService}-${slug}-user-service.md`,
+    notificationService: `${REPORTS_DIR}/${date}-${ticketIds.notificationService}-${slug}-notification-service.md`,
     qa:                 `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
     security:           `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
   }
 }
 
 const API_CONTRACTS = {
-  gateway:            "docs/api-contract/api-contract.gateway.yaml",
-  appointmentService: "docs/api-contract/api-contract.appointment-service.yaml",
+  gateway:            "docs/api-contract/api-contract.api-gateway.yaml",
+  bookingService: "docs/api-contract/api-contract.booking-service.yaml",
   userService:        "docs/api-contract/api-contract.user-service.yaml",
+  notificationService: "docs/api-contract/api-contract.notification-service.yaml",
 }
 
 const BACKEND_PORTS = {
-  gateway: 5000,
-  appointmentService: 5001,
-  userService: 5002,
+  gateway: 4000,
+  bookingService: 4001,
+  userService: 4002,
+  notificationService: 4003,
 }
 
 // ─── Claude planning ──────────────────────────────────────────────────────────
@@ -1010,8 +1088,9 @@ function simulateTickets(slug) {
   return {
     frontend:           { id: `${up}-FE` },
     gateway:            { id: `${up}-GW` },
-    appointmentService: { id: `${up}-APT` },
+    bookingService: { id: `${up}-APT` },
     userService:        { id: `${up}-USR` },
+    notificationService: { id: `${up}-NOT` },
     qa:                 { id: `${up}-QA` },
     security:           { id: `${up}-SEC` },
   }
@@ -1437,7 +1516,7 @@ function generatePlanFallback({ task }) {
 Status: draft
 Owner: Orchestrator
 Last updated: ${today}
-Scope-Agents: frontend,appointment-service,user-service,qa,security
+Scope-Agents: frontend,booking-service,user-service,notification-service,qa,security
 
 ## Goal
 Deliver ${task.title} in the existing product.
@@ -1456,18 +1535,19 @@ Deliver ${task.title} in the existing product.
 
 ## Steps
 1. Frontend agent implements UI and defines API contract(s) if needed.
-2. Backend agents (appointment-service, user-service, and gateway if in scope) run in parallel — independent services.
+2. Backend agents (booking-service, user-service, notification-service, and gateway if in scope) run in parallel — independent services.
 3. QA agent runs unit, integration, and e2e checks across frontend and all in-scope backend services.
 4. Security agent audits frontend, all in-scope backend services, and API contracts.
 
 ## Validation
 - frontend: npm --prefix frontend run lint && npm --prefix frontend run build && npm --prefix frontend run test
-- backend/appointment-service: npm --prefix backend/appointment-service run test
+- backend/booking-service: npm --prefix backend/booking-service run test
 - backend/user-service: npm --prefix backend/user-service run test
-- backend/gateway (only if in scope): npm --prefix backend/gateway run test
+- backend/notification-service (only if in scope): npm --prefix backend/notification-service run test
+- backend/api-gateway (only if in scope): npm --prefix backend/api-gateway run test
 
 ## Risks
-- TimeSlot concurrency (appointment-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
+- TimeSlot concurrency (booking-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
 - Existing tests may fail due to unrelated baseline issues.
 
 ## Rollout Order
@@ -1493,6 +1573,18 @@ function getBaseBranch() {
   if (branch === "main" || branch === "master") {
     printRed(`Refusing to run: current branch is '${branch}'. main/master is sacred — dev-loop.js never branches from or merges into it.`)
     printRed(`Check out your own base branch first (e.g. 'git checkout booking_clinic_appointment'), then rerun.`)
+    process.exit(1)
+  }
+  if (branch.includes("-tasks/")) {
+    // A task branch this same script generated (`<base>-tasks/<slug>`), not a
+    // real human base branch. Re-deriving BASE_BRANCH from one of these is
+    // how the naming compounds without limit on every rerun after an
+    // interrupted (e.g. Ctrl+C'd) task that never reached the merge step:
+    // <base>-tasks/<slug>-tasks/<slug>-tasks/<slug>... until git or Windows
+    // rejects the filename as too long. Refuse outright rather than silently
+    // treating this as a new base.
+    printRed(`Refusing to run: current branch '${branch}' looks like a task branch this script generated (contains "-tasks/"), not your real base branch.`)
+    printRed(`This usually means a previous run was interrupted (Ctrl+C, crash) before it could merge back. Check out your real base branch first — the part before the first "-tasks/" — then rerun. If that task's work is still needed, merge or cherry-pick it manually first; this branch won't be touched.`)
     process.exit(1)
   }
   return branch

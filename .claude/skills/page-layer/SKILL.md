@@ -7,42 +7,29 @@ references:
   - @state-management-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{GUARDED_ROUTES}}       — routes requiring an auth guard, and which role
-  {{UNGUARDED_ROUTES}}     — routes needing no auth check
-  {{MULTI_PHASE_FETCH}}    — any page needing staged/two-phase data fetching, if any
-  {{SPECIAL_ERROR_CODE}}   — a domain-specific conflict status code, if any (e.g. 409)
-  {{RTL_OR_LTR}}
-  {{SPATIAL_EXCEPTION}}    — component excluded from the page's normal direction, if any
-  {{HEADER_COMPONENT}}     — standardized page header component name
-  {{NAMING_SUFFIX}}        — page file naming convention, e.g. "Page.tsx"
-Ask the user: "Which pages require auth guards and for which role(s)?" "Any pages needing multi-phase/staged data fetching?" "What's your page file naming convention?"
--->
-
 # Page Layer Responsibilities
 1. **Authorization & Guards**
-- *Guarded pages:* {{GUARDED_ROUTES}} must verify the logged-in user's role from the store. Unauthorized access must trigger an immediate redirect to the login route.
-- *Unguarded pages:* {{UNGUARDED_ROUTES}} require no auth check at all. Do not add a logged-in-user check to these pages.
+- *Guarded pages:* `/admin` (Services management), `/admin/appointments` (Appointments dashboard) must verify the logged-in Admin from the store. Unauthorized access must trigger an immediate redirect to `/admin/login`.
+- *Unguarded pages:* `/` (Service List), `/book/:serviceId` (Time Slot Picker + Customer Details Form), `/confirmation/:appointmentId`, `/admin/login` require no auth check at all. Do not add a logged-in-user check to these pages.
 - Don't build speculative `isLock`/`isComingSoon` feature-flag gating for features that don't exist — every feature in the product spec should be available at launch unless the spec says otherwise.
 
 2. **Data Orchestration (The "Smart" Hub)**
 - *Centralized Fetching:* Primary API calls occur at the Page level. Child components should receive "finished" data as props.
 - *Async Strategy:*
   - Use `useEffect` for initial mounting fetches.
-  - {{MULTI_PHASE_FETCH}} (if applicable) — treat these as separate phases so the page can render its structure before secondary/live data arrives.
+  - The Time Slot Picker page fetches in two phases: the `Service` details first (renders immediately), then the open `TimeSlot`s for the selected date (secondary/live data) — so the page structure appears before slot availability loads.
 - *Loading UI:* The Page controls global loading states (Overlays/Skeletons) via `app.slice`. Any live/real-time data is owned by its dedicated slice (see `@state-management-layer/SKILL.md`), not by page-local state.
 
 3. **Event & Logic Handling**
 - *Action Controller:* Define event handlers (e.g., `handleApprove`, `handleSelect`, `handleCancel`) within the Page and pass them down.
 - *Computed State:* Perform data transformations (filtering, sorting, aggregations) before rendering children to keep child components "dumb" and presentational.
 - *Navigation:* All `react-router` logic (`useNavigate`, `useParams`) resides exclusively in the Page layer.
-- *Conflict Handling (if applicable):* On a `{{SPECIAL_ERROR_CODE}}` from any action, the page-level handler re-syncs the relevant slice from the response and shows a clear, hardcoded message.
+- *Conflict Handling:* On a `409` from a `TimeSlot` hold attempt, the page-level handler re-syncs `timeSlot.slice.ts` from the response and shows a clear, hardcoded message ("That time slot was just taken").
 
 4. **Layout & Accessibility**
-- *Directional Integrity:* Every page root follows {{RTL_OR_LTR}} and proper text alignment — **except** {{SPATIAL_EXCEPTION}} (if any), which stays direction-independent (see `@ui-component-layer/SKILL.md`).
+- *Directional Integrity:* Every page root follows the active locale's direction (`rtl` for Hebrew, default; `ltr` for English) and proper text alignment — **except** the date/time-slot grid, which stays direction-independent (calendar/grid layouts read the same numeric order regardless of text direction; see `@ui-component-layer/SKILL.md`).
 - *Responsive Shell:* Use a standardized container: `max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10`.
-- *Standard Components:* Every Page must utilize `{{HEADER_COMPONENT}}` for consistent titling, with the title/subtitle passed as plain, hardcoded strings (unless a translation/phrase layer exists — see `@ui-component-layer/SKILL.md`).
+- *Standard Components:* Every Page must utilize `PageHeader` for consistent titling, with the title/subtitle passed as plain, hardcoded strings routed through the app's i18n layer (see `@ui-component-layer/SKILL.md`).
 
 # Implementation Pattern
 ```typescript
@@ -65,7 +52,7 @@ const ExampleGuardedPage = () => {
   // 4. Render
   return (
     <main className="page-container animate-in fade-in">
-      <{{HEADER_COMPONENT}}
+      <PageHeader
         title="..."
         subtitle="..."
       />
@@ -93,7 +80,7 @@ const ExampleUnguardedPage = () => {
     try {
       await exampleService.request(id, payload)
     } catch (err) {
-      if (err.response?.status === {{SPECIAL_ERROR_CODE}}) {
+      if (err.response?.status === 409) {
         toast.error('...')
         refresh() // re-sync the relevant slice from the server
       } else {
@@ -104,7 +91,7 @@ const ExampleUnguardedPage = () => {
 
   return (
     <main className="page-container">
-      <{{HEADER_COMPONENT}} title="..." />
+      <PageHeader title="..." />
       {isLoading ? <SkeletonGrid /> : <ItemView item={item} onSelect={handleRequest} />}
     </main>
   )
@@ -112,7 +99,7 @@ const ExampleUnguardedPage = () => {
 ```
 
 # Business Rules
-- *Naming:* Files must use `PascalCase` and end with `{{NAMING_SUFFIX}}`.
+- *Naming:* Files must use `PascalCase` and end with `Page.tsx`.
 
 - *No Direct CSS:* All styling must be handled via Tailwind classes or the `cn` utility.
 

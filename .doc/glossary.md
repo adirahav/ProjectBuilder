@@ -1,20 +1,5 @@
 # Glossary
 
-<!--
-TEMPLATE — QUESTION-DRIVEN. Build this AFTER product-definition.md, and ideally alongside/before
-.rule/naming-rules.md (they must stay in sync — naming-rules.md's {{ENTITIES}}/{{ACTION_VERBS}}
-placeholders should be filled with exactly the terms decided here).
-
-For each domain entity/role/action verb from product-definition.md's Scope section, ask:
-"What's the canonical term for this, and what synonyms should be explicitly banned?" (e.g. a
-team member might say "order" when the canonical term is "booking" — capture that here so it
-never drifts). Also ask about any naming-collision risk (two unrelated concepts that could be
-confused because they share a word — the reference project this template came from had this with a `user` role vs. `passenger`).
-
-Write one "### `<term>`" entry per concept, following the shape below. Delete the instruction
-blocks once every entity/role/action/status is documented.
--->
-
 ## Purpose
 Define canonical domain terms and approved short forms used across code, API routes, docs, and plans.
 
@@ -22,41 +7,58 @@ Define canonical domain terms and approved short forms used across code, API rou
 
 ## Core Terms
 
-<!--
-For each domain entity (from product-definition.md's data model / scope), write an entry:
+### `Service`
+- **Canonical meaning:** A treatment the clinic offers (e.g. haircut, nail trim, spa), with a fixed duration and price.
+- **Use:** Always `Service`, not `Treatment`, `Offering`, or `Product`. Hard rule.
+- **Plural:** `Services`
 
-### `<term>`
-- **Canonical meaning:** <one sentence>
-- **Use:** Always `<term>`, not `<synonym-1>`, `<synonym-2>`, or `<synonym-3>`. State plainly
-  whether this is a hard rule or a style preference.
-- **Plural:** `<plural form>`
+⚠️ **Naming collision to be aware of:** `Service` (the domain entity) shares a word with the microservices themselves (`booking-service`, `user-service`, `notification-service`). In code/docs, a bare "service" in a backend-architecture context always means a microservice; the domain entity is always written `Service` (capitalized) or fully qualified as "a Service record"/"the Service model" to avoid ambiguity.
 
-If the entity has a status/lifecycle field, add a variants list:
+### `Appointment`
+- **Canonical meaning:** A customer's confirmed or pending booking of a `Service` at a specific `TimeSlot`.
+- **Use:** Always `Appointment`, not `Booking`, `Reservation`, or `Order`. Hard rule.
+- **Plural:** `Appointments`
 
-### `<entity>Status`
-- **Canonical meaning:** The current state of `<entity>` in its lifecycle.
-- **Variants:** list every status value with a one-line meaning each.
-- **Use:** Always these exact values — no alternate casing, translations, or synonyms.
+### `AppointmentStatus`
+- **Canonical meaning:** The current state of an `Appointment` in its lifecycle.
+- **Variants:**
+  - `pending` — customer has requested it, awaiting admin confirmation (if confirmation is required) or awaiting the slot claim to finalize.
+  - `confirmed` — the appointment is booked and the `TimeSlot` is locked to it.
+  - `cancelled` — cancelled by the customer or the admin; the `TimeSlot` is released.
+- **Use:** Always these exact lowercase values — no alternate casing, translations, or synonyms in code/API.
 
-For each key action/operation verb (approve, cancel, etc. — whatever this product's core
-actions are), write:
+### `TimeSlot`
+- **Canonical meaning:** A specific bookable date/time window for one `Service`. This is the contested/limited resource — two customers can race to claim the same `TimeSlot`, so its concurrency handling is governed by `seat-concurrency-layer`.
+- **Use:** Always `TimeSlot` (one word, capital T and S), not `Slot`, `Time Slot`, or `Availability`. Hard rule.
+- **Plural:** `TimeSlots`
 
-### `<actionVerb>`
-- **Canonical meaning:** <what it does, in domain terms>
-- **Use:** Always `<actionVerb>`, not `<synonym-1>` or `<synonym-2>`.
+### `TimeSlotStatus`
+- **Canonical meaning:** The current state of a `TimeSlot` in its lifecycle.
+- **Variants:**
+  - `open` — available for booking.
+  - `held` — transiently claimed while a customer completes the booking form (short-lived, prevents a race with another customer).
+  - `booked` — locked to a confirmed `Appointment`.
+- **Use:** Always these exact lowercase values — no alternate casing, translations, or synonyms in code/API.
 
-For each role (from product-definition.md's Target Users), write:
+### `book` (action)
+- **Canonical meaning:** A customer claims an `open` `TimeSlot` and creates an `Appointment` for it.
+- **Use:** Always `book`/`booking`, not `reserve` or `order`.
 
-### `<role>`
-- **Canonical meaning:** <who they are, what they can do>
-- **Use:** Always `<role>` in code/API; note any product-facing alternate term (e.g. "manager"
-  in UI copy) and confirm the two refer to the same thing, not two different concepts.
+### `confirm` (action)
+- **Canonical meaning:** The admin (or the system, if no manual approval step is required) finalizes a `pending` `Appointment`, moving it to `confirmed`.
+- **Use:** Always `confirm`, not `approve` (product/UI copy may say "Approve" as a synonym for the same action — see role note below; API/code stays `confirm`).
 
-If two terms risk being confused because they share a word or are conceptually adjacent (e.g.
-a permission "role" named the same as an unrelated user-facing term), add an explicit
-"⚠️ Naming collision to be aware of" callout under the more specific term, spelling out exactly
-how the two differ and why they must never be conflated.
--->
+### `cancel` (action)
+- **Canonical meaning:** Either the customer or the admin cancels an `Appointment`, releasing its `TimeSlot` back to `open`.
+- **Use:** Always `cancel`, not `delete` or `remove` — an `Appointment` is cancelled, never hard-deleted (see `database-rules` soft-delete conventions).
+
+### `Customer`
+- **Canonical meaning:** An anonymous, unregistered visitor who books an `Appointment`. Has no account.
+- **Use:** Always `Customer` in code/API. No login flow exists for this role — do not introduce `User` as a synonym for `Customer`.
+
+### `Admin`
+- **Canonical meaning:** The clinic's business owner — the only authenticated role in this product. Manages `Service` records and all `Appointments`.
+- **Use:** Always `Admin` in code/API; UI copy may say "Approve" for the `confirm` action, but the underlying concept is the same — never introduce a second admin-like role.
 
 ---
 

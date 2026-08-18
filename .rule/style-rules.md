@@ -1,15 +1,7 @@
 # Style Rules
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}, {{DESIGN_TOKENS}} (color hex values), {{DESIGN_SOURCE}} (e.g. Figma, AI Studio export — if no design source exists per Part 1 Q9, {{DESIGN_TOKENS}} come from the user's brand preferences instead, and every {{DESIGN_SOURCE}} reference below should read "the user's stated brand preferences" rather than an external file/tool)
-  {{CONTESTED_ENTITY}}, {{STATUS_VALUES}} — if a status-driven entity with color mapping exists
-Ask the user: "What are your brand color tokens (hex values)?" "Does any domain status value need a dedicated color mapping?"
-Delete this comment block once filled.
--->
-
 ## Purpose
-- Define CSS organization and maintainable styling patterns for this app (`frontend/`, {{PROJECT_NAME}}).
+- Define CSS organization and maintainable styling patterns for this app (`frontend/`, Dog Grooming Appointment Booking System). There is no external design source (no Figma/AI-Studio export) — the Frontend Agent designs the UI itself, choosing tokens below to fit a warm, approachable pet-care brand feel, and keeping this file as the single source of truth for them.
 
 ## Stack
 - Tailwind CSS v4 (CSS-first, via `@tailwindcss/vite` — no `tailwind.config.js`) — utility-first styling.
@@ -27,16 +19,25 @@ Delete this comment block once filled.
 
 @theme {
   /* Colors */
-  {{DESIGN_TOKENS}}
+  --color-primary: #2f6f4f;      /* deep grooming-brand green */
+  --color-primary-light: #eaf5ee;
+  --color-accent: #d98c3d;       /* warm accent (paw/amber) */
+  --color-danger: #c0392b;
+  --color-success: #2f6f4f;
+  --color-warning: #d98c3d;
+  --color-neutral-50: #fafafa;
+  --color-neutral-900: #1f2320;
 }
 ```
 
-- List which tokens are confirmed (from {{DESIGN_SOURCE}}) vs. still open, e.g. hover-state variants, danger/success/warning colors, a typography token, a subtle-border token — add them once decided, and remove the "TBD" framing once done.
-- Decide whether `--radius-*` tokens are defined, or whether raw Tailwind radius utilities are used directly (e.g. `rounded-xl`).
+- Confirmed tokens: `primary`, `primary-light`, `accent`, `danger`, `success`, `warning`, `neutral-50`, `neutral-900` (above). Open/TBD: hover-state variants, a dedicated typography token, a subtle-border token — add them here once decided during Frontend Agent implementation.
+- `--radius-*` tokens are not defined separately; use raw Tailwind radius utilities directly (e.g. `rounded-xl`).
 
-## Domain-Specific Color Mapping (fill in if a status-driven entity exists)
-- If `{{CONTESTED_ENTITY}}` exists, it's likely the one place in the UI where color directly encodes domain state. Map each status ({{STATUS_VALUES}}) to a token, not a raw hex value, so the mapping stays centralized and themeable.
-- Once this mapping is decided, encode it as a small lookup (e.g. `statusStyles: Record<Status, string>`) rather than scattering inline conditionals across components.
+## Domain-Specific Color Mapping
+- `TimeSlot.status` (`open`/`held`/`booked`) and `Appointment.status` (`pending`/`confirmed`/`cancelled`) are the two places color directly encodes domain state. Map each status to a token, not a raw hex value:
+  - `open` → `success` token (available), `held` → `warning` token (transiently claimed), `booked` → `neutral-900`/muted (unavailable).
+  - `pending` → `warning` token, `confirmed` → `success` token, `cancelled` → `danger` token.
+- Encode each mapping as a small lookup (e.g. `timeSlotStatusStyles: Record<TimeSlotStatus, string>`, `appointmentStatusStyles: Record<AppointmentStatus, string>`) rather than scattering inline conditionals across components. Per `accessibility-layer`, color is always paired with a text label or icon — never the sole signal.
 
 ## Conditional Classes
 - Use `cn()` for all conditional or merged class strings.
@@ -76,5 +77,4 @@ export function cn(...inputs: ClassValue[]) {
 - `frontend/src/lib/utils.ts` — `cn()` utility for class merging.
 
 ## Open Questions / TBD
-- Confirm any not-yet-decided design tokens.
-- Decide the final color-to-status mapping above (if applicable) and remove the "TBD" framing once locked in.
+- Hover-state variants, typography token, and subtle-border token not yet decided — finalize during initial Frontend Agent build-out.

@@ -1,135 +1,98 @@
 # Product Definition
 
-<!--
-TEMPLATE — QUESTION-DRIVEN, not fill-in-the-blank. Unlike the .rule/.claude/agents templates,
-this file has no {{PLACEHOLDER}} markers — its content IS the product, which must be authored
-fresh per project, not adapted from the Reference App's seat-booking domain. For each section below,
-interview the user with the listed questions, then WRITE the section in prose (matching the
-depth/tone of the reference sentence given per section), replacing the instruction
-block. Do not leave any "<!-- ... -->" instruction text in the finished file.
-
-Ask 2-4 questions at a time, not the whole file at once. Work top to bottom — later sections
-(Scope, Constraints) depend on earlier ones (Vision, Users) being settled first.
--->
-
 ## Purpose
 Define shared product intent so planning, architecture, and delivery stay aligned.
 
 ---
 
 ## Product Vision
-<!--
-Ask: "In one or two sentences, what does this product remove/replace/enable that's manual or
-painful today?" Reference depth: "This product removes the manual work of seating
-passengers on tour buses. Instead of an admin figuring out by hand who sits where, the admin
-sets up a tour with its buses and pickup points, and passengers browse the tour and request
-their own seat — the admin approves, manages, and finalizes the seating from there."
-Write 2-4 sentences here once answered.
--->
+This product removes the manual work of running a small dog-grooming clinic's appointment book by phone and paper. Instead of the owner juggling calls and a notebook to track who's booked when, the clinic publishes its services (haircut, nail trim, spa, etc.) with duration and price, and customers browse open time slots and book themselves — no account required. The owner manages services, sees the full appointment calendar, and confirms or cancels bookings from one dashboard.
 
 ---
 
 ## Target Users
-<!--
-Ask: "Who are the primary users (the ones with the main workflow/pain), and who are the
-secondary users (if any)?" For each: what are they trying to accomplish, what's their core need.
-Reference depth: distinguished "admins/tour managers" (primary — run tours, want
-to avoid manual seating) from "passengers" (secondary — want a live seat map and self-service
-seat pick). If this project has only one user type, say so explicitly rather than forcing a
-primary/secondary split.
-Write one subsection per user type once answered.
--->
+
+**Customers (primary)** — anonymous, unregistered dog owners who want to book a grooming appointment without calling the clinic or creating an account. Their core need: see what services are offered, see real open time slots, and lock one in with minimal friction (just their contact details).
+
+**Admin / business owner (secondary)** — the single person running the clinic. Their core need: define and price the services they offer, see the full schedule at a glance, and approve or cancel bookings without a separate phone-based booking process running in parallel.
+
+There is no third role — no staff accounts, no multi-location support in v1.
 
 ---
 
 ## Problem Statement
-<!--
-Ask: "What breaks or gets painful today without this product, and for whom specifically?"
-Reference depth: one paragraph connecting the manual-seating pain for admins to
-the lack of visibility/control for passengers, and how the product resolves both sides.
-Write one paragraph here once answered.
--->
+Today, booking a grooming appointment means calling the clinic during business hours, and the owner has to manually check a paper or mental calendar for openings, write down the customer's chosen time, and remember to avoid double-booking. This wastes the owner's time on calls instead of grooming, and customers have no visibility into which times are actually free — they have to call and ask. Because there's no atomic reservation step, two customers calling close together can end up believing they hold the same slot until someone catches the conflict. This product replaces the phone/paper process with a live time-slot calendar customers can book directly, and gives the owner a single dashboard to manage services and confirm/cancel appointments.
 
 ---
 
 ## Value Proposition
-<!--
-Ask: "What's the core value delivered, and what are 3-4 concrete differentiators from doing
-this manually or with a generic tool?"
-Reference depth: one paragraph + a "Key differentiators" bullet list of 3-4 items.
-Write here once answered.
--->
+The core value is turning appointment booking into a self-service action: customers see truthfully open slots and claim one instantly, and the owner is freed from being the sole scheduling bottleneck.
 
 **Key differentiators:**
-- <fill in>
+- No account required for customers — book with just contact details, lowering friction versus apps that force signup.
+- Slot-level concurrency safety — two customers cannot both win the same time slot, unlike an honor-system paper calendar.
+- Owner controls services (name, duration, price) directly, without needing a developer to change the offering.
+- Single dashboard for the owner to see the whole schedule and act on bookings (approve/cancel), replacing phone-tag.
 
 ---
 
 ## Product Scope
 
-<!--
-Ask: "What's in scope for v1 — list every major feature area." Then: "What's explicitly out of
-scope for v1, and why (deferred vs. never)?" Cross-check against the entities/roles/contested-
-resource already established when this project's other config files were filled in (if this
-file is being written first, note that those other files should stay consistent with what's
-decided here).
-Reference depth: a bulleted "In scope" list (~8 items, each one line, referencing
-the owning rule/skill file where relevant) and a bulleted "Out of scope (v1)" list (~6 items,
-each noting briefly why it's deferred).
--->
-
 **In scope:**
-- <fill in>
+- Public service list with duration and price (see `naming-rules`, `mongoose-models-layer`)
+- Date/time-slot picker showing real, currently-open slots (see `seat-concurrency-layer` for the contested-slot handling)
+- Customer detail form (name, phone, optionally email) and booking confirmation, no login
+- Booking confirmation screen/summary after a successful reservation
+- Admin authentication (single owner account) (see `jwt-middleware-layer`)
+- Admin dashboard: create/edit/deactivate services
+- Admin dashboard: view all appointments (calendar or list), approve/cancel
+- Slot-conflict handling so two customers cannot both claim the same time slot
 
 **Out of scope (v1):**
-- <fill in>
+- Multiple staff members / multiple simultaneous groomers (deferred — v1 assumes one groomer, one calendar)
+- Multi-location support (deferred — single clinic only)
+- Online payment at booking time (deferred — payment happens in person)
+- Automated SMS/email reminders beyond a booking confirmation (deferred — notification-service starts minimal, can expand later)
+- Customer accounts / booking history / login (never planned for v1 — anonymous booking is a deliberate choice, not a gap)
+- Recurring/repeat appointments (deferred — each booking is a one-off in v1)
 
 ---
 
 ## Success Metrics
-<!--
-Ask: "What business metrics and product metrics would tell you this is working?" It's fine if
-exact targets are TBD — note that explicitly rather than inventing numbers.
-Reference depth: "Business metrics" (2 items) + "Product metrics" (3 items), each
-one line, with a closing note that baselines are TBD until real usage data exists.
--->
 
 **Business metrics:**
-- <fill in>
+- Reduction in phone calls the owner has to personally handle for scheduling
+- Growth in appointments booked online vs. reported manually by the owner
 
 **Product metrics:**
-- <fill in>
+- Booking completion rate (started slot selection → confirmed appointment)
+- Rate of slot-conflict errors surfaced to customers (should trend toward zero, not just be handled gracefully)
+- Time from page load to confirmed booking
 
 *Baseline values to be defined after first real usage.*
 
 ---
 
 ## Constraints and Assumptions
-<!--
-Ask: "What hard constraints does this product operate under (auth requirements, no-instant-
-confirmation rules, etc.)?" and "What assumptions are you making that should be validated later
-(e.g. about user behavior, scale, org structure)?"
-Reference depth: "Constraints" (3 bullets, each a hard rule) + "Assumptions to
-validate" (4 bullets, each an open question to revisit later).
--->
 
 **Constraints:**
-- <fill in>
+- No customer login — every booking flow must work for an anonymous visitor
+- Only one admin account exists in v1 — no role hierarchy beyond customer/admin
+- A time slot must never be confirmed for two different appointments — this is a hard invariant, not best-effort (see `seat-concurrency-layer`)
 
 **Assumptions to validate:**
-- <fill in>
+- A single groomer/calendar is sufficient — revisit if the clinic adds staff
+- Contact details (name + phone) are enough to hold a booking without payment or verification — revisit if no-shows become a problem
+- Hebrew + English with RTL-first UI covers the clinic's actual customer base
+- Native app (Capacitor) usage will be meaningful enough to justify maintaining it alongside web
 
 ---
 
 ## Prioritization Rules
-<!--
-Ask: "When two features compete for attention, what should generally win?" Keep this short —
-3-5 rules of thumb, not a full roadmap.
-Reference depth: 4 one-line prioritization rules (reduce manual workload, lower
-friction on the core flow, defer speculative scope, avoid premature complexity).
--->
-
-- <fill in>
+- Reduce the owner's manual scheduling workload before adding new customer-facing features
+- Protect the core booking flow's reliability (no double-booked slots) over new feature breadth
+- Defer anything payment-related or multi-staff until the single-groomer flow is solid
+- Avoid building admin tooling more complex than a one-person clinic needs
 
 ---
 

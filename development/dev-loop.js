@@ -28,6 +28,7 @@
 import { execSync, spawn } from "child_process"
 import dotenv from "dotenv"
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
+import http from "http"
 import { dirname, join } from "path"
 import { createInterface } from "readline"
 import { fileURLToPath } from "url"
@@ -346,6 +347,80 @@ function printCostTable(taskLabel) {
   costLog = []
 }
 
+// ─── Live agent-status dashboard ─────────────────────────────────────────────
+// A small local HTTP server (no new dependency — Node's built-in `http`)
+// serves one self-contained HTML file (development/agent-dashboard.html,
+// inline CSS/JS, no build step) plus a live-updating status endpoint this
+// script writes to on every bit of agent/orchestrator output. The dashboard
+// polls that endpoint and animates which agent is currently active — a
+// prettier, glanceable alternative to reading the raw terminal.
+const AGENT_STATUS_PATH = "docs/agent-status.json"
+const DASHBOARD_PORT = Number(process.env.DASHBOARD_PORT) || 4949
+
+function writeAgentStatus(agentKey, message) {
+  try {
+    if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+    const lastLine = String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || ""
+    writeFileSync(AGENT_STATUS_PATH, JSON.stringify({
+      activeAgent: agentKey || "orchestrator",
+      message: lastLine,
+      updatedAt: new Date().toISOString(),
+    }, null, 2), "utf-8")
+  } catch {
+    // The dashboard is a convenience — a status-file write failure must never
+    // affect the actual run.
+  }
+}
+
+function startDashboardServer() {
+  const dashboardPath = "development/agent-dashboard.html"
+  const server = http.createServer((req, res) => {
+    if (req.url === "/status.json") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(existsSync(AGENT_STATUS_PATH)
+        ? readFileSync(AGENT_STATUS_PATH, "utf-8")
+        : JSON.stringify({ activeAgent: null, message: "", updatedAt: null }))
+      return
+    }
+    if (!existsSync(dashboardPath)) {
+      res.writeHead(404, { "Content-Type": "text/plain" })
+      res.end("agent-dashboard.html not found")
+      return
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+    res.end(readFileSync(dashboardPath, "utf-8"))
+  })
+
+  // Without this, a failed .listen() (e.g. the port already held by a
+  // zombie process from a previous interrupted run) emits an unhandled
+  // 'error' event, which Node treats as an uncaught exception and crashes
+  // the whole script — silently, with no clear message pointing at the
+  // dashboard as the cause.
+  server.on("error", (e) => {
+    warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
+    if (e.code === "EADDRINUSE") {
+      warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
+    }
+  })
+
+  server.listen(DASHBOARD_PORT, () => {
+    const url = `http://localhost:${DASHBOARD_PORT}/`
+    banner(`AGENT DASHBOARD — ${url}`)
+    log(`If it didn't open automatically, open this URL yourself: ${url}`)
+    const openCmd =
+      process.platform === "win32" ? `start "" "${url}"` :
+      process.platform === "darwin" ? `open "${url}"` :
+      `xdg-open "${url}"`
+    try {
+      execSync(openCmd, { stdio: "ignore" })
+    } catch (e) {
+      warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
+    }
+  })
+
+  return server
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 // Two instances of this script running at once (e.g. two terminals, each
@@ -425,6 +500,7 @@ function checkPrerequisites() {
 async function main() {
   checkPrerequisites()
   acquireLock()
+  startDashboardServer()
 
   banner("DEV LOOP ORCHESTRATOR — DOG GROOMING CLINIC APPOINTMENT BOOKING")
 
@@ -1442,6 +1518,7 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
               assistantText += block.text + "\n"
               const out = agentKey ? prefixLines(block.text, agentKey) : block.text
               process.stdout.write(out.endsWith("\n") ? out : out + "\n")
+              writeAgentStatus(agentKey, block.text)
 
               // React the moment a session-limit/login message actually shows up
               // in the stream — don't wait for the process to close on its own
@@ -1962,6 +2039,7 @@ function banner(msg) {
 function log(msg) {
   const { icon, color } = AGENT_IDENTITY["orchestrator"]
   console.log(`${color}${icon} [ORCHESTRATOR]${RESET} ${msg}`)
+  writeAgentStatus("orchestrator", msg)
 }
 
 function warn(msg) {

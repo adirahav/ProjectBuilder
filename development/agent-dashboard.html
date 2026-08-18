@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<title>Agent Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0b10;
+    --panel: #16161d;
+    --border: #2a2a35;
+    --text: #e6e6ec;
+    --dim: #6b6b7a;
+    --orchestrator: #f0b429;
+    --frontend: #d946ef;
+    --backend: #3b82f6;
+    --qa: #22c55e;
+    --security: #06b6d4;
+    --idle: #3a3a46;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr auto;
+    height: 100vh;
+    gap: 0;
+  }
+  #stage {
+    position: relative;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--border);
+  }
+  #ring { position: relative; width: min(70vh, 560px); height: min(70vh, 560px); }
+  svg#beams { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .beam {
+    stroke: var(--idle);
+    stroke-width: 2;
+    opacity: 0.25;
+    transition: stroke 0.4s ease, opacity 0.4s ease, stroke-width 0.4s ease;
+  }
+  .beam.active {
+    stroke-width: 3;
+    opacity: 1;
+    stroke-dasharray: 6 4;
+    animation: dash 1s linear infinite;
+  }
+  @keyframes dash { to { stroke-dashoffset: -20; } }
+
+  .node {
+    position: absolute;
+    width: 96px; height: 96px;
+    margin-left: -48px; margin-top: -48px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    transition: box-shadow 0.4s ease, border-color 0.4s ease, transform 0.4s ease;
+  }
+  .node .icon { font-size: 30px; line-height: 1; }
+  .node .name { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: center; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node.center { width: 128px; height: 128px; margin-left: -64px; margin-top: -64px; }
+  .node.center .icon { font-size: 42px; }
+
+  .node.active {
+    transform: scale(1.12);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .node[data-agent="orchestrator"].active { border-color: var(--orchestrator); box-shadow: 0 0 24px var(--orchestrator); }
+  .node[data-agent="frontend"].active     { border-color: var(--frontend);     box-shadow: 0 0 24px var(--frontend); }
+  .node[data-agent="qa"].active           { border-color: var(--qa);           box-shadow: 0 0 24px var(--qa); }
+  .node[data-agent="security"].active     { border-color: var(--security);     box-shadow: 0 0 24px var(--security); }
+  .node[data-agent$="-service"].active,
+  .node[data-agent="gateway"].active      { border-color: var(--backend);      box-shadow: 0 0 24px var(--backend); }
+
+  @keyframes pulse {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.35); }
+  }
+
+  #sidebar {
+    grid-column: 2; grid-row: 1;
+    display: flex; flex-direction: column;
+    padding: 20px 24px;
+    overflow: hidden;
+  }
+  #status-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; }
+  #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; min-height: 3.2em; }
+  #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
+  #dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--idle);
+    box-shadow: 0 0 0 rgba(0,0,0,0); transition: background 0.4s, box-shadow 0.4s;
+  }
+  #dot.live { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  #iframe-wrap {
+    grid-column: 2; grid-row: 2;
+    padding: 0 24px 20px;
+    display: flex; flex-direction: column;
+    flex: 1; min-height: 0;
+  }
+  #iframe-wrap .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; }
+  #app-frame {
+    flex: 1; min-height: 0;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fff;
+  }
+  h1 {
+    position: absolute; top: 16px; left: 24px;
+    font-size: 14px; font-weight: 600; letter-spacing: 0.04em; color: var(--dim);
+    margin: 0;
+  }
+</style>
+</head>
+<body>
+<h1>👑 AGENT DASHBOARD</h1>
+<div id="layout">
+  <div id="stage">
+    <div id="ring">
+      <svg id="beams"></svg>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div id="status-card">
+      <div class="label"><span id="dot"></span> &nbsp;Live status</div>
+      <div class="agent-line"><span id="active-icon">👑</span><span id="active-name">orchestrator</span></div>
+      <div class="message" id="active-message">Waiting for the loop to start…</div>
+      <div class="updated" id="active-updated"></div>
+    </div>
+  </div>
+
+  <div id="iframe-wrap">
+    <div class="label">🌐 Live app — http://localhost:5173</div>
+    <iframe id="app-frame" src="http://localhost:5173" title="Live app preview"></iframe>
+  </div>
+</div>
+
+<script>
+const AGENTS = [
+  { key: "frontend",             icon: "🎨", name: "frontend" },
+  { key: "gateway",              icon: "🔧", name: "api-gateway" },
+  { key: "booking-service",      icon: "🔧", name: "booking-service" },
+  { key: "user-service",         icon: "🔧", name: "user-service" },
+  { key: "notification-service", icon: "🔧", name: "notification-service" },
+  { key: "qa",                   icon: "🐛", name: "qa" },
+  { key: "security",             icon: "🛡️", name: "security" },
+];
+const CENTER = { key: "orchestrator", icon: "👑", name: "orchestrator" };
+
+const ring = document.getElementById("ring");
+const beams = document.getElementById("beams");
+const R = 220; // px radius for the outer ring, positions computed relative to ring center (50%,50%)
+
+function polar(index, total, radius) {
+  const angle = (index / total) * Math.PI * 2 - Math.PI / 2;
+  return { x: 50 + (radius / 5.6) * Math.cos(angle), y: 50 + (radius / 5.6) * Math.sin(angle) };
+}
+
+function makeNode(agent, pos, isCenter) {
+  const el = document.createElement("div");
+  el.className = "node" + (isCenter ? " center" : "");
+  el.dataset.agent = agent.key;
+  el.style.left = pos.x + "%";
+  el.style.top = pos.y + "%";
+  el.innerHTML = `<div class="icon">${agent.icon}</div><div class="name">${agent.name}</div>`;
+  ring.appendChild(el);
+  return el;
+}
+
+const centerPos = { x: 50, y: 50 };
+makeNode(CENTER, centerPos, true);
+
+const nodePositions = {};
+AGENTS.forEach((agent, i) => {
+  const pos = polar(i, AGENTS.length, R);
+  nodePositions[agent.key] = pos;
+  makeNode(agent, pos, false);
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("class", "beam");
+  line.setAttribute("id", "beam-" + agent.key);
+  line.setAttribute("x1", centerPos.x + "%");
+  line.setAttribute("y1", centerPos.y + "%");
+  line.setAttribute("x2", pos.x + "%");
+  line.setAttribute("y2", pos.y + "%");
+  beams.appendChild(line);
+});
+
+const ALL_KEYS = ["orchestrator", ...AGENTS.map(a => a.key)];
+const BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map(a => [a.key, a]));
+
+function setActive(agentKey) {
+  ALL_KEYS.forEach((key) => {
+    const node = document.querySelector('.node[data-agent="' + key + '"]');
+    if (node) node.classList.toggle("active", key === agentKey);
+    const beam = document.getElementById("beam-" + key);
+    if (beam) beam.classList.toggle("active", key === agentKey);
+  });
+
+  const info = BY_KEY[agentKey] || { icon: "🤖", name: agentKey || "idle" };
+  document.getElementById("active-icon").textContent = info.icon;
+  document.getElementById("active-name").textContent = info.name;
+}
+
+async function poll() {
+  const dot = document.getElementById("dot");
+  try {
+    const res = await fetch("/status.json", { cache: "no-store" });
+    const data = await res.json();
+    dot.classList.add("live");
+    if (data.activeAgent) setActive(data.activeAgent);
+    document.getElementById("active-message").textContent = data.message || "…";
+    document.getElementById("active-updated").textContent = data.updatedAt
+      ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
+      : "";
+  } catch {
+    dot.classList.remove("live");
+  }
+}
+
+setActive("orchestrator");
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

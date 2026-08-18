@@ -36,10 +36,45 @@ const en = {
 
   'book.title': 'Book {name}',
   'book.titleFallback': 'Book an appointment',
-  'book.comingSoon.title': 'Time slot picker coming soon',
-  'book.comingSoon.body':
-    'Choosing a date and time is not available yet. It will appear here shortly.',
+  'book.subtitle': 'Pick a date, then choose one of the available times.',
   'book.back': 'Back to services',
+
+  'timeSlot.dateLabel': 'Date',
+  'timeSlot.previousDay': 'Previous day',
+  'timeSlot.nextDay': 'Next day',
+  'timeSlot.today': 'Today',
+  'timeSlot.regionLabel': 'Available times on {date}',
+  'timeSlot.loading': 'Loading available times…',
+  'timeSlot.empty.title': 'No available times on this day',
+  'timeSlot.empty.body': 'Every time on {date} is taken. Try another date.',
+  'timeSlot.pastDate.title': 'This date has already passed',
+  'timeSlot.pastDate.body': 'Pick today or a later date to see available times.',
+  'timeSlot.error.title': 'We could not load the available times',
+  'timeSlot.error.body': 'Check your internet connection and try again.',
+  'timeSlot.error.toast': 'Loading the available times failed. Please try again.',
+
+  'timeSlot.status.open': 'Available',
+  'timeSlot.status.held': 'Being booked',
+  'timeSlot.status.booked': 'Booked',
+
+  'timeSlot.holdAria': 'Choose {time}, available',
+  'timeSlot.holding': 'Holding…',
+  'timeSlot.hold.successToast': 'This time is held for you. Continue to your details.',
+  'timeSlot.hold.errorToast': 'We could not hold that time. Please try again.',
+  'timeSlot.conflict.title': 'That time was just taken',
+  'timeSlot.conflict.body':
+    'Another customer booked it a moment ago. The times below are up to date — please choose another one.',
+  'timeSlot.conflict.dismiss': 'Dismiss this message',
+  'timeSlot.conflict.toast': 'That time was just taken — please choose another.',
+
+  'details.title': 'Your details',
+  'details.comingSoon.title': 'The details form is coming soon',
+  'details.comingSoon.body':
+    'Your time is held while you finish booking. Entering your contact details will be available here shortly.',
+  'details.heldLabel': 'Time held for you',
+  'details.noHold.title': 'No time is held yet',
+  'details.noHold.body': 'Choose an available time first, and we will hold it while you book.',
+  'details.back': 'Back to time selection',
 } as const
 
 export type StringKey = keyof typeof en
@@ -76,9 +111,44 @@ const he: Dictionary = {
 
   'book.title': 'הזמנת תור לשירות {name}',
   'book.titleFallback': 'הזמנת תור',
-  'book.comingSoon.title': 'בחירת מועד תהיה זמינה בקרוב',
-  'book.comingSoon.body': 'בחירת תאריך ושעה עדיין אינה זמינה. היא תופיע כאן בקרוב.',
+  'book.subtitle': 'בחרו תאריך, ולאחר מכן בחרו אחת מהשעות הפנויות.',
   'book.back': 'חזרה לרשימת השירותים',
+
+  'timeSlot.dateLabel': 'תאריך',
+  'timeSlot.previousDay': 'ליום הקודם',
+  'timeSlot.nextDay': 'ליום הבא',
+  'timeSlot.today': 'היום',
+  'timeSlot.regionLabel': 'שעות פנויות בתאריך {date}',
+  'timeSlot.loading': 'טוענים את השעות הפנויות…',
+  'timeSlot.empty.title': 'אין שעות פנויות ביום זה',
+  'timeSlot.empty.body': 'כל השעות בתאריך {date} תפוסות. נסו תאריך אחר.',
+  'timeSlot.pastDate.title': 'התאריך הזה כבר עבר',
+  'timeSlot.pastDate.body': 'בחרו את היום או תאריך מאוחר יותר כדי לראות שעות פנויות.',
+  'timeSlot.error.title': 'לא הצלחנו לטעון את השעות הפנויות',
+  'timeSlot.error.body': 'בדקו את החיבור לאינטרנט ונסו שוב.',
+  'timeSlot.error.toast': 'טעינת השעות הפנויות נכשלה. נסו שוב.',
+
+  'timeSlot.status.open': 'פנוי',
+  'timeSlot.status.held': 'בתהליך הזמנה',
+  'timeSlot.status.booked': 'תפוס',
+
+  'timeSlot.holdAria': 'בחירת השעה {time}, פנויה',
+  'timeSlot.holding': 'שומרים את השעה…',
+  'timeSlot.hold.successToast': 'השעה שמורה עבורכם. המשיכו למילוי הפרטים.',
+  'timeSlot.hold.errorToast': 'לא הצלחנו לשמור את השעה. נסו שוב.',
+  'timeSlot.conflict.title': 'השעה הזו נתפסה הרגע',
+  'timeSlot.conflict.body': 'לקוח אחר הזמין אותה לפני רגע. השעות שלמטה מעודכנות — בחרו שעה אחרת.',
+  'timeSlot.conflict.dismiss': 'סגירת ההודעה',
+  'timeSlot.conflict.toast': 'השעה הזו נתפסה הרגע — בחרו שעה אחרת.',
+
+  'details.title': 'הפרטים שלכם',
+  'details.comingSoon.title': 'טופס הפרטים יהיה זמין בקרוב',
+  'details.comingSoon.body':
+    'השעה שמורה עבורכם עד להשלמת ההזמנה. מילוי פרטי הקשר יתאפשר כאן בקרוב.',
+  'details.heldLabel': 'השעה השמורה עבורכם',
+  'details.noHold.title': 'עדיין לא נשמרה שעה',
+  'details.noHold.body': 'בחרו קודם שעה פנויה, ואנחנו נשמור אותה עבורכם עד להשלמת ההזמנה.',
+  'details.back': 'חזרה לבחירת השעה',
 }
 
 export const dictionaries: Record<Locale, Dictionary> = { he, en }

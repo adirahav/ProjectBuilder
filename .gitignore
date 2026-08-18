@@ -60,3 +60,6 @@ backend/*/.env.production
 
 # Single-instance lock for dev-loop.js -- machine/process-specific, never committed.
 .dev-loop.lock
+
+# Live agent-status feed for the dashboard -- changes every second, never committed.
+docs/agent-status.json

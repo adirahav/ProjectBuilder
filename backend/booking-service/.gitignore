@@ -1,0 +1,7 @@
+node_modules
+dist
+*.log
+*.local
+
+# Local env files with real values are ignored at the repo root .gitignore.
+# Only .env.example is committed.

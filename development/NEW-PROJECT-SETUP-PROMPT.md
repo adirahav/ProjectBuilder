@@ -142,11 +142,13 @@ The worked example in each template is a starting point, not a contract. If the 
     ```json
     {
       "autoApprovePlans": false,
+      "autoMergeTasks": false,
       "linearEnabled": true,
       "designSource": "NONE"
     }
     ```
     - `autoApprovePlans` — `true` if Approval mode was answered "ungated" (see that section), `false` if "gated". `development/dev-loop.js` also self-adopts this from `.setup-progress.md` on its own first run if this key is still `false`/missing, so getting it right here isn't strictly load-bearing — but don't leave it unset if the answer is already known.
+    - `autoMergeTasks` — deliberately **separate** from `autoApprovePlans`, not derived from Approval mode. Always defaults to `false` (always ask before merging a finished task branch into the base branch) unless the user explicitly asks for automatic merging during setup — merging into the branch the human is actually sitting on is a distinct, higher-stakes decision than plan/feature approval, so it never inherits "ungated" implicitly.
     - `linearEnabled` — `true`/`false` matching whether Linear is the issue tracker (Q9).
     - `designSource` — `"FIGMA"` / `"AISTUDIO"` / `"NONE"` matching Q9's design-source branch exactly, not left as a placeholder.
     This file is plain, committed JSON — deliberately not an env file, since none of these three values are secrets or read by the product's own runtime code, only by the orchestrator script.

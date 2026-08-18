@@ -126,6 +126,15 @@ const AUTO_APPROVE_PLANS = process.env.AUTO_APPROVE_PLANS != null || getArg("--a
   ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_PLANS || getArg("--auto-approve-plans"))
   : Boolean(orchestratorConfig.autoApprovePlans)
 
+// Separate from AUTO_APPROVE_PLANS on purpose — merging into the base branch
+// is a distinct decision from plan/feature approval (it's the one that
+// actually changes the branch the human is sitting on), so it gets its own
+// opt-in flag rather than being silently bundled into the other one. False
+// (always ask) unless explicitly turned on.
+const AUTO_MERGE_TASKS = process.env.AUTO_MERGE_TASKS != null || getArg("--auto-merge-tasks")
+  ? /^(1|true|yes)$/i.test(process.env.AUTO_MERGE_TASKS || getArg("--auto-merge-tasks"))
+  : Boolean(orchestratorConfig.autoMergeTasks)
+
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
 const COST_DIR = "docs/cost"
@@ -339,6 +348,51 @@ function printCostTable(taskLabel) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+// Two instances of this script running at once (e.g. two terminals, each
+// running `node development/dev-loop.js`) will independently claim different
+// backlog tasks, branch/work/merge in parallel with no coordination, and
+// reliably produce a git merge conflict on .plan/000-backlog.md's checkbox
+// lines when both try to merge back — exactly what happened before this
+// guard existed. A simple PID lock file prevents a second instance from
+// starting at all while one is already running.
+const LOCK_PATH = ".dev-loop.lock"
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0) // signal 0: doesn't actually kill, just checks existence/permission
+    return true
+  } catch {
+    return false
+  }
+}
+
+function acquireLock() {
+  if (existsSync(LOCK_PATH)) {
+    const heldPid = Number(readFileSync(LOCK_PATH, "utf-8").trim())
+    if (Number.isFinite(heldPid) && isProcessAlive(heldPid)) {
+      printRed(`Refusing to start: another dev-loop.js is already running (PID ${heldPid}).`)
+      printRed(`Running two instances at once will race on the same backlog and reliably produce a git merge conflict.`)
+      printRed(`Finish or stop that one first (or delete ${LOCK_PATH} if you're certain it's not actually running anymore), then rerun.`)
+      process.exit(1)
+    }
+    // Stale lock (process no longer alive) — safe to take over.
+  }
+  writeFileSync(LOCK_PATH, String(process.pid), "utf-8")
+
+  const releaseLock = () => {
+    try {
+      if (existsSync(LOCK_PATH) && readFileSync(LOCK_PATH, "utf-8").trim() === String(process.pid)) {
+        rmSync(LOCK_PATH)
+      }
+    } catch {
+      // Best-effort cleanup — a leftover lock just self-heals via the stale-PID check above.
+    }
+  }
+  process.on("exit", releaseLock)
+  process.on("SIGINT", () => { releaseLock(); process.exit(130) })
+  process.on("SIGTERM", () => { releaseLock(); process.exit(143) })
+}
+
 // Fails fast with a clear, specific reason instead of a confusing crash deep
 // inside the loop (e.g. "fetch is not defined" on old Node, or a cryptic
 // spawn ENOENT the first time an agent tries to launch). Checked once, right
@@ -370,6 +424,7 @@ function checkPrerequisites() {
 
 async function main() {
   checkPrerequisites()
+  acquireLock()
 
   banner("DEV LOOP ORCHESTRATOR — DOG GROOMING CLINIC APPOINTMENT BOOKING")
 
@@ -691,8 +746,14 @@ async function main() {
     clearTaskState(task.slug)
     commitTaskChanges(task, branchName)
     openChangedFilesInEditor()
-    await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
+    // Opened BEFORE the merge-approval gate below, not after — the merge
+    // question always blocks waiting for a human answer (unaffected by
+    // AUTO_APPROVE_PLANS, on purpose: merging into the base branch is a
+    // separate, always-explicit decision from plan/feature approval), and
+    // the human should already be able to see the task's result on screen
+    // while deciding, not have the browser open only after they've answered.
     openBrowserForTask(task)
+    await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     printCostTable(task.title)
     log(`Task complete: ${task.title}`)
   }
@@ -1642,12 +1703,16 @@ function commitTaskChanges(task, branch) {
 // explicit APPROVED from the human. main/master can never be a merge target
 // here — getBaseBranch() already refused to run if that were the case.
 async function pushAndMergeTaskBranch(task, branch, baseBranch) {
-  const answer = await askUserInput(
-    `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
-  )
-  if (answer.trim().toUpperCase() !== "APPROVED") {
-    log(`Leaving '${branch}' unmerged and unpushed — merge it into '${baseBranch}' yourself when ready.`)
-    return
+  if (AUTO_MERGE_TASKS) {
+    log(`Merge gate: AUTO_MERGE_TASKS is on — merging '${branch}' into '${baseBranch}' automatically, no terminal wait.`)
+  } else {
+    const answer = await askUserInput(
+      `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
+    )
+    if (answer.trim().toUpperCase() !== "APPROVED") {
+      log(`Leaving '${branch}' unmerged and unpushed — merge it into '${baseBranch}' yourself when ready.`)
+      return
+    }
   }
 
   try {

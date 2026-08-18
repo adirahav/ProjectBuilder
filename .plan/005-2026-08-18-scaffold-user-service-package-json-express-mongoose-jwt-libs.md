@@ -1,6 +1,6 @@
 # Plan 005 — Scaffold user-service (package.json, Express, Mongoose, JWT libs, health check)
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-18
 - Scope-Agents: user-service, security, qa

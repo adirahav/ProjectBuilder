@@ -6,7 +6,7 @@ Current queue:
 - [x] Install root and frontend dependencies (Zustand, Axios, lucide-react, sonner, framer-motion, clsx, tailwind-merge) | scope: none
 - [x] Scaffold api-gateway service (package.json, Express, health check) | scope: gateway
 - [x] Scaffold booking-service (package.json, Express, Mongoose, health check) | scope: booking-service
-- [ ] Scaffold user-service (package.json, Express, Mongoose, JWT libs, health check) | scope: user-service
+- [x] Scaffold user-service (package.json, Express, Mongoose, JWT libs, health check) | scope: user-service
 - [ ] Scaffold notification-service (package.json, Express, health check) | scope: notification-service
 - [ ] Service List page (public Customer screen) | scope: frontend,booking-service,qa | url: /
 - [ ] Time Slot Picker page (date/slot selection, hold-on-select) | scope: frontend,booking-service,qa,security | url: /book/example-service-id

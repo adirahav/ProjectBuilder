@@ -4,6 +4,7 @@ import cors from 'cors'
 import { config } from './lib/config.ts'
 import { getDbStatus, isDbConnected } from './lib/db.ts'
 import { serviceRouter } from './service/service.routes.ts'
+import { timeSlotRouter } from './time-slot/time-slot.routes.ts'
 
 // Builds the Express app without binding a port, so tests can drive it
 // with Supertest and the entrypoint can own the actual listen() call.
@@ -38,12 +39,15 @@ export function createApp(): Express {
   // Public, unauthenticated Service list (PRD F1 / SERVICEL-APT).
   app.use('/api/services', serviceRouter)
 
-  // NOTE: TimeSlot and Appointment models and their routes are intentionally
-  // NOT part of this ticket (SERVICEL-APT covers F1 only). They land in the
-  // follow-up F2-F4b route tickets, along with the Admin Service writes
-  // (F6-F8). In particular the TimeSlot hold/booking concurrency logic is
-  // unimplemented here, so this service currently enforces no slot-uniqueness
-  // guarantee whatsoever.
+  // Public, unauthenticated TimeSlot availability + atomic hold
+  // (PRD F2/F3/F3b, TIMESLOT-APT).
+  app.use('/api/time-slots', timeSlotRouter)
+
+  // NOTE: the Appointment model and its routes are intentionally NOT part of
+  // this ticket. They land in the follow-up F4/F4b tickets, along with the
+  // Admin Service writes (F6-F8). The `held` -> `booked` transition therefore
+  // has no caller yet: a hold placed here expires back to `open` after the TTL
+  // and can never currently be finalized into an Appointment.
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

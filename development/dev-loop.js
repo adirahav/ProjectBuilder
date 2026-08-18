@@ -349,20 +349,48 @@ function printCostTable(taskLabel) {
 
 // ─── Live agent-status dashboard ─────────────────────────────────────────────
 // A small local HTTP server (no new dependency — Node's built-in `http`)
-// serves one self-contained HTML file (development/agent-dashboard.html,
-// inline CSS/JS, no build step) plus a live-updating status endpoint this
-// script writes to on every bit of agent/orchestrator output. The dashboard
-// polls that endpoint and animates which agent is currently active — a
-// prettier, glanceable alternative to reading the raw terminal.
+// serves the self-contained dashboard (development/agent-dashboard/agent-dashboard.html,
+// inline CSS/JS), its voice-cue audio files (development/agent-dashboard/assets/*.mp3),
+// and a live-updating event feed this script writes to at every meaningful
+// moment (task picked, agent starting/skipped/done, waiting for approval,
+// blocked). The dashboard polls that feed, animates which agent is active,
+// and plays the matching voice cue — a prettier, audible alternative to
+// reading the raw terminal.
 const AGENT_STATUS_PATH = "docs/agent-status.json"
 const DASHBOARD_PORT = Number(process.env.DASHBOARD_PORT) || 4949
+const DASHBOARD_DIR = "development/agent-dashboard"
 
-function writeAgentStatus(agentKey, message) {
+// Maps every backend service key this project actually has (ALL_AGENT_KEYS,
+// minus orchestrator/frontend/qa/security) to the single generic "backend"
+// voice/visual category — the dashboard doesn't need a distinct cue per
+// service name, and the project's service list varies per project anyway.
+function voiceCategory(agentKey) {
+  if (["frontend", "qa", "security", "orchestrator"].includes(agentKey)) return agentKey
+  return "backend"
+}
+
+// Monotonically increasing — lets the dashboard tell "a new event just
+// happened, play its cue" apart from "the poll just re-fetched the same
+// event it already played," without needing timestamps to be perfectly
+// unique or comparable.
+let eventSeq = 0
+
+// The single place every dashboard-visible moment in this script funnels
+// through. `eventType` is one of the dashboard's known event names
+// (orchestrator-start, picking-next-task, task-done, agent-start,
+// agent-skip, agent-back, session-limit, attention-needed, waiting-approval)
+// — see development/agent-dashboard/agent-dashboard.html for the exact list
+// and which audio file each maps to.
+function emitEvent(eventType, agentKey, message) {
   try {
     if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
-    const lastLine = String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || ""
+    eventSeq += 1
+    const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
     writeFileSync(AGENT_STATUS_PATH, JSON.stringify({
-      activeAgent: agentKey || "orchestrator",
+      seq: eventSeq,
+      event: eventType,
+      agent: agentKey || null,
+      category: agentKey ? voiceCategory(agentKey) : null,
       message: lastLine,
       updatedAt: new Date().toISOString(),
     }, null, 2), "utf-8")
@@ -372,19 +400,47 @@ function writeAgentStatus(agentKey, message) {
   }
 }
 
+// Back-compat shim for the two existing per-output-line hook sites (raw
+// agent stdout, and every log() call) — these just update the visible
+// "current message" text without firing a new voice cue on every line
+// (that would be constant chatter, not the discrete moments emitEvent's
+// callers above care about).
+function writeAgentStatus(agentKey, message) {
+  emitEvent("output", agentKey, message)
+}
+
 function startDashboardServer() {
-  const dashboardPath = "development/agent-dashboard.html"
+  const dashboardPath = `${DASHBOARD_DIR}/agent-dashboard.html`
+  const assetsDir = `${DASHBOARD_DIR}/assets`
+
   const server = http.createServer((req, res) => {
     if (req.url === "/status.json") {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
       res.end(existsSync(AGENT_STATUS_PATH)
         ? readFileSync(AGENT_STATUS_PATH, "utf-8")
-        : JSON.stringify({ activeAgent: null, message: "", updatedAt: null }))
+        : JSON.stringify({ seq: 0, event: null, agent: null, category: null, message: "", updatedAt: null }))
       return
     }
+
+    if (req.url && req.url.startsWith("/assets/")) {
+      const assetName = req.url.slice("/assets/".length).split("?")[0]
+      const assetPath = `${assetsDir}/${assetName}`
+      // Only ever serve a bare filename out of assetsDir — reject anything
+      // with a path separator so this can't be tricked into serving an
+      // arbitrary file elsewhere on disk (e.g. `/assets/../../secret`).
+      if (assetName.includes("/") || assetName.includes("\\") || !existsSync(assetPath)) {
+        res.writeHead(404, { "Content-Type": "text/plain" })
+        res.end("Not found")
+        return
+      }
+      res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" })
+      res.end(readFileSync(assetPath))
+      return
+    }
+
     if (!existsSync(dashboardPath)) {
       res.writeHead(404, { "Content-Type": "text/plain" })
-      res.end("agent-dashboard.html not found")
+      res.end(`${dashboardPath} not found`)
       return
     }
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
@@ -503,6 +559,7 @@ async function main() {
   startDashboardServer()
 
   banner("DEV LOOP ORCHESTRATOR — DOG GROOMING CLINIC APPOINTMENT BOOKING")
+  emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
   log(`Base branch: '${BASE_BRANCH}' — every task branches from here and merges back here, only after your approval.`)
@@ -528,6 +585,7 @@ async function main() {
     loopCount += 1
     banner(`LOOP ${loopCount} · ${task.title}`)
     log(`Picked task from backlog: ${task.title}`)
+    emitEvent("picking-next-task", null, task.title)
 
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })
 
@@ -636,6 +694,7 @@ async function main() {
 
     // ── Step: Frontend ──────────────────────────────────────────────────────
     if (inScope(task, "frontend")) {
+      emitEvent("agent-start", "frontend")
       await runAgent({
         systemPrompt: "agents/frontend/CLAUDE.md",
         input: [
@@ -653,6 +712,7 @@ async function main() {
         agentKey: "frontend",
       })
     } else {
+      emitEvent("agent-skip", "frontend")
       logSkip("Frontend Agent", "out of scope for this task")
       writeSkippedReport(reports.fe, "Frontend Agent")
     }
@@ -660,6 +720,12 @@ async function main() {
     // ── Step: Backend (all three services, in parallel — only those in scope) ──
     // gateway is a stateless reverse proxy; most tasks won't scope it in — only
     // deploy/production-setup tasks per agents/backend/CLAUDE.md.
+    // One combined start/skip event for the whole group, not one per service
+    // — the dashboard's voice/visual "backend" category is already generic
+    // across every service name, so four near-simultaneous per-service
+    // events would just be redundant noise.
+    const anyBackendInScope = ["gateway", "booking-service", "user-service", "notification-service"].some((k) => inScope(task, k))
+    emitEvent(anyBackendInScope ? "agent-start" : "agent-skip", "backend")
     log("Launching backend agents (only those in scope, in parallel)...")
 
     await Promise.all([
@@ -763,6 +829,7 @@ async function main() {
 
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
+      emitEvent("agent-start", "qa")
       await runAgent({
         systemPrompt: "agents/qa/CLAUDE.md",
         input: [
@@ -784,14 +851,17 @@ async function main() {
         agentKey: "qa",
       })
     } else {
+      emitEvent("agent-skip", "qa")
       logSkip("QA Agent", "out of scope for this task")
       writeSkippedReport(reports.qa, "QA Agent")
     }
 
+    emitEvent("agent-back", "orchestrator")
     await waitForApprovalWithChat({ task, tickets, planPath })
 
     // ── Step: Security ───────────────────────────────────────────────────────
     if (inScope(task, "security")) {
+      emitEvent("agent-start", "security")
       await runAgent({
         systemPrompt: "agents/security/CLAUDE.md",
         input: [
@@ -813,9 +883,11 @@ async function main() {
         agentKey: "security",
       })
     } else {
+      emitEvent("agent-skip", "security")
       logSkip("Security Agent", "out of scope for this task")
       writeSkippedReport(reports.security, "Security Agent")
     }
+    emitEvent("agent-back", "orchestrator")
 
     await markPlanStatus(planPath, "done")
     markBacklogTaskDone(task)
@@ -832,6 +904,7 @@ async function main() {
     await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     printCostTable(task.title)
     log(`Task complete: ${task.title}`)
+    emitEvent("task-done", null, task.title)
   }
 }
 
@@ -890,6 +963,7 @@ async function runTaskCommand(task) {
   } catch (err) {
     printRed(`Command failed: ${task.cmd}`)
     printRed(err.message)
+    emitEvent("attention-needed", null, `Command failed: ${task.cmd}`)
     await askUserInput(`Fix the issue above, then press Enter to retry this command: `)
     return runTaskCommand(task)
   }
@@ -1187,6 +1261,7 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
   }
 
   log("Plan gate: review and refine. The task proceeds only after terminal APPROVED.")
+  emitEvent("waiting-approval", "orchestrator", "Plan review")
 
   while (true) {
     const answer = await askUserInput(
@@ -1272,6 +1347,7 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
   printRed(`${label}: BLOCKED — ${reason}`)
   if (raw) printRed(raw)
   printRed(`Status written to: ${statusPath}`)
+  emitEvent(kind === "SESSION_LIMIT" ? "session-limit" : "attention-needed", agentKey, reason)
 
   await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `)
   return runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey })
@@ -1323,6 +1399,7 @@ async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, ag
   if (blockedRegex.test(stdout)) {
     printRed(`${label}: STATUS: BLOCKED — the agent found something that must be fixed before continuing.`)
     printRed(`Report (real, not simulated): ${outputFile}`)
+    emitEvent("attention-needed", agentKey, `${label} reported STATUS: BLOCKED`)
     throw new AgentBlockedError(`${label} reported STATUS: BLOCKED — see ${outputFile}`)
   } else if (stdout.includes(doneMarker) || doneRegex.test(stdout)) {
     log(`${label}: STATUS: DONE ✓`)
@@ -1783,6 +1860,7 @@ async function pushAndMergeTaskBranch(task, branch, baseBranch) {
   if (AUTO_MERGE_TASKS) {
     log(`Merge gate: AUTO_MERGE_TASKS is on — merging '${branch}' into '${baseBranch}' automatically, no terminal wait.`)
   } else {
+    emitEvent("waiting-approval", "orchestrator", "Merge approval")
     const answer = await askUserInput(
       `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
     )
@@ -1833,6 +1911,7 @@ async function waitForApprovalWithChat({ task, tickets, planPath }) {
   }
 
   log("Feature done. Type APPROVED to mark task complete, or send a command to the orchestrator.")
+  emitEvent("waiting-approval", "orchestrator", "Feature-done approval")
 
   while (true) {
     const answer = await askUserInput("orchestrator> ")

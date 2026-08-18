@@ -11,6 +11,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
+// U+2009 THIN SPACE, written as an escape rather than pasted literally: an
+// invisible non-ASCII space in source is indistinguishable from a normal one
+// when reading or editing, and lint rejects it outright (no-irregular-whitespace).
+const THIN_SPACE = '\u2009'
+
 function pad(value: number): string {
   return String(value).padStart(2, '0')
 }
@@ -80,5 +85,5 @@ export function formatDateLabel(value: string, locale: Locale): string {
  * would only reintroduce a timezone that the API deliberately does not carry.
  */
 export function formatTimeRange(startTime: string, endTime: string): string {
-  return `${startTime} – ${endTime}`
+  return `${startTime}${THIN_SPACE}–${THIN_SPACE}${endTime}`
 }

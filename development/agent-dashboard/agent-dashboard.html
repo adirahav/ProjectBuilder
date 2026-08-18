@@ -130,6 +130,23 @@
     font-size: 14px; font-weight: 600; letter-spacing: 0.04em; color: var(--dim);
     margin: 0;
   }
+
+  #sound-gate {
+    position: fixed; inset: 0;
+    background: rgba(11, 11, 16, 0.92);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 50;
+  }
+  #enable-sound {
+    font-size: 16px; font-weight: 600;
+    padding: 16px 28px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  #enable-sound:hover { border-color: var(--orchestrator); }
 </style>
 </head>
 <body>
@@ -156,6 +173,10 @@
   </div>
 </div>
 
+<div id="sound-gate">
+  <button id="enable-sound">🔊 Click to enable voice cues</button>
+</div>
+
 <script>
 const AGENTS = [
   { key: "frontend",             icon: "🎨", name: "frontend" },
@@ -167,6 +188,66 @@ const AGENTS = [
   { key: "security",             icon: "🛡️", name: "security" },
 ];
 const CENTER = { key: "orchestrator", icon: "👑", name: "orchestrator" };
+
+// One category can cover several ring nodes (every backend service, no
+// matter its real name, is the same "backend" voice/visual category) — so
+// highlighting works by category, not by a single node key.
+const CATEGORY_TO_KEYS = {
+  frontend: ["frontend"],
+  backend: ["gateway", "booking-service", "user-service", "notification-service"],
+  qa: ["qa"],
+  security: ["security"],
+  orchestrator: ["orchestrator"],
+};
+
+// event -> audio file. "agent-start"/"agent-skip" additionally key off
+// category (frontend/backend/qa/security) since those are the only ones
+// with a per-category voice line.
+const AUDIO_MAP = {
+  "orchestrator-start": "orchestrator-start.mp3",
+  "picking-next-task": "picking-next-task.mp3",
+  "task-done": "task-done.mp3",
+  "agent-back": "agent-orchestrator.mp3",
+  "session-limit": "session-limit.mp3",
+  "attention-needed": "attention-needed.mp3",
+  "waiting-approval": "agent-waiting-approval.mp3",
+  "agent-start:frontend": "agent-frontend.mp3",
+  "agent-start:backend": "agent-backend.mp3",
+  "agent-start:qa": "agent-qa.mp3",
+  "agent-start:security": "agent-security.mp3",
+  "agent-skip:frontend": "agent-frontend-skip.mp3",
+  "agent-skip:backend": "agent-backend-skip.mp3",
+  "agent-skip:qa": "agent-qa-skip.mp3",
+  "agent-skip:security": "agent-security-skip.mp3",
+};
+
+function audioFileFor(event, category) {
+  if (event === "agent-start" || event === "agent-skip") {
+    return AUDIO_MAP[`${event}:${category}`] || null;
+  }
+  return AUDIO_MAP[event] || null;
+}
+
+let soundEnabled = false;
+const audioCache = {};
+function playCue(fileName) {
+  if (!soundEnabled || !fileName) return;
+  if (!audioCache[fileName]) audioCache[fileName] = new Audio(`/assets/${fileName}`);
+  const audio = audioCache[fileName];
+  audio.currentTime = 0;
+  audio.play().catch(() => { /* still locked or file missing — ignore, not critical */ });
+}
+
+document.getElementById("enable-sound").addEventListener("click", () => {
+  soundEnabled = true;
+  document.getElementById("sound-gate").style.display = "none";
+  // Play a near-silent cue synchronously inside the click handler — this is
+  // what actually unlocks autoplay in most browsers, since the permission is
+  // tied to a real user-gesture call stack, not just a boolean flag.
+  const unlock = new Audio(`/assets/${AUDIO_MAP["orchestrator-start"]}`);
+  unlock.volume = 0;
+  unlock.play().catch(() => {});
+});
 
 const ring = document.getElementById("ring");
 const beams = document.getElementById("beams");
@@ -210,18 +291,27 @@ AGENTS.forEach((agent, i) => {
 const ALL_KEYS = ["orchestrator", ...AGENTS.map(a => a.key)];
 const BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map(a => [a.key, a]));
 
-function setActive(agentKey) {
+function setActiveCategory(category) {
+  const activeKeys = new Set(CATEGORY_TO_KEYS[category] || []);
   ALL_KEYS.forEach((key) => {
+    const isActive = activeKeys.has(key);
     const node = document.querySelector('.node[data-agent="' + key + '"]');
-    if (node) node.classList.toggle("active", key === agentKey);
+    if (node) node.classList.toggle("active", isActive);
     const beam = document.getElementById("beam-" + key);
-    if (beam) beam.classList.toggle("active", key === agentKey);
+    if (beam) beam.classList.toggle("active", isActive);
   });
 
-  const info = BY_KEY[agentKey] || { icon: "🤖", name: agentKey || "idle" };
+  // Label shows the first matching node's identity (there's only ever one
+  // for frontend/qa/security/orchestrator; for "backend" this just shows
+  // "api-gateway" as a representative — the ring highlighting already shows
+  // all four backend nodes lit up together, which is the real signal).
+  const repKey = CATEGORY_TO_KEYS[category] ? CATEGORY_TO_KEYS[category][0] : category;
+  const info = BY_KEY[repKey] || { icon: "🤖", name: category || "idle" };
   document.getElementById("active-icon").textContent = info.icon;
-  document.getElementById("active-name").textContent = info.name;
+  document.getElementById("active-name").textContent = category === "backend" ? "backend service" : info.name;
 }
+
+let lastSeq = 0;
 
 async function poll() {
   const dot = document.getElementById("dot");
@@ -229,17 +319,28 @@ async function poll() {
     const res = await fetch("/status.json", { cache: "no-store" });
     const data = await res.json();
     dot.classList.add("live");
-    if (data.activeAgent) setActive(data.activeAgent);
+
+    const category = data.category || (data.event ? "orchestrator" : null);
+    if (category) setActiveCategory(category);
     document.getElementById("active-message").textContent = data.message || "…";
     document.getElementById("active-updated").textContent = data.updatedAt
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
       : "";
+
+    // Only play a cue for a genuinely NEW event (seq increased) — a poll
+    // re-fetching the same still-current event must never replay its sound.
+    if (data.seq && data.seq !== lastSeq && data.event && data.event !== "output") {
+      lastSeq = data.seq;
+      playCue(audioFileFor(data.event, category));
+    } else if (data.seq) {
+      lastSeq = data.seq;
+    }
   } catch {
     dot.classList.remove("live");
   }
 }
 
-setActive("orchestrator");
+setActiveCategory("orchestrator");
 poll();
 setInterval(poll, 1000);
 </script>

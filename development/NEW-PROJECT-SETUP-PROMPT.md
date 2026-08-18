@@ -63,10 +63,22 @@ Before touching any template, collect a plain-language description of the new pr
    - **Figma** — this needs an MCP server, not just a placeholder. Walk the user through adding a `figma` entry to `.mcp.json` (same shape as the existing `linear` entry — see `.mcp.json`'s own instructions) with their Figma API key/file key, gitignored/env-sourced like the Linear key. `{{DESIGN_SOURCE}}` = "Figma (via MCP)"; note the file/frame naming convention if the user has one.
    - **No design source** — the Frontend Agent designs the UI itself, per `.rule/style-rules.md` and the `css-layer`/`ui-component-layer` skills (brand colors, spacing scale, component patterns) rather than matching an external reference. `{{DESIGN_SOURCE}}` should be left unset — every `{{DESIGN_SOURCE}}` reference across templates (`docs/PRD.md`'s Design Source field and "design fidelity" AC, `agents/frontend/CLAUDE.md`'s Allowed Paths/workflow, `.rule/style-rules.md`) must be removed or reworded for this case, not filled with a placeholder value — don't leave a dangling reference to a design source that doesn't exist.
 10. **Multi-agent build workflow** — will this project use a Claude Code orchestrator/frontend/backend/QA/security agent split (like `agents/*/CLAUDE.md` here), or a simpler single-agent workflow? If multi-agent: what issue tracker (Linear, Jira, GitHub Issues, none) sequences the tickets?
+11. **Database connection string** — **only if multi-agent** (Q10), since this is only consumed by `development/dev-loop.js`. Ask, as a choice question (per "How to ask a question" below): "MongoDB connection string — use a local default (`mongodb://localhost:27017/<project-db-name>`), skip for now (asked later during the build loop instead), or provide the real one now?"
+    - **DEFAULT** — write `{"MONGODB_URI": "mongodb://localhost:27017/<project-db-name>"}` to `.setup-secrets.json` (create the file if it doesn't exist; merge if it does). Use a lowercased, hyphen-free slug of the project name for `<project-db-name>`.
+    - **User provides a real value (the tool's free-text "Other" option)** — write `{"MONGODB_URI": "<the real value>"}` to `.setup-secrets.json` the same way.
+    - **SKIP** — write nothing; `development/dev-loop.js`'s `ensureBackendEnv` will ask for it interactively later, during the build loop, exactly as it already does today.
+    - **Never write this value into any other file** — not `docs/PRD.md`, not `.setup-progress.md`, not any committed template file. `.setup-secrets.json` is the only place a real secret value is allowed to land during setup, and it's gitignored specifically for this. `development/dev-loop.js` reads and consumes it (deleting the key once adopted into the real local secrets file) the first time it needs `MONGODB_URI` — don't ask the user to do anything further with this file themselves.
 
-Do not interrogate the user with all of this as a single wall of questions if they've already described the project — extract what's already implied, and only ask about what's genuinely missing. Keep this part conversational, a few questions at a time, not a form.
+Do not interrogate the user with all of this as a single wall of questions if they've already described the project — extract what's already implied, and only ask about what's genuinely missing. **Ask exactly one question at a time — never bundle two or more into a single turn, throughout this entire document, not just here.** See "How to ask a question" below for the required format.
 
 Once you have enough of the picture, summarize it back in 3-5 bullet points and confirm before moving to Part 2.
+
+## How to ask a question — applies everywhere in this document
+Every question this process asks — in Part 1, in a Phase 0 interview, in a Phase A/B/C/D/E clarifying round — follows the same two rules, no exceptions:
+1. **One question per turn.** Never ask two or more questions in the same message, even if they're related or short. Get an answer, then ask the next one. This applies even where earlier instructions in this document say "ask 2-4 questions at a time" or similar — those are superseded by this rule.
+2. **Use a structured question/choice prompt, not conversational prose.** If the agent running this process has a dedicated question-asking tool (e.g. Claude Code's `AskUserQuestion`, or an equivalent choice/text-input mechanism), use it for every question — free-text questions use its text-input form, multiple-choice questions (e.g. "Tailwind or SCSS?", "gated or ungated?") use its option-list form. Only fall back to plain conversational text if no such tool is available to the running agent at all.
+
+This changes *how* every question in this document gets asked, not *what* gets asked or *when* — the question content, order, and phase sequencing described elsewhere are unaffected.
 
 ## Part 2 — Filling the Templates
 
@@ -113,7 +125,7 @@ Fill templates in this order, across five phases. Later files reference earlier 
 26. `agents/security/CLAUDE.md` — checklist adapted to the real services/contested entity/gateway
 
 ### Adapting, not just filling
-The worked example in each template is a starting point, not a contract. If the user's Part 1 answers imply a section, a role, a layer, or a whole file isn't needed — say so, propose removing or restructuring it, and confirm before deleting, the same way conditional deletes (seat-concurrency-layer, native-navigation-layer, agents/) already work. Conversely, if the new project needs something no template covers, add a new section or file in the same style rather than forcing the domain into the template's existing shape. Treat every file this way, not only the ones explicitly marked conditional — run this as an ongoing dialogue (a few focused questions at a time, confirm before structural changes), not a one-pass mechanical substitution.
+The worked example in each template is a starting point, not a contract. If the user's Part 1 answers imply a section, a role, a layer, or a whole file isn't needed — say so, propose removing or restructuring it, and confirm before deleting, the same way conditional deletes (seat-concurrency-layer, native-navigation-layer, agents/) already work. Conversely, if the new project needs something no template covers, add a new section or file in the same style rather than forcing the domain into the template's existing shape. Treat every file this way, not only the ones explicitly marked conditional — run this as an ongoing dialogue (one question at a time, per "How to ask a question" above; confirm before structural changes), not a one-pass mechanical substitution.
 
 **Phase D — tooling (`.claude/hooks/*.js`, `.claude/settings.json`, `.mcp.json`, `development/*`):**
 27. `.claude/settings.json` — generic as-is; only touch if hook filenames change.
@@ -165,14 +177,14 @@ This file is deliberately the **last** thing the setup process produces. Present
 
 **Phase 0 (question-driven) files:**
 1. **Read the file.** Note which sections still have an instruction block (HTML comment) vs. which are already written.
-2. **Interview the user**, 2-4 questions at a time per the questions listed in that section's instruction block, using the noted reference depth/tone as a target, not a script to imitate word-for-word.
+2. **Interview the user**, one question at a time (see "How to ask a question" above) from the questions listed in that section's instruction block, using the noted reference depth/tone as a target, not a script to imitate word-for-word.
 3. **Write the section in prose/tables**, replacing the instruction block entirely.
 4. **Approval gate (mandatory, every file — see below).**
 5. **Move to the next section**, then the next file, in the order listed above.
 
 **Phase A/B/C/D/E (fill-in-the-blank) files:**
 1. **Read the file.** Read its HTML comment block and note which placeholders are still unanswered from Part 1, from Phase 0's docs, or from an earlier file this session.
-2. **Ask only what's missing.** Use the file's own suggested clarifying questions as a starting point, but don't re-ask anything already established. Ask 1-3 focused questions at a time, not a giant form.
+2. **Ask only what's missing.** Use the file's own suggested clarifying questions as a starting point, but don't re-ask anything already established. Ask one question at a time (see "How to ask a question" above), not a giant form.
 3. **Rewrite the file in place**, replacing every `{{PLACEHOLDER}}` with real project content, adapting the worked example(s) to the new domain (rename entities, adjust routes, rewrite code samples to use real field/entity names — don't leave the reference project's example values in place).
 4. **Delete the HTML comment block** once the file is filled — it was setup-time-only guidance, not documentation for the finished project.
 5. **Approval gate (mandatory, every file — see below).**

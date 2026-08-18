@@ -48,3 +48,12 @@ HUMAN-TODO.md
 
 # POSTMAN
 postman
+
+backend/.env.shared
+backend/*/.env.development
+backend/*/.env.production
+
+# Setup-time staging for real secret values (MongoDB URI, etc.) collected
+# during setup, before the real local secrets files exist yet.
+# Consumed and deleted by dev-loop.js -- never committed.
+.setup-secrets.json

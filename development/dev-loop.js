@@ -1,21 +1,24 @@
 #!/usr/bin/env node
 /**
- * Dev Loop Orchestrator — BookMe
+ * Dev Loop Orchestrator — Dog Grooming Clinic Appointment Booking
  *
- * This repo is a monorepo: `frontend/` + `backend/` with two microservices
- * (`booking-service`, `admin-service`). Both backend services are built and
- * run from here, via `agents/backend/CLAUDE.md` (one shared prompt,
- * parameterized per service). There is no gateway service and no external
- * design source — the Frontend Agent designs the UI itself per
- * `.rule/style-rules.md`. There is no issue tracker; task approval happens
- * entirely through local plan files and terminal/chat approval gates.
+ * This repo is a monorepo: `frontend/` + `backend/` with three services —
+ * `gateway` (stateless reverse proxy in front of the other two; most tasks
+ * won't scope it in, only deploy/production-setup tasks per
+ * `agents/backend/CLAUDE.md`), `appointment-service` (owns Service, TimeSlot,
+ * Appointment) and `user-service` (owns Admin accounts/auth). All three
+ * backend services are built and run from here, via `agents/backend/CLAUDE.md`
+ * (one shared prompt, parameterized per service). There is no external design
+ * source — the Frontend Agent designs the UI itself per `.rule/style-rules.md`.
+ * There is no issue tracker; task approval happens entirely through local
+ * plan files and terminal/chat approval gates.
  *
  * Loop per backlog item:
  *   1) Pick next task from .plan/000-backlog.md
  *   2) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
  *   3) Launch the Frontend agent (builds UI per .rule/style-rules.md, defines API contract(s))
- *   4) Launch Backend agents in parallel — booking-service and admin-service —
- *      independent services, per .rule/architecture.md
+ *   4) Launch Backend agents in parallel — gateway, appointment-service, and
+ *      user-service — independent services, per .rule/architecture.md
  *   5) Launch QA validation
  *   6) Report done and wait for approval
  *   7) Launch Security audit
@@ -36,7 +39,7 @@ dotenv.config({ path: `.env.${process.env.NODE_ENV || "development"}` })
 
 // ─── Model mapping ──────────────────────────────────────────────────────────
 // Which Claude model each operation uses. Opus is reserved for the operations
-// that write multi-file production code end-to-end (frontend, backend x2) —
+// that write multi-file production code end-to-end (frontend, backend x3) —
 // that's where its extra reasoning actually pays for itself. Everything else
 // (planning, QA, security review, chat) is judgment/analysis over work Claude
 // (or a human) already reviews downstream, so Sonnet 5 gets equivalent
@@ -47,8 +50,9 @@ const MODEL_FOR = {
   planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
   "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
   frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
-  "booking-service":   "claude-opus-5",   // Backend Agent — booking-service — multi-file code generation, owns TimeSlot concurrency logic
-  "admin-service":     "claude-opus-5",   // Backend Agent — admin-service — multi-file code generation (auth + dashboard aggregation)
+  gateway:             "claude-opus-5",   // Backend Agent — gateway — multi-file code generation (reverse proxy/routing)
+  "appointment-service": "claude-opus-5", // Backend Agent — appointment-service — multi-file code generation, owns TimeSlot concurrency logic
+  "user-service":      "claude-opus-5",   // Backend Agent — user-service — multi-file code generation (auth + admin accounts)
   qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
   security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
   "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
@@ -129,7 +133,7 @@ const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
-const ALL_AGENT_KEYS = ["orchestrator", "frontend", "booking-service", "admin-service", "qa", "security"]
+const ALL_AGENT_KEYS = ["orchestrator", "frontend", "gateway", "appointment-service", "user-service", "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -165,12 +169,13 @@ function clearTaskState(slug) {
 const RESET = "\x1b[0m"
 
 const AGENT_IDENTITY = {
-  "orchestrator":    { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
-  "frontend":        { icon: "🎨", color: "\x1b[35m", label: "frontend" },
-  "booking-service": { icon: "🔧", color: "\x1b[34m", label: " 📅 booking-service" },
-  "admin-service":   { icon: "🔧", color: "\x1b[34m", label: " 🔑 admin-service" },
-  "qa":              { icon: "🐛", color: "\x1b[32m", label: "qa" },
-  "security":        { icon: "🛡️", color: "\x1b[36m", label: "security" },
+  "orchestrator":         { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
+  "frontend":             { icon: "🎨", color: "\x1b[35m", label: "frontend" },
+  "gateway":              { icon: "🔧", color: "\x1b[34m", label: " 🚪 gateway" },
+  "appointment-service":  { icon: "🔧", color: "\x1b[34m", label: " 📅 appointment-service" },
+  "user-service":         { icon: "🔧", color: "\x1b[34m", label: " 🔑 user-service" },
+  "qa":                   { icon: "🐛", color: "\x1b[32m", label: "qa" },
+  "security":             { icon: "🛡️", color: "\x1b[36m", label: "security" },
 }
 
 function agentPrefix(agentKey) {
@@ -333,7 +338,7 @@ function printCostTable(taskLabel) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  banner("DEV LOOP ORCHESTRATOR — BOOKME")
+  banner("DEV LOOP ORCHESTRATOR — DOG GROOMING CLINIC APPOINTMENT BOOKING")
 
   const BASE_BRANCH = getBaseBranch()
   log(`Base branch: '${BASE_BRANCH}' — every task branches from here and merges back here, only after your approval.`)
@@ -376,7 +381,7 @@ async function main() {
       }
     }
 
-    const userInstructions = planResumable
+    const userInstructions = planResumable || AUTO_APPROVE_PLANS
       ? ""
       : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ")
 
@@ -454,8 +459,9 @@ async function main() {
     } else {
       reports = makeReportPaths(task.slug, {
         frontend: tickets.frontend.id,
-        bookingService: tickets.bookingService.id,
-        adminService: tickets.adminService.id,
+        gateway: tickets.gateway.id,
+        appointmentService: tickets.appointmentService.id,
+        userService: tickets.userService.id,
         qa: tickets.qa.id,
         security: tickets.security.id,
       })
@@ -486,52 +492,75 @@ async function main() {
       writeSkippedReport(reports.fe, "Frontend Agent")
     }
 
-    // ── Step: Backend (both microservices, in parallel — only those in scope) ──
+    // ── Step: Backend (all three services, in parallel — only those in scope) ──
+    // gateway is a stateless reverse proxy; most tasks won't scope it in — only
+    // deploy/production-setup tasks per agents/backend/CLAUDE.md.
     log("Launching backend agents (only those in scope, in parallel)...")
 
     await Promise.all([
-      inScope(task, "booking-service")
+      inScope(task, "gateway")
         ? runAgent({
             systemPrompt: "agents/backend/CLAUDE.md",
             input: [
               `You are the Backend Agent.`,
               `Task: ${task.title}`,
-              `Task id: ${tickets.bookingService.id}`,
-              `Service: booking-service`,
-              `Port: ${BACKEND_PORTS.bookingService}`,
-              `API contract: ${API_CONTRACTS.bookingService}`,
+              `Task id: ${tickets.gateway.id}`,
+              `Service: gateway`,
+              `Port: ${BACKEND_PORTS.gateway}`,
+              `API contract: ${API_CONTRACTS.gateway}`,
               `Approved plan: ${planPath}`,
               `Follow your CLAUDE.md instructions exactly.`,
               `End your final response with exact line: STATUS: DONE`,
             ].join("\n"),
-            outputFile: reports.bookingService,
+            outputFile: reports.gateway,
             doneMarker: "STATUS: DONE",
-            label: "Backend Agent — booking-service",
-            agentKey: "booking-service",
+            label: "Backend Agent — gateway",
+            agentKey: "gateway",
           })
-        : (logSkip("Backend Agent — booking-service", "out of scope for this task"),
-           writeSkippedReport(reports.bookingService, "Backend Agent — booking-service")),
-      inScope(task, "admin-service")
+        : (logSkip("Backend Agent — gateway", "out of scope for this task"),
+           writeSkippedReport(reports.gateway, "Backend Agent — gateway")),
+      inScope(task, "appointment-service")
         ? runAgent({
             systemPrompt: "agents/backend/CLAUDE.md",
             input: [
               `You are the Backend Agent.`,
               `Task: ${task.title}`,
-              `Task id: ${tickets.adminService.id}`,
-              `Service: admin-service`,
-              `Port: ${BACKEND_PORTS.adminService}`,
-              `API contract: ${API_CONTRACTS.adminService}`,
+              `Task id: ${tickets.appointmentService.id}`,
+              `Service: appointment-service`,
+              `Port: ${BACKEND_PORTS.appointmentService}`,
+              `API contract: ${API_CONTRACTS.appointmentService}`,
               `Approved plan: ${planPath}`,
               `Follow your CLAUDE.md instructions exactly.`,
               `End your final response with exact line: STATUS: DONE`,
             ].join("\n"),
-            outputFile: reports.adminService,
+            outputFile: reports.appointmentService,
             doneMarker: "STATUS: DONE",
-            label: "Backend Agent — admin-service",
-            agentKey: "admin-service",
+            label: "Backend Agent — appointment-service",
+            agentKey: "appointment-service",
           })
-        : (logSkip("Backend Agent — admin-service", "out of scope for this task"),
-           writeSkippedReport(reports.adminService, "Backend Agent — admin-service")),
+        : (logSkip("Backend Agent — appointment-service", "out of scope for this task"),
+           writeSkippedReport(reports.appointmentService, "Backend Agent — appointment-service")),
+      inScope(task, "user-service")
+        ? runAgent({
+            systemPrompt: "agents/backend/CLAUDE.md",
+            input: [
+              `You are the Backend Agent.`,
+              `Task: ${task.title}`,
+              `Task id: ${tickets.userService.id}`,
+              `Service: user-service`,
+              `Port: ${BACKEND_PORTS.userService}`,
+              `API contract: ${API_CONTRACTS.userService}`,
+              `Approved plan: ${planPath}`,
+              `Follow your CLAUDE.md instructions exactly.`,
+              `End your final response with exact line: STATUS: DONE`,
+            ].join("\n"),
+            outputFile: reports.userService,
+            doneMarker: "STATUS: DONE",
+            label: "Backend Agent — user-service",
+            agentKey: "user-service",
+          })
+        : (logSkip("Backend Agent — user-service", "out of scope for this task"),
+           writeSkippedReport(reports.userService, "Backend Agent — user-service")),
     ])
 
     // Real config values (MONGODB_URI, JWT_SECRET, ...) are collected HERE by
@@ -541,8 +570,9 @@ async function main() {
     // streamed output is easy to scroll past unanswered. This runs once per
     // service (only after that service's .env.example exists, i.e. after its
     // scaffold task), and reuses any value already set for a sibling service.
-    if (inScope(task, "booking-service")) await ensureBackendEnv("booking-service")
-    if (inScope(task, "admin-service")) await ensureBackendEnv("admin-service")
+    if (inScope(task, "gateway")) await ensureBackendEnv("gateway")
+    if (inScope(task, "appointment-service")) await ensureBackendEnv("appointment-service")
+    if (inScope(task, "user-service")) await ensureBackendEnv("user-service")
 
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
@@ -554,8 +584,9 @@ async function main() {
           `Task id: ${tickets.qa.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.bookingService}`,
-          `- ${API_CONTRACTS.adminService}`,
+          `- ${API_CONTRACTS.gateway}`,
+          `- ${API_CONTRACTS.appointmentService}`,
+          `- ${API_CONTRACTS.userService}`,
           `Run validation across frontend, all in-scope backend services, and e2e.`,
           `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -581,8 +612,9 @@ async function main() {
           `Task id: ${tickets.security.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.bookingService}`,
-          `- ${API_CONTRACTS.adminService}`,
+          `- ${API_CONTRACTS.gateway}`,
+          `- ${API_CONTRACTS.appointmentService}`,
+          `- ${API_CONTRACTS.userService}`,
           `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
           `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -615,8 +647,8 @@ function ensurePlanDirAndBacklog() {
   }
 }
 
-// Which of the 5 gated agents (frontend/booking-service/admin-service/qa/
-// security) a task actually needs, read from the backlog line's `scope:`
+// Which of the 6 gated agents (frontend/gateway/appointment-service/
+// user-service/qa/security) a task actually needs, read from the backlog line's `scope:`
 // field (comma-separated agent keys, or "none" for zero of them). No
 // `scope:` field at all means "unknown scope" — run everything, since that's
 // the only safe default when nobody has classified the task yet.
@@ -774,22 +806,25 @@ async function markPlanStatus(planPath, status) {
 function makeReportPaths(slug, ticketIds) {
   const date = new Date().toISOString().slice(0, 10)
   return {
-    fe:             `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
-    bookingService: `${REPORTS_DIR}/${date}-${ticketIds.bookingService}-${slug}-booking-service.md`,
-    adminService:   `${REPORTS_DIR}/${date}-${ticketIds.adminService}-${slug}-admin-service.md`,
-    qa:             `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
-    security:       `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
+    fe:                 `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
+    gateway:            `${REPORTS_DIR}/${date}-${ticketIds.gateway}-${slug}-gateway.md`,
+    appointmentService: `${REPORTS_DIR}/${date}-${ticketIds.appointmentService}-${slug}-appointment-service.md`,
+    userService:        `${REPORTS_DIR}/${date}-${ticketIds.userService}-${slug}-user-service.md`,
+    qa:                 `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
+    security:           `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
   }
 }
 
 const API_CONTRACTS = {
-  bookingService: "docs/api-contract/api-contract.booking-service.yaml",
-  adminService:   "docs/api-contract/api-contract.admin-service.yaml",
+  gateway:            "docs/api-contract/api-contract.gateway.yaml",
+  appointmentService: "docs/api-contract/api-contract.appointment-service.yaml",
+  userService:        "docs/api-contract/api-contract.user-service.yaml",
 }
 
 const BACKEND_PORTS = {
-  bookingService: 4001,
-  adminService: 4002,
+  gateway: 5000,
+  appointmentService: 5001,
+  userService: 5002,
 }
 
 // ─── Claude planning ──────────────────────────────────────────────────────────
@@ -942,11 +977,12 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
 function simulateTickets(slug) {
   const up = slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "TASK"
   return {
-    frontend:       { id: `${up}-FE` },
-    bookingService: { id: `${up}-BK` },
-    adminService:   { id: `${up}-AD` },
-    qa:             { id: `${up}-QA` },
-    security:       { id: `${up}-SEC` },
+    frontend:           { id: `${up}-FE` },
+    gateway:            { id: `${up}-GW` },
+    appointmentService: { id: `${up}-APT` },
+    userService:        { id: `${up}-USR` },
+    qa:                 { id: `${up}-QA` },
+    security:           { id: `${up}-SEC` },
   }
 }
 
@@ -1370,7 +1406,7 @@ function generatePlanFallback({ task }) {
 Status: draft
 Owner: Orchestrator
 Last updated: ${today}
-Scope-Agents: frontend,booking-service,admin-service,qa,security
+Scope-Agents: frontend,appointment-service,user-service,qa,security
 
 ## Goal
 Deliver ${task.title} in the existing product.
@@ -1389,17 +1425,18 @@ Deliver ${task.title} in the existing product.
 
 ## Steps
 1. Frontend agent implements UI and defines API contract(s) if needed.
-2. Backend agents (booking-service, admin-service) run in parallel — independent microservices.
-3. QA agent runs unit, integration, and e2e checks across frontend and both backend services.
-4. Security agent audits frontend, both backend services, and API contracts.
+2. Backend agents (appointment-service, user-service, and gateway if in scope) run in parallel — independent services.
+3. QA agent runs unit, integration, and e2e checks across frontend and all in-scope backend services.
+4. Security agent audits frontend, all in-scope backend services, and API contracts.
 
 ## Validation
 - frontend: npm --prefix frontend run lint && npm --prefix frontend run build && npm --prefix frontend run test
-- backend/booking-service: npm --prefix backend/booking-service run test
-- backend/admin-service: npm --prefix backend/admin-service run test
+- backend/appointment-service: npm --prefix backend/appointment-service run test
+- backend/user-service: npm --prefix backend/user-service run test
+- backend/gateway (only if in scope): npm --prefix backend/gateway run test
 
 ## Risks
-- TimeSlot concurrency (booking-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
+- TimeSlot concurrency (appointment-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
 - Existing tests may fail due to unrelated baseline issues.
 
 ## Rollout Order

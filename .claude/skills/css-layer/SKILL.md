@@ -4,20 +4,11 @@ description: Use this skill for all UI/UX implementation tasks. Enforces a 100% 
 allowed_tools: [read_file]
 examples:
    - input: "Create a primary button"
-     output: '<Button className="bg-primary hover:bg-primary/90 text-white rounded-xl shadow-lg shadow-primary/20">{{PRIMARY_ACTION_LABEL}}</Button>'
+     output: '<Button className="bg-primary hover:bg-primary/90 text-white rounded-xl shadow-lg shadow-primary/20">אישור תור</Button>'
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PRIMARY_ACTION_LABEL}}   — main CTA text, e.g. "Complete Booking" / "Add to Cart"
-  {{RTL_REQUIRED}}           — yes/no — does the app need RTL (Hebrew/Arabic) support?
-  {{SPATIAL_COMPONENT}}      — any spatial/diagram component that must NOT flip with dir="rtl" (e.g. a seat map, floor plan) — omit section 3b if none
-  {{STATUS_STYLE_ENTITY}}    — entity whose status maps to theme color tokens, if any
-Ask the user: "Does this app need RTL support?" / "Any spatial/diagram UI (maps, layouts) that must stay LTR regardless of page direction?"
--->
-
 # CSS Layer - 100% Tailwind CSS Architecture (v4)
-*Objective:* Build high-fidelity, responsive{{RTL_REQUIRED_SUFFIX}} UI using a pure Tailwind CSS architecture. Custom CSS/SCSS files, `@apply` directives, and BEM naming conventions are strictly prohibited.
+*Objective:* Build high-fidelity, responsive, RTL/LTR-ready UI using a pure Tailwind CSS architecture. There is no external design source for this project (no AI-Studio export, no Figma) — the Frontend Agent designs the UI itself per `.rule/style-rules.md`, using this skill's rules as the implementation contract. Custom CSS/SCSS files, `@apply` directives, and BEM naming conventions are strictly prohibited.
 
 **Key Focus Areas:**
 - *Utility-First:* 100% styling via Tailwind classes directly in the JSX/TSX.
@@ -43,7 +34,7 @@ Ask the user: "Does this app need RTL support?" / "Any spatial/diagram UI (maps,
 - **Spacing:** Use consistent spacing scales (e.g., `p-4`, `m-6`) to maintain vertical and horizontal rhythm.
 
 ### 3. Directional (RTL/LTR) Support
-Fill in this section only if `{{RTL_REQUIRED}}` is yes.
+This app requires full RTL support: Hebrew is the default language (RTL) and English is the alternate language (LTR), switched per-language via a language switcher visible on every public screen. Layout must be config-driven, not hardcoded to one direction.
 
 - **Mandatory Logical Properties:** Use logical utilities to support RTL without extra code:
   - `ps-*` / `pe-*` (Padding Start/End) instead of `pl`/`pr`.
@@ -55,7 +46,7 @@ Fill in this section only if `{{RTL_REQUIRED}}` is yes.
 
 - **Bi-Directional Icons:** Use the `rtl:rotate-180` modifier for icons that must flip direction (like arrows, back/forward chevrons).
 
-- **Spatial Component Exception (if applicable):** `{{SPATIAL_COMPONENT}}` is a spatial diagram, not text — it must NOT flip with `dir="rtl"`. Render its container with a fixed `dir="ltr"` (or an explicit spatial coordinate system independent of document direction) regardless of the surrounding RTL layout. Everything else on the page still follows RTL normally.
+- **Spatial Component Exception:** none. This app has no spatial/diagram UI (no seat map, no floor plan) — the `TimeSlotGrid` is a simple list of time labels, not a spatial layout, so it follows the page's normal RTL/LTR direction like every other component. No component in this app needs a fixed `dir="ltr"` override.
 
 ### 4. Responsiveness & Interaction
 - **Mobile-First:** Classes without a prefix are for mobile. Use `md:` for tablets/desktop.
@@ -64,8 +55,9 @@ Fill in this section only if `{{RTL_REQUIRED}}` is yes.
 
 - **Group/Peer Logic:** Leverage `group` and `peer` classes for complex parent-child or sibling-based interactions.
 
-### 5. Status Color Mapping (fill in if the app has a status-driven entity)
-- Map each `{{STATUS_STYLE_ENTITY}}` status value to a `@theme` token, not a raw hex value.
+### 5. Status Color Mapping
+`TimeSlot` (`available`/`held`/`booked`) and `Appointment` (`pending`/`confirmed`/`cancelled`/`completed`) are the app's status-driven entities:
+- Map each status value to a `@theme` token, not a raw hex value.
 - Per `accessibility-layer` skill, color is never the only signal: pair each status's background color with the corresponding icon/label (color alone is insufficient and non-compliant).
 - Encode the mapping as a single lookup (e.g. a `Record<Status, string>`) rather than inline conditionals scattered across components.
 

@@ -6,24 +6,12 @@ references:
   - @state-management-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}
-  {{ROLES}}                — list of authenticated roles (e.g. "admin" only, or "admin, user")
-  {{UNAUTHENTICATED_ROLE}}  — e.g. "guest"/"passenger" — a role that never logs in, if any
-  {{PUBLIC_ROUTES}}         — list of routes needing no auth
-  {{PRIVATE_ROUTES}}        — list of routes needing auth, grouped by role
-  {{RTL_OR_LTR}}
-  {{VERSION_GOVERNANCE}}    — "not in scope" or a description of forced-update requirements
-Ask the user: "What roles exist, and which are authenticated?" "List public vs. private routes." "Does the app need forced-update/version-governance UI?"
--->
-
 # Requirements (Core Logic)
 
 1. **Authentication Hydration:**
-   - {{PROJECT_NAME}} has the following authenticated roles: {{ROLES}}. {{UNAUTHENTICATED_ROLE}} (if any) is never authenticated — no login/signup, so there is no session to hydrate for that role.
+   - Dog Grooming Clinic Booking has one authenticated role: `Admin` (the clinic owner). `Customer` is never authenticated — no login/signup, so there is no session to hydrate for that role; customers are identified per-`Appointment` by name + phone captured at booking time.
    - Hydration Flow:
-      - On mount: read the token from storage (`localStorage` on web, `@capacitor/preferences` on Android, if targeting native) via `auth.service.ts`.
+      - On mount: read the token from storage (`localStorage` on web, `@capacitor/preferences` on Android/iOS native) via `auth.service.ts`.
       - Splash State: while `isHydrating`, show `SplashLoader`.
       - Post-Hydration: if a valid token exists, populate the logged-in user in the store; otherwise the app proceeds unauthenticated (fine for all public-facing screens).
    - If there is no onboarding/consent/multi-step signup funnel, do not build a step-gated hydration flow — a user either has valid credentials and logs in, or doesn't.
@@ -33,15 +21,15 @@ Ask the user: "What roles exist, and which are authenticated?" "List public vs. 
    - Manage the visibility state of global Modals (e.g., Session Expired, Login).
 
 3. **Routing Strategy (Auth Guard):**
-   - **Public Routes (no auth required):** {{PUBLIC_ROUTES}}.
-   - **Private Routes (role-gated):** {{PRIVATE_ROUTES}}.
+   - **Public Routes (no auth required):** `/` (service list), `/book/:serviceId` (TimeSlot picker), `/book/:serviceId/:timeSlotId/confirm` (contact details & confirm), `/appointments/:id` (booking confirmation), `/admin/login`.
+   - **Private Routes (role-gated, `Admin` only):** `/admin/appointments` (appointments dashboard), `/admin/services` (services management).
    - Guard Logic:
       - Auth Check: if `!loggedinUser` and route is private ⮕ redirect to the login route.
       - Only add an onboarding/funnel check if the product actually has a multi-step account setup — don't build one speculatively.
 
 4. **Global Layout Wrapper:**
    - Manage the main viewport container (e.g., `min-h-screen`, `bg-slate-50`).
-   - Handle directionality at the HTML level: {{RTL_OR_LTR}}.
+   - Handle directionality at the HTML level: Hebrew (RTL) is the default language; English (LTR) is also supported via a language switcher visible on every public screen — see `css-layer` skill for the logical-properties implementation.
 
 5. **Route Guard Implementation:**
    - Create a wrapper component `ProtectedRoute` for private routes.
@@ -51,7 +39,7 @@ Ask the user: "What roles exist, and which are authenticated?" "List public vs. 
       - No further step-gating is needed beyond this single check unless the product defines one.
 
 6. **Version Governance & Upgrade Orchestration**
-   - {{VERSION_GOVERNANCE}}
+   - Not in scope for v1 — single native build target, no staged rollout/forced-update requirement yet.
    - Do not build `UpgradeRequired`/`UpgradeRecommended` components speculatively — if this becomes a real requirement, scope it explicitly first, following a `Major/Minor/Patch` comparison approach, before adding it here.
 
 # Tailwind Implementation Logic
@@ -60,7 +48,7 @@ Ask the user: "What roles exist, and which are authenticated?" "List public vs. 
 - *Modal Layer:* Login modal and any confirmation modals sit below the Toaster but above all page content.
 
 # Files Structure
-{{PROJECT_NAME}}/
+dog-grooming-clinic-booking/
 └── frontend/
     └── src/
     │   ├── App.tsx                 # Main Logic & Routing

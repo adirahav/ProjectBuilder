@@ -6,21 +6,11 @@ references:
   - @state-management-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{BACKEND_SERVICES}}       — backend service(s) this frontend talks to
-  {{DOMAIN_SERVICE_FILES}}   — list of *.service.ts files by domain
-  {{EXAMPLE_ENTITY}}         — a representative CRUD entity for the code sample (e.g. Tour, Product, Order)
-  {{CUSTOM_ACTION_SERVICE}}  — a service with custom (non-CRUD) actions, if any
-  {{SPECIAL_ERROR_CODE}}     — a domain-specific conflict status code, if any
-Ask the user: "List entities needing CRUD services vs. custom-action services."
--->
-
 # Service Layer Guidelines
 *Goal:* Centralize the application's core logic and data management to keep components "lean" and focused only on UI.
 
 **Core Responsibilities:**
-- *Data Persistence:* Managing how data is saved and retrieved (via {{BACKEND_SERVICES}}).
+- *Data Persistence:* Managing how data is saved and retrieved (via the `appointment-service` and `user-service` backend services).
 
 - *Business Logic:* Implementing data transformations and request/response shaping between the API and the UI.
 
@@ -28,35 +18,38 @@ Ask the user: "List entities needing CRUD services vs. custom-action services."
 
 ## File Location
 - Place services in `frontend/src/services/`
-- Name files with `.service.ts` suffix (e.g., {{DOMAIN_SERVICE_FILES}})
+- Name files with `.service.ts` suffix: `service.service.ts`, `timeslot.service.ts`, `appointment.service.ts`, `auth.service.ts`
 - Create a corresponding `.test.ts` file for tests
 
 ## Service Pattern
 Services are pure functions, not classes. Export named functions:
 
 ```typescript
-// {{EXAMPLE_ENTITY}}.service.ts
+// service.service.ts
 import { httpService } from "./http.service"
 
-const BASE_URL = '{{EXAMPLE_ENTITY_LOWER}}/'
+const BASE_URL = 'services/'
 
-export interface {{EXAMPLE_ENTITY}} {
+export interface Service {
     id?: string
-    // ...domain fields...
-    deletedAt?: string | null
+    name: string
+    durationMinutes: number
+    price: number
+    isActive: boolean
+    deactivatedAt?: string | null
     [key: string]: any
 }
 
-export const {{EXAMPLE_ENTITY_LOWER}}Service = {
+export const serviceService = {
     getList,
     getById,
     save,
     remove
 }
 
-async function getList(): Promise<{{EXAMPLE_ENTITY}}[]> {
+async function getList(): Promise<Service[]> {
     try {
-        const items = await httpService.get<{{EXAMPLE_ENTITY}}[]>(BASE_URL)
+        const items = await httpService.get<Service[]>(BASE_URL)
         return items
     } catch (err) {
         console.error(`Had problems getting the list`)
@@ -64,9 +57,9 @@ async function getList(): Promise<{{EXAMPLE_ENTITY}}[]> {
     }
 }
 
-async function getById(id: string): Promise<{{EXAMPLE_ENTITY}}> {
+async function getById(id: string): Promise<Service> {
     try {
-        const item = await httpService.get<{{EXAMPLE_ENTITY}}>(`${BASE_URL}${id}`)
+        const item = await httpService.get<Service>(`${BASE_URL}${id}`)
         return item
     } catch (err) {
         console.error(`Had problems getting item ${id}`)
@@ -74,22 +67,22 @@ async function getById(id: string): Promise<{{EXAMPLE_ENTITY}}> {
     }
 }
 
-async function save(itemToSave: {{EXAMPLE_ENTITY}}): Promise<{{EXAMPLE_ENTITY}}> {
+async function save(itemToSave: Service): Promise<Service> {
     const method: 'put' | 'post' = itemToSave.id ? 'put' : 'post'
     const endpoint = itemToSave.id ? `${BASE_URL}${itemToSave.id}` : BASE_URL
 
-    const saved = await httpService[method]<{{EXAMPLE_ENTITY}}>(endpoint, itemToSave)
+    const saved = await httpService[method]<Service>(endpoint, itemToSave)
     return saved
 }
 
 async function remove(id: string): Promise<any> {
-    // Soft-delete — sets deletedAt server-side, does not remove the document
-    const result = await httpService.delete<any>(`${BASE_URL}${id}`)
+    // Soft-delete — deactivates the service (isActive=false, deactivatedAt set server-side), does not remove the document
+    const result = await httpService.patch<any>(`${BASE_URL}${id}/deactivate`, {})
     return result
 }
 ```
 
-`{{CUSTOM_ACTION_SERVICE}}` (if applicable) follows the same pattern for its own named actions rather than the generic `getList`/`save`/`remove` shape above — each is its own named function calling the corresponding endpoint (see the relevant API contract file), since custom actions aren't simple CRUD.
+`appointment.service.ts` follows the same pattern for its own named actions rather than the generic `getList`/`save`/`remove` shape above — each is its own named function calling the corresponding endpoint (see the relevant API contract file), since booking actions (`book`, `confirm`, `cancel`) aren't simple CRUD. Likewise `timeslot.service.ts` exposes a custom `hold(timeSlotId)` action alongside its `getList` (available slots for a service/date), and `auth.service.ts` exposes `login`/`logout` rather than CRUD verbs.
 
 ## Data Persistence
 - Use `localStorage` for client-side persistence in web applications, and use the native `Preferences` API for mobile/native platforms.
@@ -103,17 +96,17 @@ Non-storage utilities (dates, strings, formatting) that aren't tied to state per
 
 ## Testing Services
 ```typescript
-// {{EXAMPLE_ENTITY}}.service.test.ts
+// service.service.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { {{EXAMPLE_ENTITY_LOWER}}Service } from './{{EXAMPLE_ENTITY}}.service'
+import { serviceService } from './service.service'
 
-describe('{{EXAMPLE_ENTITY}} Service', () => {
+describe('Service Service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('should fetch the list', async () => {
-    const items = await {{EXAMPLE_ENTITY_LOWER}}Service.getList()
+    const items = await serviceService.getList()
     expect(Array.isArray(items)).toBe(true)
   })
 })
@@ -134,4 +127,4 @@ Middleware Awareness: Ensure `http.service.ts` includes the JWT token in the Aut
 
 Data Formatting:
 - Pass fields through as-is (no casing transformation) if the backend already matches the frontend's naming convention.
-- Any service exposed to a special-case conflict status ({{SPECIAL_ERROR_CODE}}) must surface it as a distinct case, not a generic error — let the caller (page/hook) show an actionable message and refresh. Never silently swallow or retry it inside the service.
+- Any service exposed to a special-case conflict status (`409`, e.g. `appointment.service.ts`'s `book()` when a `TimeSlot` is already held/booked by someone else) must surface it as a distinct case, not a generic error — let the caller (page/hook) show an actionable message and refresh. Never silently swallow or retry it inside the service.

@@ -3,16 +3,6 @@ name: api-layer
 description: Use this skill when connecting frontend components to backend services, replacing mock data, or handling JWT authentication.
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{BACKEND_SERVICES}}       — list of backend services (single monolith, or e.g. "user-management-service, tour-service")
-  {{DOMAIN_SERVICES}}        — frontend service files per domain, e.g. auth.service.ts, order.service.ts
-  {{ID_FIELD_CONVENTION}}    — "id (uuid), never _id" or whatever this project uses
-  {{SPECIAL_ERROR_CODES}}    — any non-standard status codes needing special UI handling (e.g. a 409 conflict), if any
-  {{UNAUTHENTICATED_ENDPOINTS}} — any endpoints/requests that carry no auth token, if any
-Ask the user: "How many backend services, and what does each own?" "What are your main domain entities (for service file naming)?" "Any special error codes (like a 409 conflict) needing distinct UI handling?" "Are there any endpoints that intentionally carry no auth token?"
--->
-
 # API Guidelines
 *Goal:* Transform static/mock interfaces into functional, data-driven components whenever a feature requires real-world data or secure authentication.
 
@@ -25,13 +15,13 @@ Ask the user: "How many backend services, and what does each own?" "What are you
 
 ## API Integration Standard
 
-**Protocol:** All frontend services must strictly follow the OpenAPI specifications located in `docs/api-contract/` (one YAML file per backend service: {{BACKEND_SERVICES}}).
+**Protocol:** All frontend services must strictly follow the OpenAPI specifications located in `docs/api-contract/` (one YAML file per backend service: `gateway`, `appointment-service`, `user-service`). The frontend always calls through `gateway` (`GATEWAY_URL`) — it never calls `appointment-service` or `user-service` directly.
 
-**Service Layer:** Use Axios for all HTTP requests. Create a dedicated service file per domain (e.g., {{DOMAIN_SERVICES}}), calling through `http.service.ts` — never call Axios or the API directly from a component or another service.
+**Service Layer:** Use Axios for all HTTP requests. Create a dedicated service file per domain: `service.service.ts` (Service CRUD), `timeslot.service.ts` (TimeSlot listing/hold), `appointment.service.ts` (Appointment booking/list/confirm/cancel), `auth.service.ts` (admin login) — calling through `http.service.ts` — never call Axios or the API directly from a component or another service.
 
-**Data Handling:** Replace all "Dummy/Mock" data with real async fetch calls. Ensure proper error handling for 4xx and 5xx status codes based on the OpenAPI error schemas — including any special-case codes: {{SPECIAL_ERROR_CODES}}.
+**Data Handling:** Replace all "Dummy/Mock" data with real async fetch calls. Ensure proper error handling for 4xx and 5xx status codes based on the OpenAPI error schemas — including the special-case code: `409` on `POST /api/appointments` (and `POST /api/timeslots/:id/hold`) when the `TimeSlot` was already held/booked by a concurrent request — must surface a specific "this slot is no longer available" message and refresh the TimeSlot picker, never a generic error toast.
 
-**Typing:** Always create TypeScript interfaces in `frontend/src/types/<domain>.types.ts` that match the schemas defined in the OpenAPI spec. Do not create a `models/` directory. Follow this project's identity-field convention consistently: {{ID_FIELD_CONVENTION}}.
+**Typing:** Always create TypeScript interfaces in `frontend/src/types/<domain>.types.ts` that match the schemas defined in the OpenAPI spec (`service.types.ts`, `timeslot.types.ts`, `appointment.types.ts`). Do not create a `models/` directory. Every entity's client-facing identity field is `id` (a `uuid` string) — the Mongo `_id` is internal only and never appears in a frontend type or API response.
 
 **JWT Handling:**
     - Use the `jwt-decode` library for parsing tokens.
@@ -52,7 +42,7 @@ If missing, run:
 ## Implementation: http.service.ts
 All API calls must use this centralized service to ensure consistent base URLs, token attachment, and error/session handling. It automatically attaches the JWT token to every outgoing request, and centrally handles session expiry (`401`) — no other file should duplicate either of these concerns.
 
-**Token storage:** the auth token is persisted via `localStorage` on web and `@capacitor/preferences` on the native Android build (if this project targets native) — never `sessionStorage`. Unauthenticated requests (if any: {{UNAUTHENTICATED_ENDPOINTS}}) carry no token at all.
+**Token storage:** the admin auth token is persisted via `localStorage` on web and `@capacitor/preferences` on the native Android/iOS build — never `sessionStorage`. `Customer` never authenticates, so every public-flow request (`GET /api/services`, `GET /api/timeslots`, `POST /api/timeslots/:id/hold`, `POST /api/appointments`, `GET /api/appointments/:id`) carries no token at all; only `Admin`-scoped requests (service management, appointment confirm/cancel, `GET /api/appointments?date=` dashboard) attach the `Authorization` header.
 
 ```typescript
 import axios from 'axios'
@@ -135,4 +125,4 @@ export const httpService = {
 
 **Error Mapping (non-401 errors):**
 - `http.service.ts` (or the calling service/hook) must never let a raw `error.message`/response body reach the UI. Map every user-facing error to a clear, hardcoded message before showing it in a toast (unless this project has a translation/phrase layer — see `ui-component-layer` skill).
-- Treat any special-case status code ({{SPECIAL_ERROR_CODES}}) as its own case — not a generic failure — and surface a specific, actionable message, then refresh the relevant view.
+- Treat the `409` conflict on a `TimeSlot` hold/book attempt as its own case — not a generic failure — and surface "this slot is no longer available", then refresh the TimeSlot picker view.

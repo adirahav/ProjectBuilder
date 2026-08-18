@@ -7,18 +7,6 @@ examples:
      output: "App.addListener('backButton', () => { moveAppToBackground(); });"
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{ROOT_SCREENS}}       — screens acting as navigation "roots" per flow/role (e.g. entry screen, authenticated dashboard)
-  {{ROLES}}              — roles/flows the app distinguishes (e.g. guest, admin)
-  {{LINEAR_SCREENS}}      — screens with standard linear back-navigation, not guarded roots
-  {{MODAL_LIST}}          — every modal that must intercept the back button
-  {{TAB_GROUPS}}          — any tabbed screen where tab switches must not create history entries
-  {{EXIT_TOAST_TEXT}}     — localized "press again to exit" text
-  {{LOGIN_ROUTE}}         — login route, if any, to be wiped from history on success
-Ask the user: "What screens act as navigation 'roots' per role/flow?" "List all modals that must intercept back-button." "Any tabbed views where tab switches shouldn't add history?"
--->
-
 # Native Navigation & Back-Button Architecture (UX/Nav)
 *Objective:* Control the native navigation ecosystem to ensure the hardware/gesture back-button mirrors the user's cognitive model. This layer prevents accidental app exits, eliminates navigation loops, and elegantly handles each distinct flow in this app.
 
@@ -34,42 +22,51 @@ Ask the user: "What screens act as navigation 'roots' per role/flow?" "List all 
 ## Core Principles
 
 ### 1. Root & Base Horizon
-{{ROOT_SCREENS}} — each is a navigation root for its flow/role ({{ROLES}}). Pressing the native back button from a root screen must trigger the Double-Press Exit sequence (§3), never standard history popping.
+This app has two navigation roots, one per role/flow (`Customer` guest flow, `Admin` authenticated flow):
+- **`/` (Service List)** — root of the guest/customer flow. Pressing the native back button here must trigger the Double-Press Exit sequence (§3), never standard history popping.
+- **`/admin/appointments`** — root of the authenticated admin flow (the dashboard landing screen after login). Pressing the native back button here must also trigger the Double-Press Exit sequence (§3) — an admin who just logged in should not be able to back out to the login screen (see §5) or out of the app accidentally.
 
-- *Linear/Browsing Screens:* {{LINEAR_SCREENS}} — back button steps back one level through standard linear history, not a guarded root.
+- *Linear/Browsing Screens:* `/book/:serviceId` (TimeSlot Picker), `/book/:serviceId/:timeSlotId/confirm` (Contact Details & Confirm), `/appointments/:id` (Booking Confirmation), `/admin/login` (Admin Login), and `/admin/services` (Admin Services, reached from the admin dashboard) — back button steps back one level through standard linear history, not a guarded root:
+  - From **TimeSlot Picker** → back to **Service List** (releases nothing yet, since no slot is held until one is selected).
+  - From **Contact Details & Confirm** → back to **TimeSlot Picker**, and this back navigation must release any `held` `TimeSlot` (call `timeslot.service.ts`'s release/hold-cancel action, or let the hold expire naturally, but prefer an explicit release so the slot frees immediately for other customers) and clear the selection from `booking.slice`.
+  - From **Booking Confirmation** → back to **Service List** (root), since this screen is a one-shot confirmation, not a step to redo — do not return to Contact Details (the appointment is already created).
+  - From **Admin Login** → back to **Service List** (the public entry point; admin login is reachable from a public app, not its own root — see §4).
+  - From **Admin Services** → back to **Admin Appointments** (the admin root).
 
 ### 2. Modal & Sub-View Orchestration
-- *Modal-First Dismissal:* Any open modal ({{MODAL_LIST}}) must intercept the back-button event and close itself first — it must never fall through to navigate the page underneath.
+- *Modal-First Dismissal:* Any open modal — the **Add/Edit Service modal** (opened from `/admin/services`) and any confirmation dialog (e.g. "confirm cancel appointment" on `/admin/appointments`) — must intercept the back-button event and close itself first — it must never fall through to navigate the page underneath.
 
-- *Tabbed View Handling:* Switching tabs within {{TAB_GROUPS}} must NOT push new history entries — back button from any tab returns to that view's root behavior (§1), not to a previously-viewed tab.
+- *Tabbed View Handling:* This app has no tabbed views in v1 (no tab groups exist) — this rule is a no-op today but stays documented for if a future admin dashboard adds tabs (e.g. Appointments/Services as tabs instead of separate routes).
 
-- *Sub-Selection as Overlay:* Any selection that opens a modal/overlay rather than a route change should have back-button close the modal and return to the underlying view exactly as it was, with no data loss on the in-progress view.
+- *Sub-Selection as Overlay:* Any selection that opens a modal/overlay rather than a route change (e.g. the Add/Edit Service modal) should have back-button close the modal and return to the underlying view exactly as it was, with no data loss on the in-progress view.
 
 ### 3. Double-Press Exit (Root Screens Only)
-- *Toast Feedback Interception:* The first back-button press on a root screen must show a non-modal Toast: "{{EXIT_TOAST_TEXT}}".
+- *Toast Feedback Interception:* The first back-button press on a root screen must show a non-modal Toast: "לחצו שוב כדי לצאת" ("Press again to exit").
 
 - *Double-Press Background Escape:* If the user presses the native back button a second time within a 2-second threshold on a root screen, the app must gracefully execute `Move App to Background`.
 
 - *The "Do Nothing" Prohibition:* Never ignore a native back-button press completely without visual feedback — a suppressed press with no toast/response creates a frozen UI perception.
 
 ### 4. Authentication-Driven Branching
-- *Authenticated flow:* Back button from the authenticated root → root behavior (§1/§3). Back button from any authenticated sub-modal → close the modal, stay on the current screen.
-- *Logged out (or session expired via a `401`):* Back button from `{{LOGIN_ROUTE}}` → the unauthenticated entry screen, not app exit.
-- *Unauthenticated flow (if any role never logs in):* No auth branching needed — navigation is purely route-based (§1) plus modal dismissal (§2).
+- *Authenticated (`Admin`) flow:* Back button from the authenticated root (`/admin/appointments`) → root behavior (§1/§3). Back button from any authenticated sub-modal → close the modal, stay on the current screen.
+- *Logged out (or session expired via a `401`):* Back button from `/admin/login` → the `Customer` entry screen (`/`), not app exit.
+- *Unauthenticated (`Customer`) flow:* No auth branching needed — `Customer` never logs in; navigation is purely route-based (§1) plus modal dismissal (§2).
 
 ### 5. Memory Stack Safety
-- *Destructive Navigation:* When a user successfully logs in, `replace`/stack-reset `{{LOGIN_ROUTE}}` out of history so the back button from the authenticated root never returns to the login screen.
-- *Post-Action Confirmation:* After a significant one-shot user action completes (submission, booking, purchase), do not push a separate "confirmation" route that could be navigated back into inconsistently — close the relevant modal/overlay and reflect the new state in place.
+- *Destructive Navigation:* When an `Admin` successfully logs in, `replace`/stack-reset `/admin/login` out of history so the back button from `/admin/appointments` never returns to the login screen.
+- *Post-Action Confirmation:* After a `Customer` completes a booking, `replace` into `/appointments/:id` rather than pushing it on top of the booking form — the back button from the confirmation screen should not return into a stale, already-submitted contact-details form.
 
 ## Implementation Checklist
-- [ ] Root views handle exit/background routines instead of standard history popping.
+- [ ] Root views (`/` and `/admin/appointments`) handle exit/background routines instead of standard history popping.
 
-- [ ] All modals intercept and consume the back-button event before it reaches page-level navigation.
+- [ ] All modals (Add/Edit Service, cancel-appointment confirmation) intercept and consume the back-button event before it reaches page-level navigation.
 
-- [ ] Tabbed-view tab switches do not create additional back-button history entries.
+- [ ] No tabbed views exist in v1 — revisit this rule if a future dashboard adds tabs.
 
-- [ ] Root screens implement the Double-Press to Background sequence with a localized Toast warning.
+- [ ] Root screens implement the Double-Press to Background sequence with a localized Toast warning ("לחצו שוב כדי לצאת").
 
-- [ ] The login route is wiped from history (`replace`) upon successful login.
+- [ ] The login route (`/admin/login`) is wiped from history (`replace`) upon successful login, so back from `/admin/appointments` never returns to it.
 
-- [ ] Back-button behavior is checked against auth state wherever flows could diverge.
+- [ ] Back button from Contact Details & Confirm releases the held `TimeSlot` before returning to the TimeSlot Picker.
+
+- [ ] Back-button behavior is checked against auth state wherever flows could diverge (admin vs. guest).

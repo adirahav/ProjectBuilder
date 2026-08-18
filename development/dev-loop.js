@@ -1684,6 +1684,11 @@ async function waitForApproval(prompt) {
 }
 
 async function waitForApprovalWithChat({ task, tickets, planPath }) {
+  if (AUTO_APPROVE_PLANS) {
+    log("Feature-done gate: AUTO_APPROVE_PLANS is on — auto-approving, no terminal wait.")
+    return
+  }
+
   log("Feature done. Type APPROVED to mark task complete, or send a command to the orchestrator.")
 
   while (true) {

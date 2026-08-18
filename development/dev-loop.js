@@ -495,6 +495,7 @@ async function main() {
         gateway: tickets.gateway.id,
         bookingService: tickets.bookingService.id,
         userService: tickets.userService.id,
+        notificationService: tickets.notificationService.id,
         qa: tickets.qa.id,
         security: tickets.security.id,
       })

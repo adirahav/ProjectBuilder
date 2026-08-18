@@ -1,6 +1,6 @@
 # Plan 002 — Install root and frontend dependencies (Zustand, Axios, lucide-react, sonner, framer-motion, clsx, tailwind-merge)
 
-- Status: active
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-18
 - Scope-Agents: frontend

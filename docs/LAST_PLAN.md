@@ -1,6 +1,6 @@
 # Plan 003 — Scaffold api-gateway service (package.json, Express, health check)
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-18
 - Scope-Agents: security, qa

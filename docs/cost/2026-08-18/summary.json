@@ -3,21 +3,21 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 5,
-      "outputTokens": 6878,
-      "cacheReadTokens": 70248,
-      "costUsd": 0.17874915,
-      "durationMs": 58367
+      "inputTokens": 7,
+      "outputTokens": 2722,
+      "cacheReadTokens": 99806,
+      "costUsd": 0.12762479999999998,
+      "durationMs": 31688
     },
     {
-      "role": "user-service",
-      "label": "Backend Agent — user-service",
-      "inputTokens": 34,
-      "outputTokens": 8640,
-      "cacheReadTokens": 592345,
-      "costUsd": 0.40851174999999995,
-      "durationMs": 163241
+      "role": "notification-service",
+      "label": "Backend Agent — notification-service",
+      "inputTokens": 146,
+      "outputTokens": 7275,
+      "cacheReadTokens": 411021,
+      "costUsd": 0.31713404999999995,
+      "durationMs": 130960
     }
   ],
-  "totalCostUsd": 0.5872609
+  "totalCostUsd": 0.44475884999999993
 }

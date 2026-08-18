@@ -1,0 +1,128 @@
+openapi: 3.0.3
+
+info:
+  title: booking-service API
+  version: 1.0.0
+  description: >
+    booking-service owns the Service, TimeSlot and Appointment entities for the
+    Dog Grooming Appointment Booking System.
+
+    Scope of this revision: PRD F1 only — the public, unauthenticated Service
+    list consumed by Screen 1 (Service List). TimeSlot and Appointment routes
+    (F2-F4b) and the Admin Service writes (F6-F8) are defined by their own
+    tickets and are deliberately absent here.
+
+servers:
+  - url: http://localhost:4001
+    description: Local development
+
+tags:
+  - name: Service
+    description: Treatments the clinic offers.
+
+paths:
+  /api/services:
+    get:
+      tags: [Service]
+      operationId: listActiveServices
+      summary: List all active Services
+      description: >
+        Public and unauthenticated by design (PRD: "all public booking routes
+        are unauthenticated"). Returns ONLY Services with `isActive: true` —
+        a deactivated Service is soft-deleted and must never appear on the
+        customer-facing list (PRD AC-4).
+
+        This endpoint accepts no query parameters. Any query string sent by a
+        client must be ignored outright and must never be merged into the
+        database filter.
+      security: []
+      responses:
+        '200':
+          description: The active Services. An empty array is a valid, expected result.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Service'
+              examples:
+                populated:
+                  summary: Two active Services
+                  value:
+                    - id: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+                      name: Full groom — small dog
+                      durationMinutes: 90
+                      price: 220
+                      isActive: true
+                    - id: 1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9
+                      name: Bath and blow dry
+                      durationMinutes: 45
+                      price: 120
+                      isActive: true
+                empty:
+                  summary: No active Services
+                  value: []
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Service:
+      type: object
+      description: >
+        A treatment the clinic offers. The client-facing identifier is always
+        `id`, the record's uuid — Mongo's `_id` and `__v` are internal and must
+        be stripped by the model's toJSON transform, never serialized here
+        (.rule/database-rules.md, "External Identity").
+      required: [id, name, durationMinutes, price, isActive]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The Service's uuid. Never a Mongo ObjectId.
+          example: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+        name:
+          type: string
+          minLength: 1
+          example: Full groom — small dog
+        durationMinutes:
+          type: integer
+          minimum: 1
+          description: Length of the treatment in minutes.
+          example: 90
+        price:
+          type: number
+          minimum: 0
+          description: Price in ILS. The clinic is single-currency in v1.
+          example: 220
+        isActive:
+          type: boolean
+          description: >
+            Soft-delete flag. Always `true` in this endpoint's response, since
+            it filters on it; included so the same schema serves the Admin list
+            (F6-F8), which does return inactive records.
+          example: true
+
+    Error:
+      type: object
+      description: >
+        Uniform error envelope. The message is for logs and developers — the
+        frontend never renders it, it maps the status code to its own localized
+        copy (.rule/error-handling-rules.md).
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          example: Internal Server Error

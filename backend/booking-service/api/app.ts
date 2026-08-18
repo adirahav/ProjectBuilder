@@ -3,6 +3,7 @@ import cors from 'cors'
 
 import { config } from './lib/config.ts'
 import { getDbStatus, isDbConnected } from './lib/db.ts'
+import { serviceRouter } from './service/service.routes.ts'
 
 // Builds the Express app without binding a port, so tests can drive it
 // with Supertest and the entrypoint can own the actual listen() call.
@@ -34,11 +35,15 @@ export function createApp(): Express {
   app.use(cors({ origin: config.frontendOrigin, credentials: true }))
   app.use(express.json())
 
-  // NOTE: the Service / TimeSlot / Appointment models and their routes are
-  // intentionally NOT part of this scaffold ticket (SCAFFOLD-APT). They land in
-  // the follow-up models and F1-F4b/F6-F11 route tickets. In particular the
-  // TimeSlot hold/booking concurrency logic is unimplemented here, so this
-  // service currently enforces no slot-uniqueness guarantee whatsoever.
+  // Public, unauthenticated Service list (PRD F1 / SERVICEL-APT).
+  app.use('/api/services', serviceRouter)
+
+  // NOTE: TimeSlot and Appointment models and their routes are intentionally
+  // NOT part of this ticket (SERVICEL-APT covers F1 only). They land in the
+  // follow-up F2-F4b route tickets, along with the Admin Service writes
+  // (F6-F8). In particular the TimeSlot hold/booking concurrency logic is
+  // unimplemented here, so this service currently enforces no slot-uniqueness
+  // guarantee whatsoever.
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

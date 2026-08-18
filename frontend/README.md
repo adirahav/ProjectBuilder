@@ -1,75 +1,62 @@
-# React + TypeScript + Vite
+# Frontend — Dog Grooming Appointment Booking System
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + TypeScript, Tailwind CSS v4 (CSS-first, no `tailwind.config.js`),
+Zustand, Axios, `react-router-dom`, `sonner`, `lucide-react`, `framer-motion`.
+Ships as a web build and, via Capacitor, as the Android/iOS build.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+cp .env.example .env      # required — see below
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Environment
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Variable | Purpose |
+|---|---|
+| `VITE_BOOKING_SERVICE_URL` | Base URL of `booking-service` (default dev value `http://localhost:4001`). The public booking routes are unauthenticated by design and are called directly rather than through `api-gateway`. |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+There is no hardcoded fallback: if the variable is unset, requests fall back to a
+relative path and a `[HTTP]` log warns about it, so a misconfiguration fails
+visibly instead of silently hitting the wrong origin.
+
+## Scripts
+
+| Script | What it does |
+|---|---|
+| `npm run dev` | Vite dev server |
+| `npm run build` | Type-check (`tsc -b`) then production build |
+| `npm run lint` | ESLint over the whole package |
+| `npm run test` | Vitest, single run |
+| `npm run test:watch` | Vitest, watch mode |
+
+## Layout
 
 ```
+src/
+├── components/      # Presentational components, grouped by feature
+│   ├── common/      # PageHeader, StateMessage, LanguageToggle, SkipLink
+│   ├── layout/      # AppHeader
+│   └── service/     # ServiceCard, ServiceList, ServiceListSkeleton
+├── hooks/           # use<Name>.ts
+├── i18n/            # strings.ts — the he/en phrase table
+├── lib/             # cn() class-merge helper
+├── pages/           # <Name>Page.tsx — the "smart" data-orchestrating layer
+├── services/        # <domain>.service.ts, all routed through http.service.ts
+├── store/           # Zustand slices, assembled in store.ts
+├── types/           # <domain>.types.ts
+└── utils/           # <name>.utils.ts, logger.ts
+```
+
+Conventions are defined in `.rule/*.md` at the repo root — those files, not this
+README, are the source of truth.
+
+## Bilingual / RTL
+
+Hebrew is the default locale and renders RTL; English renders LTR. The active
+locale lives in `app.slice.ts`, persists across reloads (localStorage on web,
+Capacitor Preferences on native), and drives `<html lang>` / `<html dir>`.
+Styling uses Tailwind **logical** properties (`ps-*`/`pe-*`, `ms-*`/`me-*`,
+`start-*`/`end-*`) so layouts mirror automatically — never `pl-*`/`pr-*`.

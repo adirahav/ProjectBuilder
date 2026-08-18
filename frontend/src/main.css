@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/*
+ * Single source of truth for design tokens (Tailwind v4 CSS-first — there is no
+ * tailwind.config.js). Every token here is mirrored in .rule/style-rules.md;
+ * consume them through their generated utilities (bg-primary, text-danger, ...)
+ * and never hardcode a hex value in a component.
+ */
+@theme {
+  /* Colors */
+  --color-primary: #2f6f4f;      /* deep grooming-brand green */
+  --color-primary-light: #eaf5ee;
+  --color-accent: #d98c3d;       /* warm accent (paw/amber) */
+  --color-danger: #c0392b;
+  --color-success: #2f6f4f;
+  --color-warning: #d98c3d;
+  --color-neutral-50: #fafafa;
+  --color-neutral-900: #1f2320;
+}

@@ -7,7 +7,7 @@ Current queue:
 - [x] Scaffold api-gateway service (package.json, Express, health check) | scope: gateway
 - [x] Scaffold booking-service (package.json, Express, Mongoose, health check) | scope: booking-service
 - [x] Scaffold user-service (package.json, Express, Mongoose, JWT libs, health check) | scope: user-service
-- [ ] Scaffold notification-service (package.json, Express, health check) | scope: notification-service
+- [x] Scaffold notification-service (package.json, Express, health check) | scope: notification-service
 - [ ] Service List page (public Customer screen) | scope: frontend,booking-service,qa | url: /
 - [ ] Time Slot Picker page (date/slot selection, hold-on-select) | scope: frontend,booking-service,qa,security | url: /book/example-service-id
 - [ ] Customer Details Form (name/phone/email, creates Appointment) | scope: frontend,booking-service,notification-service,qa,security | url: /book/example-service-id

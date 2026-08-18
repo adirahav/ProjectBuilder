@@ -1,139 +1,102 @@
 # Product Definition
 
-<!--
-TEMPLATE — QUESTION-DRIVEN, not fill-in-the-blank. Unlike the .rule/.claude/agents templates,
-this file has no {{PLACEHOLDER}} markers — its content IS the product, which must be authored
-fresh per project, not adapted from the Reference App's seat-booking domain. For each section below,
-interview the user with the listed questions, then WRITE the section in prose (matching the
-depth/tone of the reference sentence given per section), replacing the instruction
-block. Do not leave any "<!-- ... -->" instruction text in the finished file.
-
-Ask 2-4 questions at a time, not the whole file at once. Work top to bottom — later sections
-(Scope, Constraints) depend on earlier ones (Vision, Users) being settled first.
--->
-
 ## Purpose
 Define shared product intent so planning, architecture, and delivery stay aligned.
 
 ---
 
 ## Product Vision
-<!--
-Ask: "In one or two sentences, what does this product remove/replace/enable that's manual or
-painful today?" Reference depth: "This product removes the manual work of seating
-passengers on tour buses. Instead of an admin figuring out by hand who sits where, the admin
-sets up a tour with its buses and pickup points, and passengers browse the tour and request
-their own seat — the admin approves, manages, and finalizes the seating from there."
-Write 2-4 sentences here once answered.
--->
+ClinicBook removes the manual back-and-forth of booking an appointment at a small clinic or salon. Instead of phone calls and a paper diary, the business owner (Admin) lists their services with duration and price, and customers browse those services, pick an open time slot, and confirm their own appointment in a few taps — no account, no login. The Admin reviews, approves, or cancels appointments from a single dashboard.
 
 ---
 
 ## Target Users
-<!--
-Ask: "Who are the primary users (the ones with the main workflow/pain), and who are the
-secondary users (if any)?" For each: what are they trying to accomplish, what's their core need.
-Reference depth: distinguished "admins/tour managers" (primary — run tours, want
-to avoid manual seating) from "passengers" (secondary — want a live seat map and self-service
-seat pick). If this project has only one user type, say so explicitly rather than forcing a
-primary/secondary split.
-Write one subsection per user type once answered.
--->
+
+### Admin (primary)
+The business owner or staff member who runs the clinic/salon day to day. They manage the service catalog (name, duration, price), see which time slots are open or booked, and review, approve, or cancel appointments. Their core need is to spend less time on scheduling admin and avoid double-bookings.
+
+### Customer (secondary)
+A guest, unauthenticated visitor who wants to book an appointment without creating an account. They browse available services, pick a date and time slot, fill in their contact details, and receive a confirmation. Their core need is a fast, frictionless booking flow that works in Hebrew or English, on phone or desktop.
 
 ---
 
 ## Problem Statement
-<!--
-Ask: "What breaks or gets painful today without this product, and for whom specifically?"
-Reference depth: one paragraph connecting the manual-seating pain for admins to
-the lack of visibility/control for passengers, and how the product resolves both sides.
-Write one paragraph here once answered.
--->
+Without ClinicBook, a small clinic or salon relies on phone calls, texts, or a paper/whiteboard diary to track appointments. This is error-prone — double-bookings happen when two customers are offered the same slot, the owner has no live view of the day's schedule, and customers can't self-serve outside business hours. ClinicBook resolves both sides: customers get a live, always-available view of open slots and can book directly; the admin gets a single source of truth for the schedule with no double-booking risk, since the system — not a person — arbitrates who gets a contested time slot.
 
 ---
 
 ## Value Proposition
-<!--
-Ask: "What's the core value delivered, and what are 3-4 concrete differentiators from doing
-this manually or with a generic tool?"
-Reference depth: one paragraph + a "Key differentiators" bullet list of 3-4 items.
-Write here once answered.
--->
+ClinicBook gives a small business owner a booking system without the overhead of a general-purpose scheduling platform: it's scoped tightly to one business, one calendar, one set of services, and one admin. The customer-facing flow requires no signup, so nothing stands between a customer and confirming a booking.
 
 **Key differentiators:**
-- <fill in>
+- No customer account required — guest booking end to end
+- Slot-level concurrency control — two customers can never both book the same time slot
+- Bilingual, RTL-first UI (Hebrew primary, English secondary)
+- Works as a web app and as a native Android/iOS app from the same codebase
 
 ---
 
 ## Product Scope
 
-<!--
-Ask: "What's in scope for v1 — list every major feature area." Then: "What's explicitly out of
-scope for v1, and why (deferred vs. never)?" Cross-check against the entities/roles/contested-
-resource already established when this project's other config files were filled in (if this
-file is being written first, note that those other files should stay consistent with what's
-decided here).
-Reference depth: a bulleted "In scope" list (~8 items, each one line, referencing
-the owning rule/skill file where relevant) and a bulleted "Out of scope (v1)" list (~6 items,
-each noting briefly why it's deferred).
--->
-
 **In scope:**
-- <fill in>
+- Service catalog management (create/edit/deactivate a Service: name, duration, price) — `catalog-service`
+- Time slot generation/management tied to services and admin availability — `appointment-service`
+- Customer-facing service browsing and slot picker (guest, no login)
+- Customer appointment booking flow: pick service → pick slot → enter details (name, phone, email) → confirm
+- Booking confirmation screen/message for the customer
+- Admin authentication (login only, single Admin role) — `user-management-service`
+- Admin dashboard: view all appointments (upcoming/past), approve, cancel
+- Slot-concurrency protection so two customers cannot claim the same time slot
+- Hebrew (primary, RTL) + English (secondary, LTR) bilingual UI
+- Native app packaging (Capacitor/Android/iOS) alongside the web app
 
 **Out of scope (v1):**
-- <fill in>
+- Customer accounts/login/booking history (guest-only; deferred — no proven need yet)
+- Multi-tier admin roles or staff permissions (deferred — single business owner role is enough for v1)
+- Payments/deposits at booking time (deferred — payment collected in person)
+- SMS/email reminder automation (deferred — nice-to-have, not core to booking)
+- Multi-location/multi-branch support (never for v1 — this is a single-location product)
+- Recurring/repeat appointments (deferred — one-off bookings only for v1)
 
 ---
 
 ## Success Metrics
-<!--
-Ask: "What business metrics and product metrics would tell you this is working?" It's fine if
-exact targets are TBD — note that explicitly rather than inventing numbers.
-Reference depth: "Business metrics" (2 items) + "Product metrics" (3 items), each
-one line, with a closing note that baselines are TBD until real usage data exists.
--->
 
 **Business metrics:**
-- <fill in>
+- Reduction in double-booking incidents reported by the admin (target: zero)
+- Share of appointments booked without any phone/manual intervention
 
 **Product metrics:**
-- <fill in>
+- Time from "customer opens booking flow" to "confirmation shown" (target: under 2 minutes)
+- Slot-booking conflict rate (two customers racing the same slot) resolved correctly by the system
+- Admin dashboard load-to-actionable time (time to see and act on a pending appointment)
 
 *Baseline values to be defined after first real usage.*
 
 ---
 
 ## Constraints and Assumptions
-<!--
-Ask: "What hard constraints does this product operate under (auth requirements, no-instant-
-confirmation rules, etc.)?" and "What assumptions are you making that should be validated later
-(e.g. about user behavior, scale, org structure)?"
-Reference depth: "Constraints" (3 bullets, each a hard rule) + "Assumptions to
-validate" (4 bullets, each an open question to revisit later).
--->
 
 **Constraints:**
-- <fill in>
+- Customers must never be required to create an account or log in to book
+- Only one time slot booking may ever succeed per contested slot — the system must guarantee this even under simultaneous requests
+- Admin auth is JWT-based and gateway-centralized; downstream services must not be reachable directly from the internet in production
 
 **Assumptions to validate:**
-- <fill in>
+- A single admin/business-owner role is sufficient — no need for multiple staff logins in v1
+- Appointment volume is low enough (single clinic/salon) that a simple slot-locking strategy is sufficient without a queueing system
+- Hebrew RTL is the primary experience; English is secondary but must not be an afterthought in layout
+- Customers primarily book from mobile devices (native app or mobile web), so mobile-first flows take priority
 
 ---
 
 ## Prioritization Rules
-<!--
-Ask: "When two features compete for attention, what should generally win?" Keep this short —
-3-5 rules of thumb, not a full roadmap.
-Reference depth: 4 one-line prioritization rules (reduce manual workload, lower
-friction on the core flow, defer speculative scope, avoid premature complexity).
--->
-
-- <fill in>
+- Reduce manual scheduling workload for the Admin over adding cosmetic features
+- Protect the core booking flow's speed and reliability above all secondary features
+- Defer anything speculative (payments, reminders, multi-location) until the core flow is proven
+- Avoid premature complexity — one admin role, one location, guest-only customers, until real usage proves otherwise
 
 ---
 
 ## Update Triggers
-List the kinds of changes that should trigger someone to revisit this file — e.g. a new user
-segment, a scope change, a metric revision, a new platform target. (This section's shape is
-reusable as-is; just adapt the specific triggers to this product.)
+Revisit this file when: a new user segment is introduced (e.g. customer accounts), the scope changes (e.g. payments added), a success metric is redefined, a new platform target is added, or the admin role model changes (e.g. multi-staff support).

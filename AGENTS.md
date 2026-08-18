@@ -1,10 +1,5 @@
 # Agent Instructions
 
-<!--
-TEMPLATE — this file is nearly project-agnostic already. Confirm the directory names below match this project's convention ({{RULES_DIR}}, {{DOCS_DIR}}) and adjust if different.
-Delete this comment block once confirmed.
--->
-
 ## Security
 - Never commit or expose secrets (tokens, API keys, passwords, cluster credentials, secret values).
 

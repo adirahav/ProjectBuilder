@@ -7,18 +7,6 @@ examples:
      output: "App.addListener('backButton', () => { moveAppToBackground(); });"
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{ROOT_SCREENS}}       — screens acting as navigation "roots" per flow/role (e.g. entry screen, authenticated dashboard)
-  {{ROLES}}              — roles/flows the app distinguishes (e.g. guest, admin)
-  {{LINEAR_SCREENS}}      — screens with standard linear back-navigation, not guarded roots
-  {{MODAL_LIST}}          — every modal that must intercept the back button
-  {{TAB_GROUPS}}          — any tabbed screen where tab switches must not create history entries
-  {{EXIT_TOAST_TEXT}}     — localized "press again to exit" text
-  {{LOGIN_ROUTE}}         — login route, if any, to be wiped from history on success
-Ask the user: "What screens act as navigation 'roots' per role/flow?" "List all modals that must intercept back-button." "Any tabbed views where tab switches shouldn't add history?"
--->
-
 # Native Navigation & Back-Button Architecture (UX/Nav)
 *Objective:* Control the native navigation ecosystem to ensure the hardware/gesture back-button mirrors the user's cognitive model. This layer prevents accidental app exits, eliminates navigation loops, and elegantly handles each distinct flow in this app.
 
@@ -34,31 +22,31 @@ Ask the user: "What screens act as navigation 'roots' per role/flow?" "List all 
 ## Core Principles
 
 ### 1. Root & Base Horizon
-{{ROOT_SCREENS}} — each is a navigation root for its flow/role ({{ROLES}}). Pressing the native back button from a root screen must trigger the Double-Press Exit sequence (§3), never standard history popping.
+`ServiceListPage` (customer entry screen) and `AdminAppointmentsPage` (admin dashboard entry screen, first tab after login) are navigation roots for their respective flows (`customer`, `admin`). Pressing the native back button from a root screen must trigger the Double-Press Exit sequence (§3), never standard history popping.
 
-- *Linear/Browsing Screens:* {{LINEAR_SCREENS}} — back button steps back one level through standard linear history, not a guarded root.
+- *Linear/Browsing Screens:* `TimeSlotPickerPage`, `BookingDetailsPage`, `BookingConfirmationPage`, `LoginPage`, `AdminServicesPage`, `AdminTimeSlotsPage` — back button steps back one level through standard linear history, not a guarded root.
 
 ### 2. Modal & Sub-View Orchestration
-- *Modal-First Dismissal:* Any open modal ({{MODAL_LIST}}) must intercept the back-button event and close itself first — it must never fall through to navigate the page underneath.
+- *Modal-First Dismissal:* Any open modal (appointment detail expand/modal, "Add/Edit Service" form modal, "Add TimeSlot" form modal, confirm-cancel dialog) must intercept the back-button event and close itself first — it must never fall through to navigate the page underneath.
 
-- *Tabbed View Handling:* Switching tabs within {{TAB_GROUPS}} must NOT push new history entries — back button from any tab returns to that view's root behavior (§1), not to a previously-viewed tab.
+- *Tabbed View Handling:* Switching tabs within the Admin Dashboard (`Appointments` / `Services` / `Time Slots` tabs) must NOT push new history entries — back button from any tab returns to that view's root behavior (§1), not to a previously-viewed tab.
 
 - *Sub-Selection as Overlay:* Any selection that opens a modal/overlay rather than a route change should have back-button close the modal and return to the underlying view exactly as it was, with no data loss on the in-progress view.
 
 ### 3. Double-Press Exit (Root Screens Only)
-- *Toast Feedback Interception:* The first back-button press on a root screen must show a non-modal Toast: "{{EXIT_TOAST_TEXT}}".
+- *Toast Feedback Interception:* The first back-button press on a root screen must show a non-modal Toast, in the active language: Hebrew "לחץ שוב ליציאה" / English "Press back again to exit".
 
 - *Double-Press Background Escape:* If the user presses the native back button a second time within a 2-second threshold on a root screen, the app must gracefully execute `Move App to Background`.
 
 - *The "Do Nothing" Prohibition:* Never ignore a native back-button press completely without visual feedback — a suppressed press with no toast/response creates a frozen UI perception.
 
 ### 4. Authentication-Driven Branching
-- *Authenticated flow:* Back button from the authenticated root → root behavior (§1/§3). Back button from any authenticated sub-modal → close the modal, stay on the current screen.
-- *Logged out (or session expired via a `401`):* Back button from `{{LOGIN_ROUTE}}` → the unauthenticated entry screen, not app exit.
-- *Unauthenticated flow (if any role never logs in):* No auth branching needed — navigation is purely route-based (§1) plus modal dismissal (§2).
+- *Authenticated (Admin) flow:* Back button from `AdminAppointmentsPage` (root) → root behavior (§1/§3). Back button from any authenticated sub-modal → close the modal, stay on the current screen.
+- *Logged out (or session expired via a `401`):* Back button from `/login` → `ServiceListPage` (the customer entry screen, not app exit) — since login is reached voluntarily from a link/button, not a forced gate.
+- *Unauthenticated (customer) flow:* No auth branching needed — the entire customer booking flow is public, so navigation is purely route-based (§1) plus modal dismissal (§2). `customer` never has a session to branch on.
 
 ### 5. Memory Stack Safety
-- *Destructive Navigation:* When a user successfully logs in, `replace`/stack-reset `{{LOGIN_ROUTE}}` out of history so the back button from the authenticated root never returns to the login screen.
+- *Destructive Navigation:* When an admin successfully logs in, `replace`/stack-reset `/login` out of history so the back button from `AdminAppointmentsPage` never returns to the login screen.
 - *Post-Action Confirmation:* After a significant one-shot user action completes (submission, booking, purchase), do not push a separate "confirmation" route that could be navigated back into inconsistently — close the relevant modal/overlay and reflect the new state in place.
 
 ## Implementation Checklist

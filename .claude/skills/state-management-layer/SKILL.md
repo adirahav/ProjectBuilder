@@ -6,19 +6,11 @@ references:
   - @api-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{FEATURE_SLICES}}       — list of feature slices, e.g. auth, app, tour, bus, seat
-  {{HIGH_CONTENTION_SLICE}} — a slice needing single-source-of-truth treatment due to concurrent writers, if any
-  {{SPECIAL_ERROR_CODE}}   — a domain-specific conflict status code, if any
-Ask the user: "What are your app's main feature domains/slices?" "Any slice needing single-source-of-truth treatment due to concurrent writers (e.g. a live/real-time view)?"
--->
-
 # Zustand Slices Architecture Guidelines
 *Goal:* Maintain a "Single Source of Truth" by organizing the application state into scalable, feature-based slices, combined into a unified store.
 
 **Core Principles:**
-- **Modular Slices:** Each feature ({{FEATURE_SLICES}}) must have its own dedicated slice file.
+- **Modular Slices:** Each feature (`app`, `auth`, `service`, `appointment`, `timeSlot`) must have its own dedicated slice file.
 - **StateCreator Pattern:** Slices are defined as functions that receive `set` and `get`.
 - **Atomic Updates:** Define clear, predictable actions within the slice to update the state.
 - **No Direct Mutations:** Use Zustand's functional updates to ensure immutability.
@@ -31,8 +23,10 @@ Ask the user: "What are your app's main feature domains/slices?" "Any slice need
 frontend/src/store/
 ├── slices/
 │   ├── app.slice.ts       # Global UI/App state
-│   ├── auth.slice.ts      # Authentication state
-│   ├── <feature>.slice.ts # One per entry in {{FEATURE_SLICES}}
+│   ├── auth.slice.ts      # Admin authentication state
+│   ├── service.slice.ts   # Service catalog state
+│   ├── appointment.slice.ts # Appointment list/detail state (admin dashboard)
+│   ├── timeSlot.slice.ts  # TimeSlot availability state (contested — see below)
 └── store.ts               # Root Store (Unified Hook)
 
 ## Slice Pattern (The "Slices" Way)
@@ -67,7 +61,7 @@ import { create } from 'zustand'
 import { createAuthSlice, AuthSlice } from './slices/auth.slice'
 import { createAppSlice, AppSlice } from './slices/app.slice'
 
-// Combined Type — add one member per slice in {{FEATURE_SLICES}}
+// Combined Type — add one member per slice: AuthSlice, AppSlice, ServiceSlice, AppointmentSlice, TimeSlotSlice
 export type RootState = AuthSlice & AppSlice
 
 export const useStore = create<RootState>((...a) => ({
@@ -86,10 +80,10 @@ export const useStore = create<RootState>((...a) => ({
 
 - For global state persistence, use Zustand's `persist` middleware only where strictly necessary.
 
-## High-Contention Slice — Single Source of Truth (fill in if applicable)
-`{{HIGH_CONTENTION_SLICE}}` is a slice with an extra rule: since its state can change from multiple directions at once (e.g. concurrent user actions and admin actions), it must be kept as the single source of truth, not re-derived locally inside components that display it.
+## High-Contention Slice — Single Source of Truth
+`timeSlot.slice.ts` is a slice with an extra rule: since `TimeSlot` availability can change from multiple directions at once (concurrent customers booking, plus admin block/unblock actions), it must be kept as the single source of truth, not re-derived locally inside components that display it (the Time Slot Picker, the Admin Time Slots dashboard).
 - Every service call that changes this state (success or conflict) must update the slice directly — components read from the slice, they never keep a parallel local copy.
-- On a `{{SPECIAL_ERROR_CODE}}` conflict response, re-sync the affected record(s) in the slice from the server's latest response rather than leaving stale local state.
+- On a `409 Conflict` response (slot taken/blocked), re-sync the affected `TimeSlot` in the slice from the server's latest response rather than leaving stale local state.
 
 ## Utility Functions (frontend/src/services/util.service.ts)
 Keep utilities pure. Use Capacitor-aware storage helpers for cross-platform compatibility.

@@ -1,6 +1,6 @@
 # Plan 011 — Admin Login page and auth flow
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-19
 - Scope-Agents: frontend, user-service, api-gateway, qa, security

@@ -1,6 +1,20 @@
 import type { Appointment, AppointmentReceipt } from '../types/appointment.types'
+import type { LoginResponse } from '../types/auth.types'
 import type { Service } from '../types/service.types'
 import type { TimeSlot } from '../types/timeSlot.types'
+
+/**
+ * A successful `POST /api/auth/login` body. The token is an obvious stand-in,
+ * never a real or realistic JWT — the frontend never inspects its contents, and
+ * test data must not carry anything credential-shaped (.rule/testing-rules.md).
+ */
+export function buildLoginResponse(overrides: Partial<LoginResponse> = {}): LoginResponse {
+  return {
+    token: 'test-token',
+    admin: { id: 'admin-1', email: 'admin@example.com' },
+    ...overrides,
+  }
+}
 
 let sequence = 0
 

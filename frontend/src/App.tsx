@@ -4,32 +4,48 @@ import { Toaster } from 'sonner'
 
 import { AppHeader } from './components/layout/AppHeader'
 import { SkipLink } from './components/common/SkipLink'
+import { ProtectedRoute } from './components/ProtectedRoute'
 import { ServiceListPage } from './pages/ServiceListPage'
 import { TimeSlotPickerPage } from './pages/TimeSlotPickerPage'
 import { CustomerDetailsPage } from './pages/CustomerDetailsPage'
 import { BookingConfirmationPage } from './pages/BookingConfirmationPage'
+import { AdminLoginPage } from './pages/AdminLoginPage'
+import { AdminDashboardPage } from './pages/AdminDashboardPage'
 import { useDocumentDirection } from './hooks/useI18n'
 import { useStore } from './store/store'
 import { directionFor } from './store/slices/app.slice'
+import { setUnauthorizedHandler } from './services/http.service'
 
 /**
  * Routes plus the shared shell. Exported separately from `App` so tests can
  * mount it inside a MemoryRouter without a second router in the tree.
  *
- * Every route here is public — the PRD's Admin routes (`/admin`,
- * `/admin/appointments`, `/admin/login`) land with the Admin tickets, together
- * with the ProtectedRoute guard they need.
+ * The booking routes are public by design (a Customer has no account). `/admin`
+ * sits behind ProtectedRoute; `/admin/login` stays public, since it is how the
+ * token is obtained in the first place. The remaining Admin screens (`/admin`'s
+ * Services and Appointments views) land with their own tickets, underneath the
+ * same guard.
  */
 export function AppRoutes() {
   const locale = useStore((state) => state.locale)
   const hydrateLocale = useStore((state) => state.hydrateLocale)
+  const hydrateAuth = useStore((state) => state.hydrateAuth)
+  const clearSession = useStore((state) => state.clearSession)
 
   // Reflect the active language on <html> so logical properties resolve.
   useDocumentDirection(locale)
 
   useEffect(() => {
     void hydrateLocale()
-  }, [hydrateLocale])
+    void hydrateAuth()
+  }, [hydrateLocale, hydrateAuth])
+
+  // Lets http.service's global 401 handler drop the in-memory session without
+  // importing the store, which would close an import cycle.
+  useEffect(() => {
+    setUnauthorizedHandler(clearSession)
+    return () => setUnauthorizedHandler(null)
+  }, [clearSession])
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden bg-neutral-50 text-neutral-900">
@@ -49,6 +65,12 @@ export function AppRoutes() {
           element={<BookingConfirmationPage />}
         />
         <Route path="/book/:serviceId/confirmation" element={<BookingConfirmationPage />} />
+
+        <Route path="/admin/login" element={<AdminLoginPage />} />
+        <Route element={<ProtectedRoute />}>
+          <Route path="/admin" element={<AdminDashboardPage />} />
+        </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

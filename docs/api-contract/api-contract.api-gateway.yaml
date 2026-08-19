@@ -1,0 +1,179 @@
+openapi: 3.0.3
+
+info:
+  title: api-gateway API
+  version: 1.0.0
+  description: >
+    api-gateway is the single security boundary for every Admin route in the Dog
+    Grooming Appointment Booking System. It verifies the Admin JWT and forwards
+    the request to the service that owns the data.
+
+    Scope of this revision: PRD F5 only — `POST /api/auth/login`, which the
+    gateway proxies through to user-service, plus the JWT verification contract
+    that every future Admin route depends on (AC-7). The Admin Service writes
+    (F6-F8) and the Admin Appointment routes (F9-F11) are defined by their own
+    tickets and are deliberately absent here.
+
+    The public booking routes (F1-F4b) are NOT part of this contract: they are
+    unauthenticated by design and the frontend calls booking-service directly.
+    See docs/api-contract/api-contract.booking-service.yaml.
+
+servers:
+  - url: http://localhost:4000
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Admin authentication. There is exactly one Admin account in v1.
+
+components:
+  securitySchemes:
+    adminJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        The token issued by `POST /api/auth/login`. Sent as
+        `Authorization: Bearer <token>` on every Admin route. api-gateway
+        verifies it and rejects a missing, malformed, or expired token with 401
+        before the request reaches any downstream service.
+
+        No Admin route is defined yet (Screens 6-7 add them), but the scheme is
+        declared here because it is the contract those routes will use, and
+        because the frontend already attaches the header to every request it
+        makes once a token is stored.
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [identifier, password]
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 254
+          description: >
+            The Admin's email address or username — PRD Screen 5 allows either,
+            so the server must accept both on this one field rather than
+            requiring an email format.
+          example: admin@example.com
+        password:
+          type: string
+          minLength: 1
+          format: password
+          description: >
+            Sent as typed, with no client-side trimming: leading and trailing
+            spaces are legitimate password characters. Must never be logged,
+            echoed back in a response, or included in an error message.
+          example: correct-horse-battery-staple
+      additionalProperties: false
+
+    Admin:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The Admin's client-facing id. Mongo's `_id` must never be exposed.
+          example: 3d0f1a2b-4c5d-4e6f-8091-a2b3c4d5e6f7
+        email:
+          type: string
+          format: email
+          example: admin@example.com
+      additionalProperties: false
+
+    LoginResponse:
+      type: object
+      required: [token, admin]
+      properties:
+        token:
+          type: string
+          description: >
+            A signed JWT carrying the Admin's id and a fixed admin role claim,
+            with a bounded expiry (24 hours). There is no refresh token in v1:
+            when it expires, the Admin signs in again. The frontend stores it
+            and never inspects its contents.
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
+        admin:
+          $ref: '#/components/schemas/Admin'
+      additionalProperties: false
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: >
+            A short, safe message. It must never distinguish "no such account"
+            from "wrong password", and must never echo the submitted password.
+          example: Invalid credentials
+      additionalProperties: false
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: loginAdmin
+      summary: Exchange Admin credentials for a JWT
+      description: >
+        PRD F5. Proxied by api-gateway through to user-service, which looks the
+        Admin up by email or username, compares the submitted password against
+        the stored bcrypt hash, and signs a JWT on a match.
+
+        This is the one route on the gateway that is NOT behind JWT
+        verification, since it is how the token is obtained in the first place.
+
+        Timing and messaging must not leak account existence: a request for an
+        unknown identifier and a request with the wrong password must both
+        return the same 401 body.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: The credentials matched. The JWT is issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: >
+            The identifier or the password is missing. Distinct from 401: the
+            request was never a well-formed login attempt, so no credential
+            check happened.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Identifier and password are required
+        '401':
+          description: >
+            The credentials were rejected — unknown identifier OR wrong
+            password, deliberately indistinguishable. The frontend treats this
+            as an expected outcome of the login form: it renders an inline
+            message beside the form and, uniquely for this route, does NOT
+            trigger the global session-expiry redirect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Invalid credentials
+        '502':
+          description: >
+            The gateway could not reach user-service. Surfaced to the Admin as a
+            generic "we could not sign you in" failure, never as a credential
+            problem.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Authentication service unavailable

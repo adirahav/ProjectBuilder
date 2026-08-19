@@ -1,0 +1,14 @@
+{
+  "tasks": [
+    {
+      "role": "security",
+      "label": "Security Agent",
+      "inputTokens": 94,
+      "outputTokens": 12158,
+      "cacheReadTokens": 2423684,
+      "costUsd": 1.10006345,
+      "durationMs": 378462
+    }
+  ],
+  "totalCostUsd": 1.10006345
+}

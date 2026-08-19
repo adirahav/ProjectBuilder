@@ -40,6 +40,14 @@ export function AppRoutes() {
         <Route path="/" element={<ServiceListPage />} />
         <Route path="/book/:serviceId" element={<TimeSlotPickerPage />} />
         <Route path="/book/:serviceId/details" element={<CustomerDetailsPage />} />
+        {/* The id-bearing path is the real one: it is what lets a reload or a
+            bookmark re-fetch the receipt. The id-less path stays mounted so an
+            older link lands on the page's "we could not find that booking"
+            explanation rather than being bounced silently to the home page. */}
+        <Route
+          path="/book/:serviceId/confirmation/:appointmentId"
+          element={<BookingConfirmationPage />}
+        />
         <Route path="/book/:serviceId/confirmation" element={<BookingConfirmationPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

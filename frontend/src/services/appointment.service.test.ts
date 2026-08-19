@@ -1,9 +1,14 @@
 import { AxiosError, AxiosHeaders } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { appointmentService, isAppointmentConflictError, toCreatePayload } from './appointment.service'
+import {
+  appointmentService,
+  isAppointmentConflictError,
+  isAppointmentNotFoundError,
+  toCreatePayload,
+} from './appointment.service'
 import { httpService } from './http.service'
-import { buildAppointment } from '../test/factories'
+import { buildAppointment, buildAppointmentReceipt } from '../test/factories'
 import type { CustomerDetails } from '../types/appointment.types'
 
 vi.mock('./http.service', () => ({
@@ -110,6 +115,56 @@ describe('isAppointmentConflictError', () => {
 
   it('does not treat a plain network failure as a lapsed hold', () => {
     expect(isAppointmentConflictError(new Error('Network Error'))).toBe(false)
+  })
+})
+
+describe('appointmentService.getReceipt', () => {
+  const mockedGet = vi.mocked(httpService.get)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('reads one Appointment back by its id', async () => {
+    const receipt = buildAppointmentReceipt({ id: 'appointment-7' })
+    mockedGet.mockResolvedValue(receipt)
+
+    await expect(appointmentService.getReceipt('appointment-7')).resolves.toEqual(receipt)
+    expect(mockedGet).toHaveBeenCalledWith('/api/appointments/appointment-7')
+  })
+
+  it('escapes the id rather than pasting it into the path as typed', async () => {
+    mockedGet.mockResolvedValue(buildAppointmentReceipt())
+
+    await appointmentService.getReceipt('a/../../secret')
+
+    expect(mockedGet).toHaveBeenCalledWith('/api/appointments/a%2F..%2F..%2Fsecret')
+  })
+
+  it('refuses to fetch without an id instead of calling a bare collection URL', async () => {
+    await expect(appointmentService.getReceipt('')).rejects.toThrow()
+
+    expect(mockedGet).not.toHaveBeenCalled()
+  })
+
+  it('lets a missing booking propagate for the page to explain', async () => {
+    mockedGet.mockRejectedValue(buildErrorWithStatus(404))
+
+    await expect(appointmentService.getReceipt('gone')).rejects.toBeInstanceOf(AxiosError)
+  })
+})
+
+describe('isAppointmentNotFoundError', () => {
+  it('recognises the 404 that means no such booking', () => {
+    expect(isAppointmentNotFoundError(buildErrorWithStatus(404))).toBe(true)
+  })
+
+  it.each([400, 409, 500, 503])('does not treat %i as a missing booking', (status) => {
+    expect(isAppointmentNotFoundError(buildErrorWithStatus(status))).toBe(false)
+  })
+
+  it('does not treat a plain network failure as a missing booking', () => {
+    expect(isAppointmentNotFoundError(new Error('Network Error'))).toBe(false)
   })
 })
 

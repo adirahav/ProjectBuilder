@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 
 import { isDbConnected } from '../lib/db.ts'
-import { createAppointment } from './appointment.service.ts'
+import { createAppointment, getAppointmentReceipt } from './appointment.service.ts'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // Deliberately conservative rather than RFC-complete: a local part, one @, a
@@ -136,6 +136,60 @@ export async function postAppointment(req: Request, res: Response): Promise<void
   } catch (err) {
     // Never leak a stack trace or a raw Mongoose error to the client.
     console.error('booking-service: POST /api/appointments failed:', (err as Error).message)
+    res.status(500).json({ error: 'Internal Server Error' })
+  }
+}
+
+/**
+ * GET /api/appointments/:id — public and unauthenticated, like the rest of the
+ * booking flow (PRD Screen 4). Read-only: it mutates nothing.
+ *
+ * Screen 4 is the only receipt the Customer gets, so it has to survive a
+ * reload, a bookmark, or the link being opened later — at which point the id in
+ * the URL is all that is left of the booking client-side.
+ *
+ * SECURITY, deliberately recorded rather than assumed away: this id is the only
+ * thing guarding a record containing a Customer's name, phone and email. That
+ * makes it a capability token, which it only is because it is a random uuid v4
+ * (the model's `randomUUID` default) and never a sequential/enumerable value.
+ * Even so, id enumeration remains a real PII-exposure surface here; rate
+ * limiting on this route and a separate opaque confirmation token are known
+ * follow-ups outside this ticket's scope. Two consequences are enforced below:
+ *   - a malformed id is 400 and a non-existent one 404, but both carry the SAME
+ *     generic body, so the response can never be used to tell "exists" from
+ *     "does not";
+ *   - the id is uuid-validated before it reaches a query filter, so a crafted
+ *     path segment can never become an operator object.
+ */
+export async function getAppointment(req: Request, res: Response): Promise<void> {
+  // Transient and retryable, so 503 rather than 500 — the frontend distinguishes
+  // "come back later" from a real bug and can retry the receipt fetch.
+  if (!isDbConnected()) {
+    res.status(503).json({ error: 'Service Unavailable' })
+    return
+  }
+
+  const { id } = req.params
+  if (!isUuid(id)) {
+    res.status(400).json({ error: 'Not Found' })
+    return
+  }
+
+  try {
+    const receipt = await getAppointmentReceipt(id)
+
+    if (!receipt) {
+      // An ordinary outcome of a stale or mistyped link, not a fault — the
+      // frontend renders "we could not find that booking" with a way back to
+      // the Service List.
+      res.status(404).json({ error: 'Not Found' })
+      return
+    }
+
+    res.status(200).json(receipt)
+  } catch (err) {
+    // Never leak a stack trace or a raw Mongoose error to the client.
+    console.error('booking-service: GET /api/appointments/:id failed:', (err as Error).message)
     res.status(500).json({ error: 'Internal Server Error' })
   }
 }

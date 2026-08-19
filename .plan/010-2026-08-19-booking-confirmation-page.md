@@ -1,6 +1,6 @@
 # Plan 010 — Booking Confirmation Page
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-19
 - Scope-Agents: frontend, qa, security

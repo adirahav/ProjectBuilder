@@ -1,4 +1,4 @@
-import type { Appointment } from '../types/appointment.types'
+import type { Appointment, AppointmentReceipt } from '../types/appointment.types'
 import type { Service } from '../types/service.types'
 import type { TimeSlot } from '../types/timeSlot.types'
 
@@ -72,6 +72,21 @@ export function buildAppointment(overrides: Partial<Appointment> = {}): Appointm
     customerName: 'Dana Levi',
     customerPhone: '050-123-4567',
     status: 'pending',
+    ...overrides,
+  }
+}
+
+/**
+ * An Appointment as `GET /api/appointments/{id}` returns it for Screen 4:
+ * enriched with the Service and TimeSlot facts a receipt has to show.
+ */
+export function buildAppointmentReceipt(
+  overrides: Partial<AppointmentReceipt> = {},
+): AppointmentReceipt {
+  return {
+    ...buildAppointment(),
+    service: { name: 'Full groom', durationMinutes: 90, price: 220 },
+    timeSlot: { date: '2026-08-18', startTime: '09:00', endTime: '10:30' },
     ...overrides,
   }
 }

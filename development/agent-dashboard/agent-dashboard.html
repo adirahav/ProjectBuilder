@@ -55,6 +55,12 @@
     animation: dash 1s linear infinite;
   }
   @keyframes dash { to { stroke-dashoffset: -20; } }
+  /* Every backend service beam routes through api-gateway in reality — this
+     gives the gateway node/segment a static, non-pulsing tint whenever a
+     service behind it is active but the gateway itself isn't the one named
+     in scope, without claiming the gateway is doing its own work. */
+  .beam.through { stroke: var(--backend); opacity: 0.55; stroke-width: 2.5; }
+  .node.through { border-color: var(--backend); box-shadow: 0 0 10px rgba(59, 130, 246, 0.35); }
 
   .node {
     position: absolute;
@@ -434,17 +440,24 @@ function makeNode(agent, pos, isCenter) {
 const centerPos = { x: 50, y: 50 };
 makeNode(CENTER, centerPos, true);
 
+// These route through api-gateway in the real architecture — their beam
+// should visibly originate at the gateway node, not straight from the
+// orchestrator, so the ring reads as "gateway fans out to the services"
+// rather than implying the orchestrator talks to each service directly.
+const ROUTED_VIA_GATEWAY = new Set(["booking-service", "user-service", "notification-service"]);
+
 const nodePositions = {};
 AGENTS.forEach((agent, i) => {
   const pos = polar(i, AGENTS.length, R);
   nodePositions[agent.key] = pos;
   makeNode(agent, pos, false);
 
+  const origin = ROUTED_VIA_GATEWAY.has(agent.key) ? (nodePositions["gateway"] || centerPos) : centerPos;
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("class", "beam");
   line.setAttribute("id", "beam-" + agent.key);
-  line.setAttribute("x1", centerPos.x + "%");
-  line.setAttribute("y1", centerPos.y + "%");
+  line.setAttribute("x1", origin.x + "%");
+  line.setAttribute("y1", origin.y + "%");
   line.setAttribute("x2", pos.x + "%");
   line.setAttribute("y2", pos.y + "%");
   beams.appendChild(line);
@@ -469,6 +482,16 @@ function setActiveCategory(category, keys) {
     const beam = document.getElementById("beam-" + key);
     if (beam) beam.classList.toggle("active", isActive);
   });
+
+  // A routed-through service is active but the gateway itself isn't named in
+  // `keys` — tint the gateway node and its orchestrator-beam so the ring
+  // still reads as "this went through the gateway", without pulsing it as
+  // if the gateway is doing its own work.
+  const throughGateway = [...activeKeys].some((k) => ROUTED_VIA_GATEWAY.has(k)) && !activeKeys.has("gateway");
+  const gatewayNode = document.querySelector('.node[data-agent="gateway"]');
+  if (gatewayNode) gatewayNode.classList.toggle("through", throughGateway);
+  const gatewayBeam = document.getElementById("beam-gateway");
+  if (gatewayBeam) gatewayBeam.classList.toggle("through", throughGateway);
 
   // Label shows the first actually-active node's identity — accurate even
   // for "backend", where that's now whichever specific service(s) are

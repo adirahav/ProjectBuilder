@@ -525,12 +525,16 @@ function renderCostTable(rows, totalUsd, totalNis, task) {
     totalEl.textContent = "";
     return;
   }
+  const sum = (key) => rows.reduce((acc, r) => acc + (r[key] || 0), 0);
   tbody.innerHTML = `
     <tr class="total-row">
-      <td>TOTAL</td><td></td><td></td><td></td>
+      <td>TOTAL</td>
+      <td>${sum("inputTokens")}</td>
+      <td>${sum("outputTokens")}</td>
+      <td>${sum("cacheReadTokens")}</td>
       <td>$${totalUsd.toFixed(4)}</td>
       <td>₪${totalNis.toFixed(4)}</td>
-      <td></td>
+      <td>${sum("durationS").toFixed(1)}</td>
     </tr>
   `;
   totalEl.innerHTML = `<strong>${rows.length}</strong> call(s) — <strong>$${totalUsd.toFixed(4)}</strong> / <strong>₪${totalNis.toFixed(4)}</strong>`;

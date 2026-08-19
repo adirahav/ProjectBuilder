@@ -384,11 +384,21 @@ function audioFileFor(event, category) {
 
 let soundEnabled = false;
 const audioCache = {};
+// Track whichever cue is currently playing so a new one can cut it off first.
+// Without this, waking the machine after it slept lets the browser's throttled
+// polling catch up all at once — several missed events firing back-to-back —
+// and their cues would otherwise all play on top of each other.
+let currentAudio = null;
 function playCue(fileName) {
   if (!soundEnabled || !fileName) return;
+  if (currentAudio && !currentAudio.paused) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+  }
   if (!audioCache[fileName]) audioCache[fileName] = new Audio(`/assets/${fileName}`);
   const audio = audioCache[fileName];
   audio.currentTime = 0;
+  currentAudio = audio;
   audio.play().catch(() => { /* still locked or file missing — ignore, not critical */ });
 }
 

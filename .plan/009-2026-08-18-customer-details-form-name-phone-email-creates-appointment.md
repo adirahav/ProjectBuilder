@@ -1,6 +1,6 @@
 # Plan 009 — Customer Details Form (name/phone/email, creates Appointment)
 
-- Status: draft
+- Status: active
 - Owner: orchestrator
 - Last updated: 2026-08-18
 - Scope-Agents: frontend, booking-service, notification-service, qa, security

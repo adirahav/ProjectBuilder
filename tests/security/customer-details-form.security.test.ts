@@ -11,20 +11,20 @@
  * PII-leak and race-condition checks run against the actual route stack.
  *
  * Run from `backend/booking-service` (so its `node_modules` resolves), e.g.:
- *   cd backend/booking-service && npx vitest run ../../docs/tests/security/customer-details-form.security.test.ts
+ *   cd backend/booking-service && npx vitest run ../../tests/security/customer-details-form.security.test.ts
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import request from 'supertest'
 import mongoose from 'mongoose'
 import { MongoMemoryServer } from 'mongodb-memory-server'
 
-import { createApp as createBookingApp } from '../../../backend/booking-service/api/app.ts'
-import { Appointment } from '../../../backend/booking-service/api/models/appointment.model.ts'
-import { Service } from '../../../backend/booking-service/api/models/service.model.ts'
-import { TimeSlot } from '../../../backend/booking-service/api/models/time-slot.model.ts'
+import { createApp as createBookingApp } from '../../backend/booking-service/api/app.ts'
+import { Appointment } from '../../backend/booking-service/api/models/appointment.model.ts'
+import { Service } from '../../backend/booking-service/api/models/service.model.ts'
+import { TimeSlot } from '../../backend/booking-service/api/models/time-slot.model.ts'
 
-import { createApp as createNotificationApp } from '../../../backend/notification-service/api/app.ts'
-import { resetSentNotifications } from '../../../backend/notification-service/api/notification/notification.service.ts'
+import { createApp as createNotificationApp } from '../../backend/notification-service/api/app.ts'
+import { resetSentNotifications } from '../../backend/notification-service/api/notification/notification.service.ts'
 
 let mongo: MongoMemoryServer
 

@@ -133,6 +133,8 @@
   }
   #dot.live { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: blink 1.4s ease-in-out infinite; }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  #active-thinking { animation: thinkingPulse 3.2s ease-in-out infinite; }
+  @keyframes thinkingPulse { 0%, 100% { color: var(--dim); } 50% { color: #35353f; } }
 
   #iframe-wrap {
     grid-column: 2; grid-row: 2;
@@ -311,16 +313,23 @@ function randomThinkingTerm(category) {
 }
 
 let currentThinkingCategory = "orchestrator";
+// Set true whenever the last known moment is one where nothing is actually
+// being "thought" — waiting on the human (approval) or stuck (session limit /
+// needs attention). The rotating terms would be misleading there, so they're
+// suppressed until a real agent-start/agent-back moment resumes them.
+let thinkingPaused = false;
+const PAUSE_ON_EVENTS = new Set(["waiting-approval", "session-limit", "attention-needed"]);
+
 function tickThinking() {
   const dot = document.getElementById("dot");
   const el = document.getElementById("active-thinking");
-  if (!dot.classList.contains("live")) {
+  if (!dot.classList.contains("live") || thinkingPaused) {
     el.textContent = "";
     return;
   }
   el.textContent = randomThinkingTerm(currentThinkingCategory) + "…";
 }
-setInterval(tickThinking, 1600);
+setInterval(tickThinking, 3200);
 
 // One category can cover several ring nodes (every backend service, no
 // matter its real name, is the same "backend" voice/visual category) — so
@@ -467,6 +476,7 @@ async function poll() {
     // talking right now.
     const category = data.category || "orchestrator";
     setActiveCategory(category, data.keys);
+    thinkingPaused = !!(data.lastEvent && PAUSE_ON_EVENTS.has(data.lastEvent.event));
     document.getElementById("active-message").textContent = data.message || "…";
     document.getElementById("active-updated").textContent = data.updatedAt
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()

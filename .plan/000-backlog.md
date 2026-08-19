@@ -10,7 +10,7 @@ Current queue:
 - [x] Scaffold notification-service (package.json, Express, health check) | scope: notification-service
 - [x] Service List page (public Customer screen) | scope: frontend,booking-service,qa | url: /
 - [x] Time Slot Picker page (date/slot selection, hold-on-select) | scope: frontend,booking-service,qa,security | url: /book/example-service-id
-- [ ] Customer Details Form (name/phone/email, creates Appointment) | scope: frontend,booking-service,notification-service,qa,security | url: /book/example-service-id
+- [x] Customer Details Form (name/phone/email, creates Appointment) | scope: frontend,booking-service,notification-service,qa,security | url: /book/example-service-id
 - [ ] Booking Confirmation page | scope: frontend,booking-service,qa | url: /confirmation/example-appointment-id
 - [ ] Admin Login page and auth flow | scope: frontend,user-service,gateway,qa,security | url: /admin/login
 - [ ] Admin Dashboard: Services management (create/edit/deactivate) | scope: frontend,booking-service,gateway,qa,security | url: /admin

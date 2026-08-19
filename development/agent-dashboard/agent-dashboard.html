@@ -77,6 +77,18 @@
     transform: scale(1.12);
     animation: pulse 1.4s ease-in-out infinite;
   }
+
+  /* Idle-state glow — a faint, permanent tint per agent's category color so
+     each portrait reads as separated from the dark node background even
+     when nothing is active (fixes the "dim/washed-out" look after the PNG
+     backgrounds were made transparent), without reintroducing a hard border. */
+  .node[data-agent="orchestrator"] { border-color: rgba(240, 180, 41, 0.35); box-shadow: 0 0 10px rgba(240, 180, 41, 0.22); }
+  .node[data-agent="frontend"]     { border-color: rgba(217, 70, 239, 0.35); box-shadow: 0 0 10px rgba(217, 70, 239, 0.22); }
+  .node[data-agent="qa"]           { border-color: rgba(34, 197, 94, 0.35);  box-shadow: 0 0 10px rgba(34, 197, 94, 0.22); }
+  .node[data-agent="security"]     { border-color: rgba(6, 182, 212, 0.35);  box-shadow: 0 0 10px rgba(6, 182, 212, 0.22); }
+  .node[data-agent$="-service"],
+  .node[data-agent="gateway"]      { border-color: rgba(59, 130, 246, 0.35); box-shadow: 0 0 10px rgba(59, 130, 246, 0.22); }
+
   .node[data-agent="orchestrator"].active { border-color: var(--orchestrator); box-shadow: 0 0 24px var(--orchestrator); }
   .node[data-agent="frontend"].active     { border-color: var(--frontend);     box-shadow: 0 0 24px var(--frontend); }
   .node[data-agent="qa"].active           { border-color: var(--qa);           box-shadow: 0 0 24px var(--qa); }

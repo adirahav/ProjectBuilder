@@ -483,10 +483,19 @@ async function poll() {
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely
     // NEW event (seq increased since the last poll) plays — re-fetching the
     // same still-current event on the next poll must never replay its sound.
+    // While muted, `lastSeq` must NOT advance past an unplayed event — only
+    // the very first poll after page load (lastSeq === 0) gets baselined so
+    // we don't dump the whole history the moment sound is enabled. Any event
+    // that arrives while still muted stays "unseen" and plays as soon as the
+    // user clicks enable, instead of being silently lost.
     const evt = data.lastEvent;
     if (evt && evt.seq !== lastSeq) {
-      lastSeq = evt.seq;
-      playCue(audioFileFor(evt.event, evt.category));
+      if (soundEnabled) {
+        lastSeq = evt.seq;
+        playCue(audioFileFor(evt.event, evt.category));
+      } else if (lastSeq === 0) {
+        lastSeq = evt.seq;
+      }
     }
 
     renderCostTable(data.costLog || [], data.costTotalUsd || 0, data.costTotalNis || 0, data.task);

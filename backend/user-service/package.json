@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "tsx watch api/server.ts",
     "start": "tsx api/server.ts",
+    "seed:admin": "tsx api/scripts/seedAdmin.ts",
     "test": "vitest run"
   },
   "dependencies": {

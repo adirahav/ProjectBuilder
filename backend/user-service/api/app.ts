@@ -3,6 +3,7 @@ import cors from 'cors'
 
 import { config } from './lib/config.ts'
 import { getDbStatus, isDbConnected } from './lib/db.ts'
+import { authRouter } from './auth/auth.routes.ts'
 
 // Builds the Express app without binding a port, so tests can drive it
 // with Supertest and the entrypoint can own the actual listen() call.
@@ -34,10 +35,12 @@ export function createApp(): Express {
   app.use(cors({ origin: config.frontendOrigin, credentials: true }))
   app.use(express.json())
 
-  // NOTE: the Admin model and POST /api/auth/login (F5) are intentionally NOT
-  // part of this scaffold ticket (SCAFFOLD-USR). jsonwebtoken and bcryptjs are
-  // installed and ready but deliberately unwired — no JWT is issued and no
-  // password is verified by this service yet.
+  // Admin authentication (PRD F5, ticket ADMINLOG-USR). This service is the
+  // only one that SIGNS a JWT; api-gateway is the only one that verifies it.
+  // Reached in production via api-gateway's proxy, which does not apply JWT
+  // verification to this route — it is how the token is obtained.
+  app.use('/api/auth', authRouter)
+
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

@@ -26,14 +26,36 @@ const mocks = vi.hoisted(() => {
     delete: vi.fn(),
   }
 
-  return { instance, requestInterceptors, responseErrorInterceptors, create: vi.fn(() => instance) }
+  // Recorded outside the spy, because a `vi.clearAllMocks()` in any later
+  // beforeEach would wipe a call count captured at module load.
+  const createdBaseUrls: (string | undefined)[] = []
+
+  return {
+    instance,
+    requestInterceptors,
+    responseErrorInterceptors,
+    createdBaseUrls,
+    create: vi.fn((config?: { baseURL?: string }) => {
+      createdBaseUrls.push(config?.baseURL)
+      return instance
+    }),
+  }
 })
 
 vi.mock('axios', () => ({
   default: { create: mocks.create },
 }))
 
-const { httpService, AUTH_TOKEN_KEY, setUnauthorizedHandler } = await import('./http.service')
+const {
+  httpService,
+  gatewayHttpService,
+  AUTH_TOKEN_KEY,
+  LOGIN_ENDPOINT,
+  setUnauthorizedHandler,
+  saveToken,
+  readToken,
+  removeToken,
+} = await import('./http.service')
 
 const applyRequestInterceptor = async (config: { headers: Record<string, string> }) => {
   let result: unknown = config
@@ -44,9 +66,9 @@ const applyRequestInterceptor = async (config: { headers: Record<string, string>
 }
 
 /** Drives the response interceptor with a minimal axios-shaped failure. */
-const rejectWith = async (status: number) => {
+const rejectWith = async (status: number, url?: string) => {
   const interceptor = mocks.responseErrorInterceptors[0]
-  return interceptor({ response: { status } })
+  return interceptor({ response: { status }, config: url ? { url } : undefined })
 }
 
 const stubLocation = (pathname: string) => {
@@ -84,6 +106,39 @@ describe('httpService verbs', () => {
       id: 'new',
     })
     expect(mocks.instance.post).toHaveBeenCalledWith('/api/appointments', { name: 'Dana' })
+  })
+})
+
+describe('the two origins', () => {
+  it('offers a separate client for the Admin routes that go via api-gateway', async () => {
+    mocks.instance.post.mockResolvedValue({ data: { token: 't' } })
+
+    await expect(gatewayHttpService.post(LOGIN_ENDPOINT, { identifier: 'a' })).resolves.toEqual({
+      token: 't',
+    })
+  })
+
+  it('builds one axios client per origin rather than sharing a base URL', () => {
+    expect(mocks.createdBaseUrls).toHaveLength(2)
+  })
+})
+
+describe('token storage', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('round-trips the Admin token so a refresh does not force a re-login', async () => {
+    await saveToken('admin-token')
+
+    await expect(readToken()).resolves.toBe('admin-token')
+  })
+
+  it('drops the token on sign-out', async () => {
+    await saveToken('admin-token')
+    await removeToken()
+
+    await expect(readToken()).resolves.toBeNull()
   })
 })
 
@@ -138,6 +193,19 @@ describe('session expiry (401)', () => {
 
     await expect(rejectWith(401)).rejects.toBeDefined()
 
+    expect(location.href).toBe('http://localhost/admin/login')
+  })
+
+  it('leaves a rejected login alone — wrong credentials are not an expired session', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    const location = stubLocation('/admin/login')
+
+    await expect(rejectWith(401, LOGIN_ENDPOINT)).rejects.toBeDefined()
+
+    // Nothing is cleared and nobody is redirected: the login form has to stay
+    // on screen to show its own error.
+    expect(handler).not.toHaveBeenCalled()
     expect(location.href).toBe('http://localhost/admin/login')
   })
 

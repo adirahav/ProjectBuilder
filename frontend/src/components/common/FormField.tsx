@@ -1,5 +1,5 @@
-import { useId } from 'react'
-import { AlertCircle } from 'lucide-react'
+import { useId, useState } from 'react'
+import { AlertCircle, Eye, EyeOff } from 'lucide-react'
 
 import { useI18n } from '../../hooks/useI18n'
 import { cn } from '../../lib/utils'
@@ -16,7 +16,7 @@ interface FormFieldProps {
   isRequired?: boolean
   isDisabled?: boolean
   placeholder?: string
-  type?: 'text' | 'tel' | 'email'
+  type?: 'text' | 'tel' | 'email' | 'password'
   autoComplete?: string
   inputMode?: 'text' | 'tel' | 'email'
   /**
@@ -40,6 +40,11 @@ interface FormFieldProps {
  *   redundant signal, never the only one;
  * - required is announced via `aria-required` *and* a visible word, not a bare
  *   asterisk whose meaning has to be guessed.
+ *
+ * A `password` field additionally gets a reveal toggle, because the alternative
+ * — retyping a password blind after every typo — is exactly how people end up
+ * locked out. The toggle is a real `<button>` with its own label, so it is
+ * reachable and announced rather than being an unlabelled icon.
  */
 export function FormField({
   label,
@@ -64,6 +69,12 @@ export function FormField({
 
   const describedBy = cn(hint && hintId, error && errorId) || undefined
 
+  const isPassword = type === 'password'
+  const [isRevealed, setIsRevealed] = useState(false)
+  // Revealing swaps the input type rather than re-rendering a different input,
+  // so focus and the caret position survive the toggle.
+  const resolvedType = isPassword && isRevealed ? 'text' : type
+
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={fieldId} className="flex flex-wrap items-baseline gap-2 text-start">
@@ -73,30 +84,57 @@ export function FormField({
         </span>
       </label>
 
-      <input
-        id={fieldId}
-        type={type}
-        dir={dir}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={onBlur}
-        disabled={isDisabled}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        inputMode={inputMode}
-        aria-required={isRequired}
-        aria-invalid={Boolean(error)}
-        aria-describedby={describedBy}
-        className={cn(
-          'w-full rounded-xl border bg-white px-4 py-3 text-start text-base text-neutral-900',
-          'transition-colors placeholder:text-neutral-900/35',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-          error
-            ? 'border-danger focus-visible:ring-danger'
-            : 'border-neutral-900/20 focus-visible:ring-primary hover:border-primary/60',
-          isDisabled && 'cursor-not-allowed bg-neutral-50 opacity-60',
+      <div className="relative flex items-center">
+        <input
+          id={fieldId}
+          type={resolvedType}
+          dir={dir}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={onBlur}
+          disabled={isDisabled}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          inputMode={inputMode}
+          aria-required={isRequired}
+          aria-invalid={Boolean(error)}
+          aria-describedby={describedBy}
+          className={cn(
+            'w-full rounded-xl border bg-white px-4 py-3 text-start text-base text-neutral-900',
+            'transition-colors placeholder:text-neutral-900/35',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+            error
+              ? 'border-danger focus-visible:ring-danger'
+              : 'border-neutral-900/20 focus-visible:ring-primary hover:border-primary/60',
+            isDisabled && 'cursor-not-allowed bg-neutral-50 opacity-60',
+            // Room for the reveal button, on whichever side the text ends.
+            isPassword && 'pe-12',
+          )}
+        />
+
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setIsRevealed((current) => !current)}
+            aria-pressed={isRevealed}
+            aria-controls={fieldId}
+            className={cn(
+              'absolute end-1 flex size-10 items-center justify-center rounded-lg',
+              'text-neutral-900/60 transition-colors hover:bg-primary-light hover:text-primary',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+            )}
+          >
+            {isRevealed ? (
+              <EyeOff className="size-5" aria-hidden="true" />
+            ) : (
+              <Eye className="size-5" aria-hidden="true" />
+            )}
+            <span className="sr-only">
+              {isRevealed ? t('adminLogin.form.password.hide') : t('adminLogin.form.password.show')}
+            </span>
+          </button>
         )}
-      />
+      </div>
 
       {hint && (
         <p id={hintId} className="text-xs text-neutral-900/60">

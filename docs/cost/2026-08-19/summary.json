@@ -1,14 +1,32 @@
 {
   "tasks": [
     {
-      "role": "security",
-      "label": "Security Agent",
-      "inputTokens": 94,
-      "outputTokens": 12158,
-      "cacheReadTokens": 2423684,
-      "costUsd": 1.10006345,
-      "durationMs": 378462
+      "role": "orchestrator",
+      "label": "Orchestrator (planning)",
+      "inputTokens": 394,
+      "outputTokens": 4773,
+      "cacheReadTokens": 157867,
+      "costUsd": 0.20585884999999998,
+      "durationMs": 60381
+    },
+    {
+      "role": "frontend",
+      "label": "Frontend Agent",
+      "inputTokens": 4170,
+      "outputTokens": 2969,
+      "cacheReadTokens": 367880,
+      "costUsd": 0.29379675,
+      "durationMs": 500284
+    },
+    {
+      "role": "booking-service",
+      "label": "Backend Agent — booking-service",
+      "inputTokens": 38,
+      "outputTokens": 14725,
+      "cacheReadTokens": 973726,
+      "costUsd": 0.7061158,
+      "durationMs": 311499
     }
   ],
-  "totalCostUsd": 1.10006345
+  "totalCostUsd": 1.2057714
 }

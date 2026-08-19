@@ -1,27 +1,37 @@
-import axios, { type AxiosError } from 'axios'
+import axios, { type AxiosError, type AxiosInstance } from 'axios'
 
 import { utilService } from './util.service'
 
-// Public booking routes are unauthenticated by design, so today every request
-// this app makes goes straight to booking-service. Once api-gateway proxies the
-// Admin routes, this becomes the gateway's single /api prefix and nothing else
-// in the app has to change — domain services only ever see relative endpoints.
-const BASE_URL = import.meta.env.VITE_BOOKING_SERVICE_URL ?? ''
+// Two origins, because the PRD routes them differently: the public booking
+// screens (F1-F4b) call booking-service directly, while every Admin route
+// (F5-F11) goes "via api-gateway", which is where the JWT is verified.
+// Domain services still only ever see relative endpoints — which origin a call
+// leaves by is decided here and nowhere else.
+const BOOKING_SERVICE_URL = import.meta.env.VITE_BOOKING_SERVICE_URL ?? ''
+const API_GATEWAY_URL = import.meta.env.VITE_API_GATEWAY_URL ?? ''
 
-if (!BASE_URL) {
+if (!BOOKING_SERVICE_URL) {
   // Deliberately not defaulted to a hardcoded host: an unset base URL is a
   // configuration error, and failing visibly beats silently calling the wrong
   // origin. Copy frontend/.env.example to frontend/.env to fix it.
   console.log('[HTTP] VITE_BOOKING_SERVICE_URL is not set — API requests will use a relative path')
 }
 
+if (!API_GATEWAY_URL) {
+  console.log('[HTTP] VITE_API_GATEWAY_URL is not set — Admin requests will use a relative path')
+}
+
 export const AUTH_TOKEN_KEY = 'authToken'
 
 const ADMIN_LOGIN_ROUTE = '/admin/login'
 
-const axiosInstance = axios.create({
-  baseURL: BASE_URL.replace(/\/+$/, ''),
-})
+/**
+ * The one endpoint whose 401 is *not* a session expiry. A rejected login means
+ * "those credentials are wrong", so it must not clear state and bounce the
+ * Admin to the login page they are already standing on — the form has to be
+ * left intact to show its own error (.rule/error-handling-rules.md).
+ */
+export const LOGIN_ENDPOINT = '/api/auth/login'
 
 // The Admin token, when one exists. Customers never have one — the public
 // booking endpoints are called with no Authorization header at all.
@@ -32,6 +42,13 @@ async function getToken(): Promise<string | null> {
 async function clearToken(): Promise<void> {
   await utilService.removeFromStorage(AUTH_TOKEN_KEY)
 }
+
+/** Persists the Admin token so a page refresh does not force a re-login. */
+export async function saveToken(token: string): Promise<void> {
+  await utilService.saveToStorage(AUTH_TOKEN_KEY, token)
+}
+
+export { getToken as readToken, clearToken as removeToken }
 
 // Lets the auth slice clear its own in-memory state on session expiry without
 // http.service importing the store (which would create an import cycle:
@@ -44,52 +61,72 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
   onUnauthorized = handler
 }
 
-axiosInstance.interceptors.request.use(async (config) => {
-  const token = await getToken()
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+/**
+ * Builds a client for one origin. Both clients get the same interceptors, so
+ * session expiry is handled identically no matter which backend answered — the
+ * single place 401 is handled. Individual services and pages must not duplicate
+ * session-expiry logic (.rule/error-handling-rules.md).
+ */
+function createClient(baseURL: string): AxiosInstance {
+  const instance = axios.create({ baseURL: baseURL.replace(/\/+$/, '') })
 
-// The single place 401 is handled. Individual services and pages must not
-// duplicate session-expiry logic (.rule/error-handling-rules.md).
-axiosInstance.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      console.log('[HTTP] session expired, clearing auth state')
-      await clearToken()
-      onUnauthorized?.()
-
-      if (window.location.pathname !== ADMIN_LOGIN_ROUTE) {
-        window.location.href = ADMIN_LOGIN_ROUTE
-      }
+  instance.interceptors.request.use(async (config) => {
+    const token = await getToken()
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
     }
+    return config
+  })
 
-    return Promise.reject(error)
-  },
-)
+  instance.interceptors.response.use(
+    (response) => response,
+    async (error: AxiosError) => {
+      const isLoginAttempt = error.config?.url === LOGIN_ENDPOINT
 
-export const httpService = {
-  async get<T>(endpoint: string, params?: Record<string, unknown>): Promise<T> {
-    const response = await axiosInstance.get<T>(endpoint, { params })
-    return response.data
-  },
-  async post<T>(endpoint: string, data?: unknown): Promise<T> {
-    const response = await axiosInstance.post<T>(endpoint, data)
-    return response.data
-  },
-  async put<T>(endpoint: string, data?: unknown): Promise<T> {
-    const response = await axiosInstance.put<T>(endpoint, data)
-    return response.data
-  },
-  async patch<T>(endpoint: string, data?: unknown): Promise<T> {
-    const response = await axiosInstance.patch<T>(endpoint, data)
-    return response.data
-  },
-  async delete<T>(endpoint: string): Promise<T> {
-    const response = await axiosInstance.delete<T>(endpoint)
-    return response.data
-  },
+      if (error.response?.status === 401 && !isLoginAttempt) {
+        console.log('[HTTP] session expired, clearing auth state')
+        await clearToken()
+        onUnauthorized?.()
+
+        if (window.location.pathname !== ADMIN_LOGIN_ROUTE) {
+          window.location.href = ADMIN_LOGIN_ROUTE
+        }
+      }
+
+      return Promise.reject(error)
+    },
+  )
+
+  return instance
 }
+
+function createHttpService(instance: AxiosInstance) {
+  return {
+    async get<T>(endpoint: string, params?: Record<string, unknown>): Promise<T> {
+      const response = await instance.get<T>(endpoint, { params })
+      return response.data
+    },
+    async post<T>(endpoint: string, data?: unknown): Promise<T> {
+      const response = await instance.post<T>(endpoint, data)
+      return response.data
+    },
+    async put<T>(endpoint: string, data?: unknown): Promise<T> {
+      const response = await instance.put<T>(endpoint, data)
+      return response.data
+    },
+    async patch<T>(endpoint: string, data?: unknown): Promise<T> {
+      const response = await instance.patch<T>(endpoint, data)
+      return response.data
+    },
+    async delete<T>(endpoint: string): Promise<T> {
+      const response = await instance.delete<T>(endpoint)
+      return response.data
+    },
+  }
+}
+
+/** The public booking origin (booking-service). */
+export const httpService = createHttpService(createClient(BOOKING_SERVICE_URL))
+
+/** The Admin origin (api-gateway) — every authenticated route goes through it. */
+export const gatewayHttpService = createHttpService(createClient(API_GATEWAY_URL))

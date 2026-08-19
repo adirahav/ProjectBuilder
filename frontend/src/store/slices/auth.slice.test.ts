@@ -1,0 +1,233 @@
+import { AxiosError, AxiosHeaders } from 'axios'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useStore } from '../store'
+import { ADMIN_STORAGE_KEY } from './auth.slice'
+import { authService } from '../../services/auth.service'
+import { utilService } from '../../services/util.service'
+import { buildLoginResponse } from '../../test/factories'
+import type { AdminCredentials } from '../../types/auth.types'
+
+vi.mock('../../services/auth.service', async () => {
+  // The real 401 predicate is preserved — recognising a rejected login as
+  // "wrong credentials" rather than a fault is what these tests exist to prove.
+  const actual =
+    await vi.importActual<typeof import('../../services/auth.service')>(
+      '../../services/auth.service',
+    )
+
+  return {
+    ...actual,
+    authService: {
+      login: vi.fn(),
+      saveToken: vi.fn(),
+      readToken: vi.fn(),
+      clearToken: vi.fn(),
+    },
+  }
+})
+
+vi.mock('../../services/util.service', () => ({
+  utilService: {
+    saveToStorage: vi.fn(),
+    getFromStorage: vi.fn(),
+    removeFromStorage: vi.fn(),
+  },
+}))
+
+const mockedLogin = vi.mocked(authService.login)
+const mockedSaveToken = vi.mocked(authService.saveToken)
+const mockedReadToken = vi.mocked(authService.readToken)
+const mockedClearToken = vi.mocked(authService.clearToken)
+const mockedSaveToStorage = vi.mocked(utilService.saveToStorage)
+const mockedGetFromStorage = vi.mocked(utilService.getFromStorage)
+
+const credentials: AdminCredentials = {
+  identifier: 'admin@example.com',
+  password: 'a-password',
+}
+
+function buildErrorWithStatus(status: number): AxiosError {
+  const error = new AxiosError(`Request failed with status code ${status}`)
+  error.response = {
+    status,
+    statusText: 'Error',
+    data: {},
+    headers: new AxiosHeaders(),
+    config: { headers: new AxiosHeaders() },
+  }
+  return error
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockedSaveToken.mockResolvedValue(undefined)
+  mockedClearToken.mockResolvedValue(undefined)
+  mockedSaveToStorage.mockResolvedValue(undefined)
+  mockedGetFromStorage.mockResolvedValue(null)
+  mockedReadToken.mockResolvedValue(null)
+})
+
+describe('authSlice.login', () => {
+  it('starts signed out', () => {
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().admin).toBeNull()
+  })
+
+  it('stores the issued token and the admin identity on success', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse({ token: 'issued-token' }))
+
+    await expect(useStore.getState().login(credentials)).resolves.toBe('success')
+
+    expect(useStore.getState().token).toBe('issued-token')
+    expect(useStore.getState().admin).toEqual({ id: 'admin-1', email: 'admin@example.com' })
+  })
+
+  it('persists the token so a refresh keeps the session', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse({ token: 'issued-token' }))
+
+    await useStore.getState().login(credentials)
+
+    expect(mockedSaveToken).toHaveBeenCalledWith('issued-token')
+    expect(mockedSaveToStorage).toHaveBeenCalledWith(ADMIN_STORAGE_KEY, {
+      id: 'admin-1',
+      email: 'admin@example.com',
+    })
+  })
+
+  it('reports rejected credentials as their own outcome, not as a failure', async () => {
+    mockedLogin.mockRejectedValue(buildErrorWithStatus(401))
+
+    await expect(useStore.getState().login(credentials)).resolves.toBe('invalidCredentials')
+
+    expect(useStore.getState().token).toBeNull()
+    expect(mockedSaveToken).not.toHaveBeenCalled()
+  })
+
+  it('reports a gateway failure as an error, distinct from a wrong password', async () => {
+    mockedLogin.mockRejectedValue(new Error('Network Error'))
+
+    await expect(useStore.getState().login(credentials)).resolves.toBe('error')
+    expect(useStore.getState().token).toBeNull()
+  })
+
+  it('leaves no half-signed-in state behind after a failure', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse())
+    await useStore.getState().login(credentials)
+
+    mockedLogin.mockRejectedValue(buildErrorWithStatus(401))
+    await useStore.getState().login(credentials)
+
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().admin).toBeNull()
+  })
+
+  it('flags the request as in flight and clears the flag when it lands', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse())
+
+    const pending = useStore.getState().login(credentials)
+    expect(useStore.getState().isLoggingIn).toBe(true)
+
+    await pending
+    expect(useStore.getState().isLoggingIn).toBe(false)
+  })
+
+  it('blocks a second submit while the first is still in flight', async () => {
+    mockedLogin.mockImplementation(() => new Promise(() => {}))
+
+    void useStore.getState().login(credentials)
+    await expect(useStore.getState().login(credentials)).resolves.toBe('error')
+
+    expect(mockedLogin).toHaveBeenCalledTimes(1)
+  })
+
+  it('still signs the Admin in when caching their identity fails', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse({ token: 'issued-token' }))
+    mockedSaveToStorage.mockRejectedValue(new Error('storage unavailable'))
+
+    await expect(useStore.getState().login(credentials)).resolves.toBe('success')
+    expect(useStore.getState().token).toBe('issued-token')
+  })
+})
+
+describe('authSlice.logout', () => {
+  it('clears the session in memory and in storage', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse())
+    await useStore.getState().login(credentials)
+
+    await useStore.getState().logout()
+
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().admin).toBeNull()
+    expect(mockedClearToken).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(utilService.removeFromStorage)).toHaveBeenCalledWith(ADMIN_STORAGE_KEY)
+  })
+
+  it('signs the Admin out even when clearing storage throws', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse())
+    await useStore.getState().login(credentials)
+    mockedClearToken.mockRejectedValue(new Error('storage unavailable'))
+
+    await useStore.getState().logout()
+
+    expect(useStore.getState().token).toBeNull()
+  })
+})
+
+describe('authSlice.hydrateAuth', () => {
+  it('restores a persisted session on startup', async () => {
+    mockedReadToken.mockResolvedValue('stored-token')
+    mockedGetFromStorage.mockResolvedValue({ id: 'admin-1', email: 'admin@example.com' })
+
+    await useStore.getState().hydrateAuth()
+
+    expect(useStore.getState().token).toBe('stored-token')
+    expect(useStore.getState().admin).toEqual({ id: 'admin-1', email: 'admin@example.com' })
+    expect(useStore.getState().isHydratingAuth).toBe(false)
+  })
+
+  it('restores the session even when the cached identity is gone', async () => {
+    mockedReadToken.mockResolvedValue('stored-token')
+    mockedGetFromStorage.mockResolvedValue(null)
+
+    await useStore.getState().hydrateAuth()
+
+    // The token is the session; the identity is only a nicety.
+    expect(useStore.getState().token).toBe('stored-token')
+    expect(useStore.getState().admin).toBeNull()
+  })
+
+  it('stays signed out when nothing was stored', async () => {
+    await useStore.getState().hydrateAuth()
+
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().isHydratingAuth).toBe(false)
+  })
+
+  it('finishes hydrating even when storage throws, rather than hanging the guard', async () => {
+    mockedReadToken.mockRejectedValue(new Error('storage unavailable'))
+
+    await useStore.getState().hydrateAuth()
+
+    expect(useStore.getState().isHydratingAuth).toBe(false)
+    expect(useStore.getState().token).toBeNull()
+  })
+})
+
+describe('authSlice.clearSession', () => {
+  it('drops the in-memory session when the gateway reports the token is dead', async () => {
+    mockedLogin.mockResolvedValue(buildLoginResponse())
+    await useStore.getState().login(credentials)
+
+    useStore.getState().clearSession()
+
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().admin).toBeNull()
+  })
+
+  it('does nothing when nobody was signed in', () => {
+    useStore.getState().clearSession()
+
+    expect(useStore.getState().token).toBeNull()
+  })
+})

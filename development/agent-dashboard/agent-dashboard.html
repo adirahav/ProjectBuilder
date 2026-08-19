@@ -27,7 +27,7 @@
   #layout {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr auto;
+    grid-template-rows: auto 1fr;
     height: 100vh;
     gap: 0;
   }
@@ -67,9 +67,11 @@
     transition: box-shadow 0.4s ease, border-color 0.4s ease, transform 0.4s ease;
   }
   .node .icon { font-size: 30px; line-height: 1; }
+  .node .icon-img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; display: block; }
   .node .name { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: center; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node.center { width: 128px; height: 128px; margin-left: -64px; margin-top: -64px; }
   .node.center .icon { font-size: 42px; }
+  .node.center .icon-img { width: 78px; height: 78px; }
 
   .node.active {
     transform: scale(1.12);
@@ -102,7 +104,9 @@
   }
   #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; }
   #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .sidebar-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
   #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; min-height: 3.2em; }
+  #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; }
   #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
   #dot {
     width: 10px; height: 10px; border-radius: 50%; background: var(--idle);
@@ -161,8 +165,9 @@
   <div id="sidebar">
     <div id="status-card">
       <div class="label"><span id="dot"></span> &nbsp;Live status</div>
-      <div class="agent-line"><span id="active-icon">👑</span><span id="active-name">orchestrator</span></div>
+      <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
       <div class="message" id="active-message">Waiting for the loop to start…</div>
+      <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
     </div>
   </div>
@@ -179,15 +184,111 @@
 
 <script>
 const AGENTS = [
-  { key: "frontend",             icon: "🎨", name: "frontend" },
-  { key: "gateway",              icon: "🔧", name: "api-gateway" },
-  { key: "booking-service",      icon: "🔧", name: "booking-service" },
-  { key: "user-service",         icon: "🔧", name: "user-service" },
-  { key: "notification-service", icon: "🔧", name: "notification-service" },
-  { key: "qa",                   icon: "🐛", name: "qa" },
-  { key: "security",             icon: "🛡️", name: "security" },
+  { key: "frontend",             icon: "🎨", img: "fronend-agent.png",  name: "frontend" },
+  { key: "gateway",              icon: "🔧", img: "backend-agent.png",  name: "api-gateway" },
+  { key: "booking-service",      icon: "🔧", img: "backend-agent.png",  name: "booking-service" },
+  { key: "user-service",         icon: "🔧", img: "backend-agent.png",  name: "user-service" },
+  { key: "notification-service", icon: "🔧", img: "backend-agent.png",  name: "notification-service" },
+  { key: "qa",                   icon: "🐛", img: "qa-agent.png",       name: "qa" },
+  { key: "security",             icon: "🛡️", img: "system-agent.png",  name: "security" },
 ];
-const CENTER = { key: "orchestrator", icon: "👑", name: "orchestrator" };
+const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
+
+// "Thinking..."-style ambient words shown under the current action while an
+// agent is busy — a themed replacement for the terminal's plain heartbeat
+// dots. One random word per tick, from the active category's own set.
+const THINKING_TERMS = {
+  orchestrator: [
+    "Thinking","Planning","Coordinating","Delegating","Reviewing","Prioritizing","Sequencing","Orchestrating",
+    "Deciding","Evaluating","Scheduling","Dispatching","Organizing","Strategizing","Assessing","Weighing",
+    "Balancing","Directing","Managing","Overseeing","Synchronizing","Aligning","Routing","Allocating",
+    "Arbitrating","Negotiating","Mediating","Steering","Guiding","Supervising","Monitoring","Tracking",
+    "Auditing","Verifying","Confirming","Approving","Queuing","Processing","Analyzing","Considering",
+    "Pondering","Reflecting","Calculating","Estimating","Forecasting","Projecting","Ranking","Sorting",
+    "Filtering","Selecting","Choosing","Comparing","Contrasting","Cross-checking","Validating","Reconciling",
+    "Consolidating","Summarizing","Reporting","Logging","Recording","Documenting","Archiving","Distributing",
+    "Branching","Merging","Committing","Escalating","Deferring","Resuming","Watching","Observing",
+    "Inspecting","Diagnosing","Troubleshooting","Resolving","Untangling","Streamlining","Optimizing","Refining",
+    "Tuning","Calibrating","Configuring","Initializing","Bootstrapping","Launching","Deploying","Handing off",
+    "Load-balancing","Checkpointing","Snapshotting","Backing up","Restoring","Recovering","Stabilizing","Finalizing",
+    "Coordinating handoffs","Reading the plan","Checking scope","Waiting on agents","Tallying results","Wrapping up","Taking notes","Double-checking",
+  ],
+  frontend: [
+    "Sketching","Designing","Styling","Rendering","Painting","Illustrating","Composing","Arranging",
+    "Aligning","Spacing","Animating","Transitioning","Polishing","Prototyping","Wireframing","Mocking up",
+    "Theming","Coloring","Shading","Gradient-mapping","Typesetting","Kerning","Laying out","Breakpoint-tuning",
+    "Pixel-pushing","Component-building","Scaffolding","Structuring","Templating","Binding","Hooking up state","Hydrating",
+    "Lazy-loading","Bundling","Transpiling","Linting","Formatting","Debugging","Inspecting","Previewing",
+    "Iterating","Brainstorming","Ideating","Envisioning","Imagining","Conceptualizing","Drafting","Revising",
+    "Beautifying","Harmonizing","Balancing tones","Contrasting","Highlighting","Emphasizing","Simplifying","Decluttering",
+    "Minimizing","Whitespacing","Centering","Justifying","Wrapping text","Flexing","Gridding","Stacking",
+    "Layering","Z-indexing","Transforming","Scaling","Rotating","Blurring","Shadowing","Glowing",
+    "Fading","Sliding","Bouncing","Easing","Interpolating","Morphing","Moodboarding","Gathering inspiration",
+    "Palette-picking","Font-pairing","Icon-hunting","Accessibility-checking","Contrast-testing","Localizing","Translating","RTL-mirroring",
+    "Wiring the store","Mapping routes","Memoizing","Debouncing","Throttling","Cropping","Framing","Composing a layout",
+    "Refactoring a component","Extracting a hook","Naming things","Tidying imports",
+  ],
+  backend: [
+    "Querying","Indexing","Modeling","Migrating","Validating","Authenticating","Authorizing","Encrypting",
+    "Hashing","Salting","Tokenizing","Serializing","Deserializing","Parsing","Routing","Chaining middleware",
+    "Writing a handler","Building an endpoint","Defining a schema","Mapping relations","Joining tables","Aggregating","Filtering","Sorting",
+    "Paginating","Caching","Invalidating cache","Queuing","Dispatching","Processing","Batching","Streaming",
+    "Buffering","Throttling","Rate-limiting","Retrying","Handling a fallback","Catching an error","Wrapping an exception","Logging",
+    "Tracing","Monitoring","Health-checking","Load-testing","Benchmarking","Profiling","Optimizing","Refactoring",
+    "Restructuring","Normalizing","Transacting","Committing","Rolling back","Locking","Unlocking","Synchronizing",
+    "Guarding a race condition","Handling concurrency","Atomic-updating","Checking idempotency","Seeding data","Bootstrapping","Configuring","Loading environment",
+    "Managing secrets","Pooling connections","Binding a socket","Listening on a port","Handling a request","Shaping a response","Setting headers","Configuring CORS",
+    "Forwarding a proxy","Routing the gateway","Discovering a service","Installing dependencies","Resolving packages","Pinning versions","Type-checking","Compiling",
+    "Building","Deploying","Scaling","Replicating","Sharding","Partitioning","Backing up","Restoring",
+    "Cleaning up","Garbage-collecting","Managing memory","Pooling threads","Scheduling a job","Running a cron","Handling a webhook","Emitting an event",
+    "Attaching a listener","Verifying a token",
+  ],
+  qa: [
+    "Testing","Verifying","Validating","Checking","Inspecting","Auditing","Reviewing","Scrutinizing",
+    "Probing","Poking","Prodding","Stress-testing","Load-testing","Hunting edge cases","Hunting bugs","Chasing a bug",
+    "Reproducing","Isolating","Narrowing it down","Root-causing","Diagnosing","Debugging","Tracing","Stepping through",
+    "Setting a breakpoint","Logging","Asserting","Expecting","Mocking","Stubbing","Faking","Spying",
+    "Simulating","Fuzzing","Regression-testing","Smoke-testing","Sanity-checking","Unit-testing","Integration-testing","Running end-to-end",
+    "Snapshot-testing","Visual-diffing","Measuring coverage","Checking thresholds","Hunting flakiness","Testing a race condition","Testing timing","Testing boundaries",
+    "Checking nulls","Type-checking","Validating a schema","Verifying a contract","Probing the API","Inspecting a response","Checking status codes","Checking headers",
+    "Checking a payload","Auditing accessibility","Testing a screen reader","Checking contrast","Cross-browser testing","Cross-device testing","Checking responsiveness","Testing i18n",
+    "Checking RTL","Profiling performance","Hunting a memory leak","Scanning the console","Chasing a warning","Writing a report","Gathering evidence","Capturing a screenshot",
+    "Stepping through a repro","Running triage","Ranking severity","Sorting priority","Filing a ticket","Re-running a test","Confirming a fix","Marking pass or fail",
+    "Running a checklist","Matching criteria","Comparing to spec","Observing behavior","Checking expectations","Writing an assertion","Running the test suite","Watching CI",
+    "Checking the pipeline","Verifying a build","Smoke-testing a deploy","Testing a rollback","Testing failover","Running chaos tests","Checking resilience","Checking data integrity",
+    "Verifying consistency","Comparing results",
+  ],
+  security: [
+    "Auditing","Scanning","Probing","Penetration-testing","Hunting vulnerabilities","Modeling threats","Assessing risk","Mapping attack surface",
+    "Checking an exploit","Testing injection","Checking XSS","Checking CSRF","Testing SQL injection","Checking auth bypass","Testing privilege escalation","Checking session hijacking",
+    "Validating a token","Scanning for secrets","Checking credentials","Checking password strength","Verifying a hash","Verifying encryption","Checking TLS","Validating a certificate",
+    "Checking security headers","Auditing CORS","Checking CSP","Testing rate limits","Testing brute force","Sanitizing input","Encoding output","Escaping",
+    "Checking a whitelist","Checking a blacklist","Verifying permissions","Checking access control","Verifying a role","Testing boundaries","Checking isolation","Verifying a sandbox",
+    "Scanning dependencies","Checking for CVEs","Verifying a patch","Auditing the supply chain","Checking package integrity","Verifying a signature","Scanning logs","Detecting anomalies",
+    "Checking for intrusion","Verifying a firewall rule","Scanning the network","Scanning ports","Checking exposure","Checking for data leaks","Scanning for PII","Checking compliance",
+    "Verifying policy","Hardening configuration","Checking defaults","Verifying least privilege","Checking zero trust","Verifying a backup","Testing recovery","Simulating an incident",
+    "Red-teaming","Blue-teaming","Hunting threats","Running forensics","Collecting evidence","Checking chain of custody","Writing a report","Documenting a finding",
+    "Scoring severity","Scoring CVSS","Suggesting remediation","Planning mitigation","Verifying a fix","Checking for regression","Reviewing a dependency","Checking an API key",
+    "Reviewing a header","Checking a cookie flag","Verifying same-origin","Checking a redirect","Reviewing an upload path","Checking file permissions",
+  ],
+};
+
+function randomThinkingTerm(category) {
+  const list = THINKING_TERMS[category] || THINKING_TERMS.orchestrator;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+let currentThinkingCategory = "orchestrator";
+function tickThinking() {
+  const dot = document.getElementById("dot");
+  const el = document.getElementById("active-thinking");
+  if (!dot.classList.contains("live")) {
+    el.textContent = "";
+    return;
+  }
+  el.textContent = randomThinkingTerm(currentThinkingCategory) + "…";
+}
+setInterval(tickThinking, 1600);
 
 // One category can cover several ring nodes (every backend service, no
 // matter its real name, is the same "backend" voice/visual category) — so
@@ -264,7 +365,10 @@ function makeNode(agent, pos, isCenter) {
   el.dataset.agent = agent.key;
   el.style.left = pos.x + "%";
   el.style.top = pos.y + "%";
-  el.innerHTML = `<div class="icon">${agent.icon}</div><div class="name">${agent.name}</div>`;
+  const iconHtml = agent.img
+    ? `<img class="icon-img" src="/assets/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
+    : `<div class="icon">${agent.icon}</div>`;
+  el.innerHTML = `${iconHtml}<div class="name">${agent.name}</div>`;
   ring.appendChild(el);
   return el;
 }
@@ -291,8 +395,15 @@ AGENTS.forEach((agent, i) => {
 const ALL_KEYS = ["orchestrator", ...AGENTS.map(a => a.key)];
 const BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map(a => [a.key, a]));
 
-function setActiveCategory(category) {
-  const activeKeys = new Set(CATEGORY_TO_KEYS[category] || []);
+// `keys` is the exact set of ring nodes to light up (from the server's
+// `data.keys`) — NOT every node in the category. A task usually only has
+// one or two backend services actually in scope; lighting up all four just
+// because the category is "backend" would visually claim work is happening
+// somewhere it isn't. `category` still drives which voice cue plays and
+// which color the glow uses — only the "which nodes glow" question is keys-based.
+function setActiveCategory(category, keys) {
+  currentThinkingCategory = category || "orchestrator";
+  const activeKeys = new Set(keys && keys.length ? keys : (CATEGORY_TO_KEYS[category] || []));
   ALL_KEYS.forEach((key) => {
     const isActive = activeKeys.has(key);
     const node = document.querySelector('.node[data-agent="' + key + '"]');
@@ -301,14 +412,14 @@ function setActiveCategory(category) {
     if (beam) beam.classList.toggle("active", isActive);
   });
 
-  // Label shows the first matching node's identity (there's only ever one
-  // for frontend/qa/security/orchestrator; for "backend" this just shows
-  // "api-gateway" as a representative — the ring highlighting already shows
-  // all four backend nodes lit up together, which is the real signal).
-  const repKey = CATEGORY_TO_KEYS[category] ? CATEGORY_TO_KEYS[category][0] : category;
-  const info = BY_KEY[repKey] || { icon: "🤖", name: category || "idle" };
-  document.getElementById("active-icon").textContent = info.icon;
-  document.getElementById("active-name").textContent = category === "backend" ? "backend service" : info.name;
+  // Label shows the first actually-active node's identity — accurate even
+  // for "backend", where that's now whichever specific service(s) are
+  // really in scope, not a generic stand-in.
+  const repKey = activeKeys.size ? [...activeKeys][0] : category;
+  const info = BY_KEY[repKey] || { icon: "🤖", img: null, name: category || "idle" };
+  const iconImg = document.getElementById("active-icon-img");
+  if (info.img) iconImg.src = `/assets/${info.img}`;
+  document.getElementById("active-name").textContent = activeKeys.size > 1 ? `${info.name} +${activeKeys.size - 1}` : info.name;
 }
 
 let lastSeq = 0;
@@ -320,20 +431,23 @@ async function poll() {
     const data = await res.json();
     dot.classList.add("live");
 
-    const category = data.category || (data.event ? "orchestrator" : null);
-    if (category) setActiveCategory(category);
+    // Live text/highlight — refreshed by every output line, tracks who's
+    // talking right now.
+    const category = data.category || "orchestrator";
+    setActiveCategory(category, data.keys);
     document.getElementById("active-message").textContent = data.message || "…";
     document.getElementById("active-updated").textContent = data.updatedAt
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
       : "";
 
-    // Only play a cue for a genuinely NEW event (seq increased) — a poll
-    // re-fetching the same still-current event must never replay its sound.
-    if (data.seq && data.seq !== lastSeq && data.event && data.event !== "output") {
-      lastSeq = data.seq;
-      playCue(audioFileFor(data.event, category));
-    } else if (data.seq) {
-      lastSeq = data.seq;
+    // Audio cue — driven ONLY by `lastEvent`, which routine output can never
+    // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely
+    // NEW event (seq increased since the last poll) plays — re-fetching the
+    // same still-current event on the next poll must never replay its sound.
+    const evt = data.lastEvent;
+    if (evt && evt.seq !== lastSeq) {
+      lastSeq = evt.seq;
+      playCue(audioFileFor(evt.event, evt.category));
     }
   } catch {
     dot.classList.remove("live");

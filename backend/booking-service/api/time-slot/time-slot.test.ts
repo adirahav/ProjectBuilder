@@ -300,7 +300,31 @@ describe('POST /api/time-slots/:id/hold', () => {
       startTime: '09:00',
       endTime: '10:30',
       status: 'held',
+      // The contract requires the hold deadline on this response so Screen 3
+      // can show the Customer how long is left rather than lapsing in silence.
+      holdExpiresAt: expect.any(String),
     })
+  })
+
+  it('returns holdExpiresAt as heldAt + the TTL, as an absolute instant', async () => {
+    const service = await seedService()
+    const slot = await seedSlot(service)
+
+    const res = await request(app()).post(`/api/time-slots/${slot.uuid}/hold`)
+
+    const stored = await TimeSlot.findOne({ uuid: slot.uuid })
+    expect(res.body.holdExpiresAt).toBe(
+      new Date(stored!.heldAt!.getTime() + HOLD_TTL_MS).toISOString(),
+    )
+  })
+
+  it('omits holdExpiresAt from the public list, where nothing is held', async () => {
+    const service = await seedService()
+    await seedSlot(service)
+
+    const res = await request(app()).get(`/api/time-slots?serviceId=${service.uuid}&date=${DATE}`)
+
+    expect(res.body[0]).not.toHaveProperty('holdExpiresAt')
   })
 
   it('requires no authentication and no request body', async () => {

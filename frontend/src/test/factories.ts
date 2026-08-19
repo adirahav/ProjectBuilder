@@ -1,3 +1,4 @@
+import type { Appointment } from '../types/appointment.types'
 import type { Service } from '../types/service.types'
 import type { TimeSlot } from '../types/timeSlot.types'
 
@@ -37,6 +38,40 @@ export function buildTimeSlot(overrides: Partial<TimeSlot> = {}): TimeSlot {
     startTime: `${hour}:00`,
     endTime: `${hour}:45`,
     status: 'open',
+    ...overrides,
+  }
+}
+
+/**
+ * A slot the server has just moved to `held`, with a hold deadline the given
+ * number of milliseconds away. The deadline is computed from the current clock
+ * so a test that freezes time gets a deterministic countdown.
+ */
+export function buildHeldTimeSlot(remainingMs = 5 * 60 * 1000, overrides: Partial<TimeSlot> = {}) {
+  return buildTimeSlot({
+    status: 'held',
+    holdExpiresAt: new Date(Date.now() + remainingMs).toISOString(),
+    ...overrides,
+  })
+}
+
+let appointmentSequence = 0
+
+/**
+ * Minimal Appointment builder. Defaults to `pending`, since that is the only
+ * status Screen 3 can ever produce — a test that cares about `confirmed`/
+ * `cancelled` is testing the Admin flow and should say so by overriding it.
+ */
+export function buildAppointment(overrides: Partial<Appointment> = {}): Appointment {
+  appointmentSequence += 1
+
+  return {
+    id: `appointment-${appointmentSequence}`,
+    serviceId: 'service-1',
+    timeSlotId: 'slot-1',
+    customerName: 'Dana Levi',
+    customerPhone: '050-123-4567',
+    status: 'pending',
     ...overrides,
   }
 }

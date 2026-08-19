@@ -68,13 +68,62 @@ const en = {
   'timeSlot.conflict.toast': 'That time was just taken — please choose another.',
 
   'details.title': 'Your details',
-  'details.comingSoon.title': 'The details form is coming soon',
-  'details.comingSoon.body':
-    'Your time is held while you finish booking. Entering your contact details will be available here shortly.',
+  'details.subtitle': 'Tell us how to reach you, and the time below is yours.',
   'details.heldLabel': 'Time held for you',
   'details.noHold.title': 'No time is held yet',
   'details.noHold.body': 'Choose an available time first, and we will hold it while you book.',
   'details.back': 'Back to time selection',
+
+  'details.countdown.label': 'Time left to finish booking',
+  'details.countdown.body': 'This time is held for you for another {time}.',
+  'details.countdown.lastMinute': 'Less than a minute left to finish booking this time.',
+  'details.countdown.expired': 'The hold on this time has run out.',
+
+  'details.form.legend': 'Your contact details',
+  'details.form.summary': 'Please correct the highlighted fields, then book again.',
+  'details.form.required': 'Required',
+  'details.form.optional': 'Optional',
+  'details.form.errorPrefix': 'Error',
+  'details.form.name.label': 'Full name',
+  'details.form.name.placeholder': 'e.g. Dana Levi',
+  'details.form.name.required': 'Please enter your name.',
+  'details.form.name.tooShort': 'Please enter at least 2 characters.',
+  'details.form.name.tooLong': 'Please use 60 characters or fewer.',
+  'details.form.phone.label': 'Phone number',
+  'details.form.phone.placeholder': 'e.g. 050-123-4567',
+  'details.form.phone.hint': 'We only use it to reach you about this appointment.',
+  'details.form.phone.required': 'Please enter a phone number.',
+  'details.form.phone.invalid': 'Please enter a valid phone number, 9 to 15 digits.',
+  'details.form.email.label': 'Email',
+  'details.form.email.placeholder': 'e.g. dana@example.com',
+  'details.form.email.hint': 'Add it and we will email your booking confirmation.',
+  'details.form.email.invalid': 'Please enter a valid email address, or leave it empty.',
+
+  'details.submit': 'Book this appointment',
+  'details.submitting': 'Booking your appointment…',
+  'details.success.toast': 'Your appointment is booked.',
+  'details.error.toast': 'We could not book your appointment. Please try again.',
+  'details.conflict.toast': 'The hold on this time ran out — please choose another time.',
+  'details.expired.title': 'The hold on this time ran out',
+  'details.expired.body':
+    'We hold a time only briefly so it does not sit blocked for other customers. Nothing was booked — please choose a time again.',
+  'details.expired.action': 'Choose another time',
+
+  'appointment.status.pending': 'Awaiting confirmation',
+  'appointment.status.confirmed': 'Confirmed',
+  'appointment.status.cancelled': 'Cancelled',
+
+  'confirmation.title': 'Your appointment is booked',
+  'confirmation.subtitle': 'We have your details. The clinic will confirm your appointment shortly.',
+  'confirmation.statusLabel': 'Booking status',
+  'confirmation.referenceLabel': 'Booking reference',
+  'confirmation.comingSoon.title': 'The full confirmation is coming soon',
+  'confirmation.comingSoon.body':
+    'Your appointment is saved. The complete summary, with everything you need for the visit, will appear here shortly.',
+  'confirmation.noAppointment.title': 'No booking to show here',
+  'confirmation.noAppointment.body':
+    'This page shows an appointment right after you book it. Start from our services to book one.',
+  'confirmation.back': 'Back to services',
 } as const
 
 export type StringKey = keyof typeof en
@@ -142,13 +191,62 @@ const he: Dictionary = {
   'timeSlot.conflict.toast': 'השעה הזו נתפסה הרגע — בחרו שעה אחרת.',
 
   'details.title': 'הפרטים שלכם',
-  'details.comingSoon.title': 'טופס הפרטים יהיה זמין בקרוב',
-  'details.comingSoon.body':
-    'השעה שמורה עבורכם עד להשלמת ההזמנה. מילוי פרטי הקשר יתאפשר כאן בקרוב.',
+  'details.subtitle': 'ספרו לנו איך אפשר להשיג אתכם, והשעה שלמטה שלכם.',
   'details.heldLabel': 'השעה השמורה עבורכם',
   'details.noHold.title': 'עדיין לא נשמרה שעה',
   'details.noHold.body': 'בחרו קודם שעה פנויה, ואנחנו נשמור אותה עבורכם עד להשלמת ההזמנה.',
   'details.back': 'חזרה לבחירת השעה',
+
+  'details.countdown.label': 'הזמן שנותר להשלמת ההזמנה',
+  'details.countdown.body': 'השעה שמורה עבורכם לעוד {time}.',
+  'details.countdown.lastMinute': 'נותרה פחות מדקה להשלמת ההזמנה של שעה זו.',
+  'details.countdown.expired': 'השמירה על השעה הזו הסתיימה.',
+
+  'details.form.legend': 'פרטי הקשר שלכם',
+  'details.form.summary': 'אנא תקנו את השדות המסומנים ונסו להזמין שוב.',
+  'details.form.required': 'שדה חובה',
+  'details.form.optional': 'לא חובה',
+  'details.form.errorPrefix': 'שגיאה',
+  'details.form.name.label': 'שם מלא',
+  'details.form.name.placeholder': 'לדוגמה: דנה לוי',
+  'details.form.name.required': 'אנא הזינו את שמכם.',
+  'details.form.name.tooShort': 'אנא הזינו לפחות 2 תווים.',
+  'details.form.name.tooLong': 'אנא השתמשו ב־60 תווים לכל היותר.',
+  'details.form.phone.label': 'מספר טלפון',
+  'details.form.phone.placeholder': 'לדוגמה: 050-123-4567',
+  'details.form.phone.hint': 'נשתמש בו רק כדי ליצור אתכם קשר בנוגע לתור הזה.',
+  'details.form.phone.required': 'אנא הזינו מספר טלפון.',
+  'details.form.phone.invalid': 'אנא הזינו מספר טלפון תקין, בין 9 ל־15 ספרות.',
+  'details.form.email.label': 'דוא״ל',
+  'details.form.email.placeholder': 'לדוגמה: dana@example.com',
+  'details.form.email.hint': 'אם תוסיפו אותו, נשלח אליו את אישור ההזמנה.',
+  'details.form.email.invalid': 'אנא הזינו כתובת דוא״ל תקינה, או השאירו את השדה ריק.',
+
+  'details.submit': 'הזמנת התור',
+  'details.submitting': 'מזמינים את התור…',
+  'details.success.toast': 'התור שלכם הוזמן.',
+  'details.error.toast': 'לא הצלחנו להזמין את התור. נסו שוב.',
+  'details.conflict.toast': 'השמירה על השעה הסתיימה — בחרו שעה אחרת.',
+  'details.expired.title': 'השמירה על השעה הסתיימה',
+  'details.expired.body':
+    'אנחנו שומרים שעה לזמן קצר בלבד כדי שלא תיחסם ללקוחות אחרים. שום דבר לא הוזמן — אנא בחרו שעה מחדש.',
+  'details.expired.action': 'בחירת שעה אחרת',
+
+  'appointment.status.pending': 'ממתין לאישור',
+  'appointment.status.confirmed': 'מאושר',
+  'appointment.status.cancelled': 'בוטל',
+
+  'confirmation.title': 'התור שלכם הוזמן',
+  'confirmation.subtitle': 'הפרטים שלכם התקבלו. המספרה תאשר את התור בקרוב.',
+  'confirmation.statusLabel': 'סטטוס ההזמנה',
+  'confirmation.referenceLabel': 'מספר ההזמנה',
+  'confirmation.comingSoon.title': 'האישור המלא יהיה זמין בקרוב',
+  'confirmation.comingSoon.body':
+    'התור שלכם נשמר. הסיכום המלא, עם כל מה שצריך לקראת הביקור, יופיע כאן בקרוב.',
+  'confirmation.noAppointment.title': 'אין כאן הזמנה להצגה',
+  'confirmation.noAppointment.body':
+    'הדף הזה מציג תור מיד לאחר ההזמנה. התחילו מרשימת השירותים כדי להזמין תור.',
+  'confirmation.back': 'חזרה לרשימת השירותים',
 }
 
 export const dictionaries: Record<Locale, Dictionary> = { he, en }

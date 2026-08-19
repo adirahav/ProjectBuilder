@@ -7,6 +7,7 @@ import { SkipLink } from './components/common/SkipLink'
 import { ServiceListPage } from './pages/ServiceListPage'
 import { TimeSlotPickerPage } from './pages/TimeSlotPickerPage'
 import { CustomerDetailsPage } from './pages/CustomerDetailsPage'
+import { BookingConfirmationPage } from './pages/BookingConfirmationPage'
 import { useDocumentDirection } from './hooks/useI18n'
 import { useStore } from './store/store'
 import { directionFor } from './store/slices/app.slice'
@@ -39,6 +40,7 @@ export function AppRoutes() {
         <Route path="/" element={<ServiceListPage />} />
         <Route path="/book/:serviceId" element={<TimeSlotPickerPage />} />
         <Route path="/book/:serviceId/details" element={<CustomerDetailsPage />} />
+        <Route path="/book/:serviceId/confirmation" element={<BookingConfirmationPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

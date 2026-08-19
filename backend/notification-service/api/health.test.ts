@@ -37,9 +37,9 @@ describe('unknown routes', () => {
     expect(res.status).toBe(404)
   })
 
-  it('returns 404 for the not-yet-built F4b notification endpoint', async () => {
-    // Guards the scope boundary of SCAFFOLD-NOT: the endpoint that receives
-    // booking-confirmation calls from booking-service is a later ticket.
+  it('returns 404 for the notifications collection root', async () => {
+    // Only the specific /appointment-confirmation kind exists (CUSTOMER-NOT);
+    // the router root is not a catch-all for arbitrary notification posts.
     const res = await request(createApp())
       .post('/api/notifications')
       .send({ appointmentId: 'x' })

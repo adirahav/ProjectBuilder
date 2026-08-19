@@ -7,7 +7,18 @@ export const config = {
   port: Number(process.env.PORT ?? 4001),
   mongodbUri: process.env.MONGODB_URI ?? 'mongodb://localhost:27017/booking-service',
   frontendOrigin: process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173',
+  // Server-to-server only: booking-service fires a best-effort confirmation
+  // notification here after an Appointment is created (PRD F4b). This is never
+  // reached by a browser, and its unavailability must never cost a booking.
+  notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL ?? 'http://localhost:4003',
 }
+
+/**
+ * How long booking-service waits on the notification-service call before giving
+ * up. Deliberately short: the notification is fire-and-forget, so a hung
+ * upstream must not be able to pin an open handle for the life of the process.
+ */
+export const NOTIFICATION_TIMEOUT_MS = 3000
 
 /**
  * How long a TimeSlot hold survives before it lazily expires back to `open`.

@@ -12,10 +12,15 @@ export interface PublicTimeSlot {
   startTime: string
   endTime: string
   status: 'open' | 'held' | 'booked'
+  // Present ONLY on a successful hold response, where `status` is `held`.
+  // Advisory: it lets Screen 3 show the Customer how long is left, but the
+  // server never trusts it back — POST /api/appointments re-checks expiry
+  // itself, and its 409 is the authoritative backstop.
+  holdExpiresAt?: string
 }
 
 /** The instant before which a hold is considered expired. */
-function holdExpiryCutoff(): Date {
+export function holdExpiryCutoff(): Date {
   return new Date(Date.now() - HOLD_TTL_MS)
 }
 
@@ -131,6 +136,10 @@ export async function holdTimeSlot(slotUuid: string): Promise<HoldResult> {
         startTime: slot.startTime,
         endTime: slot.endTime,
         status: 'held',
+        // The already-computed deadline, not the raw `heldAt` stamp: exposing
+        // when the hold *started* would invite a client to recompute an expiry
+        // only the server gets to decide.
+        holdExpiresAt: new Date(slot.heldAt!.getTime() + HOLD_TTL_MS).toISOString(),
       },
     }
   }

@@ -7,11 +7,12 @@ info:
     booking-service owns the Service, TimeSlot and Appointment entities for the
     Dog Grooming Appointment Booking System.
 
-    Scope of this revision: PRD F1 (the public Service list consumed by Screen 1)
-    plus F2/F3/F3b — the public TimeSlot availability query and the atomic hold
-    consumed by Screen 2 (Time Slot Picker). Appointment creation (F4/F4b) and
-    the Admin Service writes (F6-F8) are defined by their own tickets and are
-    deliberately absent here.
+    Scope of this revision: PRD F1 (the public Service list consumed by Screen 1),
+    F2/F3/F3b — the public TimeSlot availability query and the atomic hold
+    consumed by Screen 2 (Time Slot Picker) — and F4/F4b, Appointment creation
+    from the Customer Details form (Screen 3). The Admin Service writes (F6-F8)
+    and the Admin Appointment management routes (F9-F11) are defined by their own
+    tickets and are deliberately absent here.
 
     Every route below is public and unauthenticated by design.
 
@@ -24,6 +25,8 @@ tags:
     description: Treatments the clinic offers.
   - name: TimeSlot
     description: Bookable windows for a Service on a given day.
+  - name: Appointment
+    description: A Customer's booking of a Service at a TimeSlot.
 
 paths:
   /api/services:
@@ -191,6 +194,13 @@ paths:
         A slot whose hold has already expired past the TTL counts as `open` for
         this transition and may be re-held.
 
+        The response MUST include `holdExpiresAt` — `heldAt` plus the hold TTL,
+        as an absolute instant. Screen 3 shows the Customer how long is left so
+        the form does not lapse silently under them. This is a display value
+        only: the server never trusts it back, and `POST /api/appointments`
+        re-checks expiry itself. See the `holdExpiresAt` note on the TimeSlot
+        schema for why the deadline is exposed but `heldAt` is not.
+
         The request has no body. This endpoint mutates state without auth by
         design; it is a deliberate abuse surface, and rate limiting is a known
         follow-up rather than something silently assumed here.
@@ -220,6 +230,7 @@ paths:
                 startTime: '09:00'
                 endTime: '10:30'
                 status: held
+                holdExpiresAt: '2026-08-18T09:05:00.000Z'
         '400':
           description: The `id` is not a well-formed identifier.
           content:
@@ -245,6 +256,121 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 error: TimeSlot is no longer open
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/appointments:
+    post:
+      tags: [Appointment]
+      operationId: createAppointment
+      summary: Book a held TimeSlot into an Appointment
+      description: >
+        Public and unauthenticated (PRD F4) — a Customer has no account and
+        never logs in. This is the second half of the hold→book lifecycle whose
+        first half is `POST /api/time-slots/{id}/hold`.
+
+        The server MUST, in order:
+
+        1. Validate the body. `customerName` and `customerPhone` are required;
+           `customerEmail` is optional but must be a well-formed address when
+           present. Reject with 400 — never coerce, never store a partial
+           record. `customerName` is attacker-controlled free text: store it
+           verbatim, and never interpolate it into a query or a notification
+           template without escaping.
+        2. Load the TimeSlot named by `slotId`, and confirm it is currently
+           `held` and its hold has NOT lapsed past the TTL, and that its
+           `serviceId` matches the body's. A lapsed hold counts as `open`
+           (PRD F3b) and must NOT be bookable — that slot is available to
+           everyone again.
+        3. Transition the slot `held` → `booked` with a SINGLE atomic
+           conditional update, exactly as the hold does — e.g.
+           `findOneAndUpdate({ _id, status: 'held' }, { $set: { status:
+           'booked' } })`. A read-then-write is a race and is not acceptable:
+           two simultaneous submits for the same held slot (a double-tap, a
+           retried request) must resolve to exactly one 201 and one 409, never
+           two Appointments for one slot (see `seat-concurrency-layer`).
+        4. Create the Appointment with `status: 'pending'`. It is never created
+           `confirmed`: confirming is the Admin's decision (PRD F9-F11).
+        5. Fire a best-effort call to notification-service's confirmation
+           endpoint (PRD F4b). This MUST NOT block or fail this response:
+           catch and log any error from it. A notification-service outage must
+           never cost a Customer their booking, and must never roll one back
+           that the datastore has already accepted.
+
+        The client treats this response as the only proof the booking landed —
+        it never assumes success, exactly as with the hold.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppointmentRequest'
+            example:
+              slotId: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+              serviceId: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+              customerName: Dana Levi
+              customerPhone: 050-123-4567
+              customerEmail: dana@example.com
+      responses:
+        '201':
+          description: >
+            The Appointment was created and the TimeSlot is now `booked`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+              example:
+                id: 7b2e4d6f-8a91-4c3b-9d5e-1f2a3b4c5d6e
+                serviceId: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+                timeSlotId: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                customerName: Dana Levi
+                customerPhone: 050-123-4567
+                customerEmail: dana@example.com
+                status: pending
+        '400':
+          description: >
+            A missing/malformed contact field, a malformed `slotId`, or a
+            `serviceId` that does not match the slot's own.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No TimeSlot with that `slotId` exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            The conditional update matched zero documents: the hold had lapsed,
+            the slot was never `held`, or another request booked it first. No
+            Appointment was created and the TimeSlot was not mutated.
+
+            This is an expected outcome, not a fault — holds are short-lived by
+            design, so a Customer who lingers on the form legitimately arrives
+            too late. The frontend maps it to a specific "the hold on this time
+            ran out" explanation and a route back to the Time Slot Picker,
+            distinct from how it treats any other failure. It is also the
+            authoritative backstop for the client's countdown, which is advisory
+            only.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: TimeSlot is no longer held
         '500':
           description: Unexpected server error.
           content:
@@ -305,9 +431,10 @@ components:
         `_id` and `__v` are internal and must be stripped by the model's toJSON
         transform (.rule/database-rules.md, "External Identity").
 
-        `heldAt` is deliberately NOT part of this payload: the hold deadline is
-        server-side bookkeeping, and exposing it would invite a client to
-        second-guess an expiry only the server can decide.
+        `heldAt` is deliberately NOT part of this payload: when a hold *started*
+        is server-side bookkeeping, and exposing it would invite a client to
+        recompute an expiry only the server can decide. The already-computed
+        deadline, `holdExpiresAt`, is exposed instead — see that property.
       required: [id, serviceId, date, startTime, endTime, status]
       additionalProperties: false
       properties:
@@ -353,6 +480,139 @@ components:
             The public list endpoint only ever returns `open`; `held` is what a
             successful hold responds with.
           example: open
+        holdExpiresAt:
+          type: string
+          format: date-time
+          description: >
+            When this hold lapses, as an absolute ISO-8601 instant (`heldAt` +
+            the hold TTL, computed server-side).
+
+            Present ONLY on the response to a successful hold, where `status` is
+            `held`; omitted everywhere else, including every entry in the public
+            list. Unlike `startTime`/`endTime`, which are wall-clock strings
+            carrying no timezone, this one genuinely is an instant — it is a
+            deadline, not a time of day, and has to be comparable against the
+            Customer's own clock.
+
+            It exists so Screen 3 can show the Customer how much time is left
+            rather than letting the form expire in silence. It is advisory: the
+            client's countdown never decides whether a booking may proceed, the
+            409 from `POST /api/appointments` does.
+          example: '2026-08-18T09:05:00.000Z'
+
+    Appointment:
+      type: object
+      description: >
+        A Customer's booking of a Service at a TimeSlot. As above, the
+        client-facing identifier is always `id`, the record's uuid — Mongo's
+        `_id` and `__v` are internal and must be stripped by the model's toJSON
+        transform (.rule/database-rules.md, "External Identity").
+
+        This record holds personally identifiable contact details. Only the
+        fields below may be serialized to a Customer: no internal notes, no
+        audit fields, and never another Customer's record.
+      required: [id, serviceId, timeSlotId, customerName, customerPhone, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The Appointment's uuid. Never a Mongo ObjectId.
+          example: 7b2e4d6f-8a91-4c3b-9d5e-1f2a3b4c5d6e
+        serviceId:
+          type: string
+          format: uuid
+          description: >
+            The Service booked. Derived server-side from the TimeSlot document,
+            never copied from the request body — see the request schema.
+          example: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+        timeSlotId:
+          type: string
+          format: uuid
+          description: The TimeSlot this Appointment finalized to `booked`.
+          example: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+        customerName:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: >
+            Free text, and the one field here a Customer fully controls. Store
+            and return it verbatim; it must never be interpolated into a query,
+            a template or a notification body without escaping.
+          example: Dana Levi
+        customerPhone:
+          type: string
+          minLength: 9
+          maxLength: 20
+          description: >
+            The Customer's contact number, as typed. Formatting characters
+            (spaces, hyphens, parentheses, a leading `+`) are permitted — the
+            clinic dials this, it is not a normalized key.
+          example: 050-123-4567
+        customerEmail:
+          type: string
+          format: email
+          maxLength: 254
+          description: >
+            Optional by design (PRD F4): a Customer without email can still
+            book. Absent — not an empty string — when not supplied.
+          example: dana@example.com
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled]
+          description: >
+            `pending`   — created by a Customer, awaiting the Admin's decision.
+            `confirmed` — the Admin approved it.
+            `cancelled` — the Admin cancelled it.
+
+            This endpoint always creates `pending`. Moving to `confirmed` or
+            `cancelled` is the Admin's alone (PRD F9-F11) and belongs to the
+            Admin routes, which are not in this revision.
+          example: pending
+
+    CreateAppointmentRequest:
+      type: object
+      description: >
+        What Screen 3 submits. `slotId` is the source of truth: the server MUST
+        resolve the Service, date and time from that TimeSlot document rather
+        than from anything else in this body, so a client cannot book one
+        Service's slot under another's name.
+      required: [slotId, serviceId, customerName, customerPhone]
+      additionalProperties: false
+      properties:
+        slotId:
+          type: string
+          format: uuid
+          description: The TimeSlot this Customer currently holds.
+          example: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+        serviceId:
+          type: string
+          format: uuid
+          description: >
+            The Service the client believes it is booking. Sent for routing and
+            as a cross-check only — the server MUST verify it matches the slot's
+            own `serviceId` and reject a mismatch with 400, never trust it over
+            the slot document.
+          example: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+        customerName:
+          type: string
+          minLength: 1
+          maxLength: 60
+          example: Dana Levi
+        customerPhone:
+          type: string
+          minLength: 9
+          maxLength: 20
+          example: 050-123-4567
+        customerEmail:
+          type: string
+          format: email
+          maxLength: 254
+          description: >
+            Optional. The client omits the field entirely when the Customer
+            leaves it blank rather than sending an empty string, so absence is
+            unambiguous.
+          example: dana@example.com
 
     Error:
       type: object

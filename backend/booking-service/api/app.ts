@@ -3,6 +3,7 @@ import cors from 'cors'
 
 import { config } from './lib/config.ts'
 import { getDbStatus, isDbConnected } from './lib/db.ts'
+import { appointmentRouter } from './appointment/appointment.routes.ts'
 import { serviceRouter } from './service/service.routes.ts'
 import { timeSlotRouter } from './time-slot/time-slot.routes.ts'
 
@@ -43,11 +44,14 @@ export function createApp(): Express {
   // (PRD F2/F3/F3b, TIMESLOT-APT).
   app.use('/api/time-slots', timeSlotRouter)
 
-  // NOTE: the Appointment model and its routes are intentionally NOT part of
-  // this ticket. They land in the follow-up F4/F4b tickets, along with the
-  // Admin Service writes (F6-F8). The `held` -> `booked` transition therefore
-  // has no caller yet: a hold placed here expires back to `open` after the TTL
-  // and can never currently be finalized into an Appointment.
+  // Public, unauthenticated Appointment creation — the second half of the
+  // hold -> book lifecycle (PRD F4/F4b, CUSTOMER-APT).
+  app.use('/api/appointments', appointmentRouter)
+
+  // NOTE: the Admin Service writes (F6-F8) and the Admin Appointment
+  // management routes (F9-F11) are intentionally NOT part of this ticket —
+  // they land in their own. So an Appointment can only ever be created
+  // `pending` here; nothing yet moves it to `confirmed` or `cancelled`.
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

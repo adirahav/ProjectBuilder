@@ -375,38 +375,82 @@ function voiceCategory(agentKey) {
 // unique or comparable.
 let eventSeq = 0
 
-// The single place every dashboard-visible moment in this script funnels
-// through. `eventType` is one of the dashboard's known event names
-// (orchestrator-start, picking-next-task, task-done, agent-start,
-// agent-skip, agent-back, session-limit, attention-needed, waiting-approval)
-// — see development/agent-dashboard/agent-dashboard.html for the exact list
-// and which audio file each maps to.
-function emitEvent(eventType, agentKey, message) {
+function readStatus() {
+  try {
+    return existsSync(AGENT_STATUS_PATH) ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8")) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeStatus(status) {
   try {
     if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
-    eventSeq += 1
-    const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
-    writeFileSync(AGENT_STATUS_PATH, JSON.stringify({
-      seq: eventSeq,
-      event: eventType,
-      agent: agentKey || null,
-      category: agentKey ? voiceCategory(agentKey) : null,
-      message: lastLine,
-      updatedAt: new Date().toISOString(),
-    }, null, 2), "utf-8")
+    writeFileSync(AGENT_STATUS_PATH, JSON.stringify(status, null, 2), "utf-8")
   } catch {
     // The dashboard is a convenience — a status-file write failure must never
     // affect the actual run.
   }
 }
 
-// Back-compat shim for the two existing per-output-line hook sites (raw
-// agent stdout, and every log() call) — these just update the visible
-// "current message" text without firing a new voice cue on every line
-// (that would be constant chatter, not the discrete moments emitEvent's
-// callers above care about).
+// The single place every dashboard-visible MOMENT (not routine chatter)
+// funnels through. `eventType` is one of the dashboard's known event names
+// (orchestrator-start, picking-next-task, task-done, agent-start,
+// agent-skip, agent-back, session-limit, attention-needed, waiting-approval)
+// — see development/agent-dashboard/agent-dashboard.html for the exact list
+// and which audio file each maps to.
+//
+// Written into its own nested `lastEvent` field, separate from the
+// top-level `message`/`category`/`keys` that get refreshed on every single
+// output line via writeAgentStatus() below. This split exists because of a
+// real bug: an agent can print dozens of lines a second, each call bumping
+// the SAME top-level fields — at 1 poll/second, a discrete moment like
+// "picking-next-task" was getting overwritten by the next routine output
+// line before the dashboard's next poll ever saw it, so its cue silently
+// never played. `lastEvent` is only ever touched here, never by routine
+// output, so a real event's `seq` survives until the dashboard actually
+// polls it, no matter how much chatter happens in between.
+//
+// `keys`, if given, is the exact set of ring nodes to visually light up —
+// distinct from `agentKey`, which only decides the voice/category cue.
+// Without this distinction, a combined "backend" start event (one shared
+// sound for however many/whichever backend services this project has) would
+// have to light up every backend node at once, even on a task where only
+// one specific service is actually in scope. When omitted, `keys` defaults
+// to just `[agentKey]`.
+function emitEvent(eventType, agentKey, message, keys) {
+  eventSeq += 1
+  const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
+  const resolvedKeys = keys || (agentKey ? [agentKey] : [])
+  const status = readStatus()
+  if (lastLine) status.message = lastLine
+  status.category = agentKey ? voiceCategory(agentKey) : status.category || null
+  status.keys = resolvedKeys
+  status.updatedAt = new Date().toISOString()
+  status.lastEvent = {
+    seq: eventSeq,
+    event: eventType,
+    agent: agentKey || null,
+    category: status.category,
+    keys: resolvedKeys,
+  }
+  writeStatus(status)
+}
+
+// Per-output-line / per-log-call updates — refreshes only the live-text
+// fields (message/category/keys), never `lastEvent`, so routine chatter can
+// never clobber a real event before the dashboard's next poll sees it. This
+// is what makes the ring highlight track who's *currently* talking in real
+// time, while `lastEvent` independently tracks discrete moments for audio.
 function writeAgentStatus(agentKey, message) {
-  emitEvent("output", agentKey, message)
+  const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
+  if (!lastLine) return
+  const status = readStatus()
+  status.message = lastLine
+  status.category = agentKey ? voiceCategory(agentKey) : status.category || null
+  status.keys = agentKey ? [agentKey] : status.keys || []
+  status.updatedAt = new Date().toISOString()
+  writeStatus(status)
 }
 
 function startDashboardServer() {
@@ -418,7 +462,7 @@ function startDashboardServer() {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
       res.end(existsSync(AGENT_STATUS_PATH)
         ? readFileSync(AGENT_STATUS_PATH, "utf-8")
-        : JSON.stringify({ seq: 0, event: null, agent: null, category: null, message: "", updatedAt: null }))
+        : JSON.stringify({ message: "", category: null, keys: [], updatedAt: null, lastEvent: null }))
       return
     }
 
@@ -433,7 +477,9 @@ function startDashboardServer() {
         res.end("Not found")
         return
       }
-      res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" })
+      const ext = assetName.split(".").pop().toLowerCase()
+      const CONTENT_TYPES = { mp3: "audio/mpeg", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", svg: "image/svg+xml", webp: "image/webp", gif: "image/gif" }
+      res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
       res.end(readFileSync(assetPath))
       return
     }
@@ -724,8 +770,8 @@ async function main() {
     // — the dashboard's voice/visual "backend" category is already generic
     // across every service name, so four near-simultaneous per-service
     // events would just be redundant noise.
-    const anyBackendInScope = ["gateway", "booking-service", "user-service", "notification-service"].some((k) => inScope(task, k))
-    emitEvent(anyBackendInScope ? "agent-start" : "agent-skip", "backend")
+    const backendKeysInScope = ["gateway", "booking-service", "user-service", "notification-service"].filter((k) => inScope(task, k))
+    emitEvent(backendKeysInScope.length > 0 ? "agent-start" : "agent-skip", "backend", null, backendKeysInScope)
     log("Launching backend agents (only those in scope, in parallel)...")
 
     await Promise.all([

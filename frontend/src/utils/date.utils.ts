@@ -87,3 +87,29 @@ export function formatDateLabel(value: string, locale: Locale): string {
 export function formatTimeRange(startTime: string, endTime: string): string {
   return `${startTime}${THIN_SPACE}–${THIN_SPACE}${endTime}`
 }
+
+/**
+ * Parses an ISO-8601 instant, or null if it is missing/unparseable. Used for the
+ * one value in this app that genuinely is an instant rather than a wall-clock
+ * time: a hold's expiry deadline.
+ */
+export function parseInstant(value: string | null | undefined): Date | null {
+  if (typeof value !== 'string' || !value) return null
+
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+/**
+ * Renders a remaining duration as `m:ss`, counting seconds up from zero rather
+ * than down past it — a negative countdown is not a thing a Customer should
+ * ever be shown. Minutes are not zero-padded (`4:05`, not `04:05`) so the
+ * number reads as a plain quantity of time left.
+ */
+export function formatCountdown(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  return `${minutes}:${pad(seconds)}`
+}

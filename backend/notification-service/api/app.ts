@@ -1,5 +1,7 @@
 import express, { type Express } from 'express'
 
+import { notificationRouter } from './notification/notification.routes.ts'
+
 // Builds the Express app without binding a port, so tests can drive it with
 // Supertest and the entrypoint can own the actual listen() call.
 export function createApp(): Express {
@@ -20,10 +22,11 @@ export function createApp(): Express {
   // default, which is the most restrictive posture available here. If a
   // browser-facing route is ever added, add cors({ origin: FRONTEND_ORIGIN }).
 
-  // NOTE: the endpoint that receives booking-confirmation requests from
-  // booking-service (F4b) is intentionally NOT part of this scaffold ticket
-  // (SCAFFOLD-NOT), along with any email/SMS provider integration, templating,
-  // and retry/queue logic.
+  // Server-to-server only: booking-service calls this after creating an
+  // Appointment (PRD F4b). Email/SMS provider integration, templating and
+  // retry/queue logic remain out of scope — delivery is stubbed and logged.
+  app.use('/api/notifications', notificationRouter)
+
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

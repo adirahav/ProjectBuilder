@@ -27,7 +27,7 @@
 
 import { execSync, spawn } from "child_process"
 import dotenv from "dotenv"
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
 import http from "http"
 import { dirname, join } from "path"
 import { createInterface } from "readline"
@@ -485,6 +485,41 @@ function writeAgentStatus(agentKey, message) {
   writeStatus(status)
 }
 
+// Auto-starts the frontend dev server in the background so the dashboard's
+// live-preview iframe always has something to show, without ever risking
+// blocking this script: spawned detached + unref'd, never awaited by the
+// caller, and skipped entirely if something is already answering on
+// FRONTEND_DEV_URL (including a dev server left running by a previous
+// dev-loop.js run — detached processes outlive this script's own exit).
+async function ensureFrontendDevServerRunning() {
+  const frontendDir = "frontend"
+  if (!existsSync(join(frontendDir, "package.json"))) return
+
+  try {
+    await fetch(FRONTEND_DEV_URL, { signal: AbortSignal.timeout(1500) })
+    return // something's already serving there — leave it alone
+  } catch {
+    // not reachable — fall through and start it
+  }
+
+  try {
+    if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+    const logPath = "docs/frontend-dev-server.log"
+    const logFd = openSync(logPath, "a")
+    const child = spawn("npm", ["run", "dev"], {
+      cwd: frontendDir,
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      shell: process.platform === "win32",
+      env: { ...process.env, CI: "1" },
+    })
+    child.unref()
+    log(`Started the frontend dev server in the background (PID ${child.pid}) for the dashboard preview — output logged to ${logPath}.`)
+  } catch (e) {
+    warn(`Could not auto-start the frontend dev server (${e.message}) — the dashboard preview may stay blank until you run 'npm run dev' in frontend/ yourself.`)
+  }
+}
+
 function startDashboardServer() {
   const dashboardPath = `${DASHBOARD_DIR}/agent-dashboard.html`
   const assetsDir = `${DASHBOARD_DIR}/assets`
@@ -635,6 +670,7 @@ async function main() {
   checkPrerequisites()
   acquireLock()
   startDashboardServer()
+  ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
 
   banner("DEV LOOP ORCHESTRATOR — DOG GROOMING CLINIC APPOINTMENT BOOKING")
   emitEvent("orchestrator-start")

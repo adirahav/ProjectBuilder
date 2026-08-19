@@ -102,12 +102,31 @@
     padding: 18px 20px;
     margin-bottom: 16px;
   }
-  #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; }
+  #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
   .sidebar-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
   #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; min-height: 3.2em; }
   #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; }
   #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
+
+  #cost-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  #cost-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #cost-table-wrap { overflow-x: auto; }
+  #cost-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+  #cost-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); }
+  #cost-task-col { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  #cost-table tr:last-child td { border-bottom: none; }
+  #cost-table tr.total-row td { font-weight: 700; border-top: 1px solid var(--border); }
+  #cost-total { margin-top: 10px; font-size: 12px; color: var(--dim); }
+  #cost-total strong { color: var(--text); }
   #dot {
     width: 10px; height: 10px; border-radius: 50%; background: var(--idle);
     box-shadow: 0 0 0 rgba(0,0,0,0); transition: background 0.4s, box-shadow 0.4s;
@@ -164,11 +183,24 @@
 
   <div id="sidebar">
     <div id="status-card">
-      <div class="label"><span id="dot"></span> &nbsp;Live status</div>
+      <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span></div>
       <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
+    </div>
+
+    <div id="cost-card">
+      <div class="label" id="cost-label">💰 Cost — this task</div>
+      <div id="cost-table-wrap">
+        <table id="cost-table">
+          <thead>
+            <tr><th id="cost-task-col">Agent</th><th>In</th><th>Out</th><th>Cache</th><th>USD</th><th>NIS</th><th>Sec</th></tr>
+          </thead>
+          <tbody id="cost-tbody"></tbody>
+        </table>
+      </div>
+      <div id="cost-total"></div>
     </div>
   </div>
 
@@ -440,6 +472,13 @@ async function poll() {
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
       : "";
 
+    // Task title folded into the existing label lines (no new element, no
+    // extra height) — truncated with ellipsis via CSS if it's long.
+    const taskLabel = document.getElementById("status-label");
+    const costLabel = document.getElementById("cost-label");
+    taskLabel.textContent = data.task ? `Live status — ${data.task}` : "Live status";
+    costLabel.textContent = data.task ? `💰 Cost — ${data.task}` : "💰 Cost — this task";
+
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely
     // NEW event (seq increased since the last poll) plays — re-fetching the
@@ -449,9 +488,33 @@ async function poll() {
       lastSeq = evt.seq;
       playCue(audioFileFor(evt.event, evt.category));
     }
+
+    renderCostTable(data.costLog || [], data.costTotalUsd || 0, data.costTotalNis || 0, data.task);
   } catch {
     dot.classList.remove("live");
   }
+}
+
+function renderCostTable(rows, totalUsd, totalNis, task) {
+  const tbody = document.getElementById("cost-tbody");
+  const totalEl = document.getElementById("cost-total");
+  const taskCol = document.getElementById("cost-task-col");
+  taskCol.textContent = task || "Agent";
+  taskCol.title = task || "";
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color: var(--dim); font-style: italic;">No agent calls yet</td></tr>';
+    totalEl.textContent = "";
+    return;
+  }
+  tbody.innerHTML = `
+    <tr class="total-row">
+      <td>TOTAL</td><td></td><td></td><td></td>
+      <td>$${totalUsd.toFixed(4)}</td>
+      <td>₪${totalNis.toFixed(4)}</td>
+      <td></td>
+    </tr>
+  `;
+  totalEl.innerHTML = `<strong>${rows.length}</strong> call(s) — <strong>$${totalUsd.toFixed(4)}</strong> / <strong>₪${totalNis.toFixed(4)}</strong>`;
 }
 
 setActiveCategory("orchestrator");

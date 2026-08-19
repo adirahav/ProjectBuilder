@@ -238,8 +238,33 @@ function recordCost(role, label, rawStdout) {
     costUsd:         parsed.total_cost_usd ?? 0,
     durationMs:      parsed.duration_ms ?? 0,
   })
+  writeCostStatus()
 
   return parsed.result ?? rawStdout
+}
+
+// Mirrors the terminal's cost table (console.table in logLastCost/
+// printCostTable) into the dashboard's status feed, so the same numbers the
+// terminal already shows after every agent call are also visible in the
+// browser — live, not just once at task end. Written on its own key
+// (`costLog`/`costTotal`) in the same status file, independent of
+// message/category/lastEvent, so it can't clobber or be clobbered by them.
+function writeCostStatus() {
+  const rows = costLog.map((entry) => ({
+    role: entry.role,
+    label: entry.label,
+    inputTokens: entry.inputTokens,
+    outputTokens: entry.outputTokens,
+    cacheReadTokens: entry.cacheReadTokens,
+    costUsd: entry.costUsd,
+    costNis: entry.costUsd * USD_TO_NIS,
+    durationS: entry.durationMs / 1000,
+  }))
+  const status = readStatus()
+  status.costLog = rows
+  status.costTotalUsd = rows.reduce((sum, r) => sum + r.costUsd, 0)
+  status.costTotalNis = rows.reduce((sum, r) => sum + r.costNis, 0)
+  writeStatus(status)
 }
 
 function formatTextTable(rows) {
@@ -344,6 +369,10 @@ function printCostTable(taskLabel) {
 
   writeCombinedCostFile(taskLabel, totalCost, date)
 
+  // Deliberately NOT calling writeCostStatus() here — the dashboard should
+  // keep showing this task's final recap (matching what stays visible in
+  // the terminal's own scrollback) until the next task's first agent call
+  // naturally replaces it, not blank out the instant the task ends.
   costLog = []
 }
 
@@ -374,6 +403,7 @@ function voiceCategory(agentKey) {
 // event it already played," without needing timestamps to be perfectly
 // unique or comparable.
 let eventSeq = 0
+let currentTaskTitle = ""
 
 function readStatus() {
   try {
@@ -426,6 +456,7 @@ function emitEvent(eventType, agentKey, message, keys) {
   if (lastLine) status.message = lastLine
   status.category = agentKey ? voiceCategory(agentKey) : status.category || null
   status.keys = resolvedKeys
+  status.task = currentTaskTitle
   status.updatedAt = new Date().toISOString()
   status.lastEvent = {
     seq: eventSeq,
@@ -449,6 +480,7 @@ function writeAgentStatus(agentKey, message) {
   status.message = lastLine
   status.category = agentKey ? voiceCategory(agentKey) : status.category || null
   status.keys = agentKey ? [agentKey] : status.keys || []
+  status.task = currentTaskTitle
   status.updatedAt = new Date().toISOString()
   writeStatus(status)
 }
@@ -462,7 +494,7 @@ function startDashboardServer() {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
       res.end(existsSync(AGENT_STATUS_PATH)
         ? readFileSync(AGENT_STATUS_PATH, "utf-8")
-        : JSON.stringify({ message: "", category: null, keys: [], updatedAt: null, lastEvent: null }))
+        : JSON.stringify({ message: "", category: null, keys: [], task: "", updatedAt: null, lastEvent: null }))
       return
     }
 
@@ -631,6 +663,7 @@ async function main() {
     loopCount += 1
     banner(`LOOP ${loopCount} · ${task.title}`)
     log(`Picked task from backlog: ${task.title}`)
+    currentTaskTitle = task.title
     emitEvent("picking-next-task", null, task.title)
 
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })

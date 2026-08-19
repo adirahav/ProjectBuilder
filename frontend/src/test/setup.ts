@@ -1,8 +1,15 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, vi } from 'vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 
 import type { RootState } from '../store/store'
+
+// Testing Library's 1s default for findBy*/waitFor assumes a render settles
+// almost immediately. A route change that re-renders a whole screen under jsdom
+// on a loaded machine can take longer than that, which made the cross-screen
+// navigation tests fail on the clock rather than on behaviour. Waiting longer
+// costs nothing when the assertion passes — it only bounds a genuine failure.
+configure({ asyncUtilTimeout: 5_000 })
 
 // jsdom has no matchMedia; framer-motion's useReducedMotion needs it. Defaulting
 // `matches` to false means tests exercise the animated path, which is the one

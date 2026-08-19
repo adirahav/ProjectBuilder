@@ -1,3 +1,6 @@
+import type { Service } from './service.types'
+import type { TimeSlot } from './timeSlot.types'
+
 // Mirrors the Appointment schema in docs/api-contract/api-contract.booking-service.yaml.
 // The client-facing identifier is always `id` (a uuid string) — Mongo's `_id` is
 // an internal backend detail and must never appear here (.rule/naming-rules.md).
@@ -24,6 +27,33 @@ export interface Appointment {
   /** Optional by design (PRD F4) — a Customer without email can still book. */
   customerEmail?: string
   status: AppointmentStatus
+}
+
+/**
+ * The Service facts a receipt needs. Deliberately a subset of `Service`: a
+ * receipt is a record of what was booked, not a live catalogue entry, so
+ * `isActive` (which can change afterwards) has no business being here.
+ */
+export type ReceiptService = Pick<Service, 'name' | 'durationMinutes' | 'price'>
+
+/** The TimeSlot facts a receipt needs — the day and window that was booked. */
+export type ReceiptTimeSlot = Pick<TimeSlot, 'date' | 'startTime' | 'endTime'>
+
+/**
+ * An Appointment enriched with just enough of its Service and TimeSlot to be
+ * read as a receipt (PRD Screen 4: this page is the only receipt the Customer
+ * gets). Mirrors the `AppointmentReceipt` schema in
+ * docs/api-contract/api-contract.booking-service.yaml.
+ *
+ * Both nested parts are optional here even though `GET /api/appointments/{id}`
+ * always returns them, because the page also assembles this shape client-side
+ * from what it already holds right after booking. In that path a fact may
+ * genuinely be missing (e.g. the Service list was never loaded), and omitting a
+ * row is honest where inventing one would not be.
+ */
+export interface AppointmentReceipt extends Appointment {
+  service?: ReceiptService
+  timeSlot?: ReceiptTimeSlot
 }
 
 /**

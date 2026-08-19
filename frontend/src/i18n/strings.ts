@@ -117,12 +117,23 @@ const en = {
   'confirmation.subtitle': 'We have your details. The clinic will confirm your appointment shortly.',
   'confirmation.statusLabel': 'Booking status',
   'confirmation.referenceLabel': 'Booking reference',
-  'confirmation.comingSoon.title': 'The full confirmation is coming soon',
-  'confirmation.comingSoon.body':
-    'Your appointment is saved. The complete summary, with everything you need for the visit, will appear here shortly.',
-  'confirmation.noAppointment.title': 'No booking to show here',
-  'confirmation.noAppointment.body':
-    'This page shows an appointment right after you book it. Start from our services to book one.',
+  'confirmation.keepNotice': 'Keep this page — it is your receipt for this appointment.',
+  'confirmation.loading': 'Loading your booking…',
+  'confirmation.summaryLabel': 'Your booking summary',
+  'confirmation.appointmentLabel': 'The appointment',
+  'confirmation.serviceLabel': 'Treatment',
+  'confirmation.timeLabel': 'Time',
+  'confirmation.contactLabel': 'Your contact details',
+  'confirmation.nameLabel': 'Name',
+  'confirmation.phoneLabel': 'Phone',
+  'confirmation.emailLabel': 'Email',
+  'confirmation.notFound.title': 'We could not find that booking',
+  'confirmation.notFound.body':
+    'The link may be out of date, or the appointment may no longer exist. You can always book a new one from our services.',
+  'confirmation.error.title': 'We could not load your booking',
+  'confirmation.error.body': 'Check your internet connection and try again.',
+  'confirmation.error.toast': 'Loading your booking failed. Please try again.',
+  'confirmation.bookAnother': 'Book another appointment',
   'confirmation.back': 'Back to services',
 } as const
 
@@ -240,12 +251,23 @@ const he: Dictionary = {
   'confirmation.subtitle': 'הפרטים שלכם התקבלו. המספרה תאשר את התור בקרוב.',
   'confirmation.statusLabel': 'סטטוס ההזמנה',
   'confirmation.referenceLabel': 'מספר ההזמנה',
-  'confirmation.comingSoon.title': 'האישור המלא יהיה זמין בקרוב',
-  'confirmation.comingSoon.body':
-    'התור שלכם נשמר. הסיכום המלא, עם כל מה שצריך לקראת הביקור, יופיע כאן בקרוב.',
-  'confirmation.noAppointment.title': 'אין כאן הזמנה להצגה',
-  'confirmation.noAppointment.body':
-    'הדף הזה מציג תור מיד לאחר ההזמנה. התחילו מרשימת השירותים כדי להזמין תור.',
+  'confirmation.keepNotice': 'שמרו את הדף הזה — הוא האישור שלכם על התור.',
+  'confirmation.loading': 'טוענים את פרטי ההזמנה…',
+  'confirmation.summaryLabel': 'סיכום ההזמנה שלכם',
+  'confirmation.appointmentLabel': 'פרטי התור',
+  'confirmation.serviceLabel': 'הטיפול',
+  'confirmation.timeLabel': 'שעה',
+  'confirmation.contactLabel': 'פרטי הקשר שלכם',
+  'confirmation.nameLabel': 'שם',
+  'confirmation.phoneLabel': 'טלפון',
+  'confirmation.emailLabel': 'דוא״ל',
+  'confirmation.notFound.title': 'לא מצאנו את ההזמנה הזו',
+  'confirmation.notFound.body':
+    'ייתכן שהקישור אינו עדכני, או שהתור כבר לא קיים. תמיד אפשר להזמין תור חדש מרשימת השירותים.',
+  'confirmation.error.title': 'לא הצלחנו לטעון את ההזמנה שלכם',
+  'confirmation.error.body': 'בדקו את החיבור לאינטרנט ונסו שוב.',
+  'confirmation.error.toast': 'טעינת ההזמנה נכשלה. נסו שוב.',
+  'confirmation.bookAnother': 'הזמנת תור נוסף',
   'confirmation.back': 'חזרה לרשימת השירותים',
 }
 

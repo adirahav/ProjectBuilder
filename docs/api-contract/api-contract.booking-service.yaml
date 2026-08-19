@@ -384,6 +384,103 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/appointments/{id}:
+    get:
+      tags: [Appointment]
+      operationId: getAppointmentReceipt
+      summary: Read one Appointment back as a Customer receipt
+      description: >
+        Public and unauthenticated, like the rest of the booking flow (PRD
+        Screen 4). Exists for exactly one reason: Screen 4 is the only receipt
+        the Customer gets, and it must survive a reload, a bookmark, or the link
+        being opened later — at which point the created Appointment is no longer
+        in the client's memory and the id in the URL is all that is left.
+
+        Read-only. This endpoint MUST NOT mutate anything — not the Appointment,
+        not the TimeSlot behind it.
+
+        The response enriches the Appointment with the Service and TimeSlot
+        facts a receipt has to state (treatment name, duration, price, day and
+        window). The server resolves these from the referenced documents; it
+        must never accept them from a client.
+
+        Return ONLY the fields in `AppointmentReceipt`. No internal notes, no
+        audit fields, no other Customer's record, and nothing about the Service
+        beyond the three fields named — this response goes to an unauthenticated
+        caller.
+
+        SECURITY NOTE, deliberately recorded rather than assumed away: the
+        Appointment id is the only thing guarding a record that contains a
+        Customer's name, phone and email. That treats the id as a capability
+        token, which it only is if it is unguessable — so it MUST be a random
+        uuid (v4) and MUST NOT be a sequential or otherwise enumerable value.
+        Even so, id enumeration is a real PII-exposure surface here: rate
+        limiting on this route, and a separate opaque confirmation token, are
+        known follow-ups outside this ticket's scope. A malformed id must be
+        answered 400 and a non-existent one 404 — with the same generic body, so
+        the response cannot be used to distinguish "exists" from "does not".
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The Appointment being read back.
+          schema:
+            type: string
+            format: uuid
+          example: 7b2e4d6f-8a91-4c3b-9d5e-1f2a3b4c5d6e
+      responses:
+        '200':
+          description: The Appointment, with the Service and TimeSlot facts a receipt shows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentReceipt'
+              example:
+                id: 7b2e4d6f-8a91-4c3b-9d5e-1f2a3b4c5d6e
+                serviceId: 8f1c2b34-5d6e-4f70-8a91-2b3c4d5e6f70
+                timeSlotId: 3c9d1e2f-4a5b-4c6d-8e7f-9a0b1c2d3e4f
+                customerName: Dana Levi
+                customerPhone: 050-123-4567
+                customerEmail: dana@example.com
+                status: pending
+                service:
+                  name: Full groom — small dog
+                  durationMinutes: 90
+                  price: 220
+                timeSlot:
+                  date: '2026-08-18'
+                  startTime: '09:00'
+                  endTime: '10:30'
+        '400':
+          description: The `id` is not a well-formed identifier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: >
+            No Appointment with that id. An ordinary outcome of a stale or
+            mistyped link, not a fault — the frontend renders a "we could not
+            find that booking" explanation with a way back to the Service List,
+            distinct from how it treats a failed lookup.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   schemas:
     Service:
@@ -569,6 +666,68 @@ components:
             `cancelled` is the Admin's alone (PRD F9-F11) and belongs to the
             Admin routes, which are not in this revision.
           example: pending
+
+    AppointmentReceipt:
+      type: object
+      description: >
+        An Appointment plus the Service and TimeSlot facts Screen 4 has to
+        state. Returned only by `GET /api/appointments/{id}`.
+
+        The nested parts are flat, denormalized snapshots rather than links: a
+        receipt records what was booked, so it stays readable even if the
+        Service is later renamed, repriced or deactivated. `isActive` is
+        deliberately absent — whether the clinic still offers the treatment says
+        nothing about an appointment already made.
+      required:
+        [id, serviceId, timeSlotId, customerName, customerPhone, status, service, timeSlot]
+      additionalProperties: false
+      allOf:
+        - $ref: '#/components/schemas/Appointment'
+        - type: object
+          properties:
+            service:
+              type: object
+              description: The booked Service, as resolved from `serviceId`.
+              required: [name, durationMinutes, price]
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  example: Full groom — small dog
+                durationMinutes:
+                  type: integer
+                  minimum: 1
+                  example: 90
+                price:
+                  type: number
+                  minimum: 0
+                  description: Price in ILS, as with Service.
+                  example: 220
+            timeSlot:
+              type: object
+              description: The booked window, as resolved from `timeSlotId`.
+              required: [date, startTime, endTime]
+              additionalProperties: false
+              properties:
+                date:
+                  type: string
+                  format: date
+                  pattern: '^\d{4}-\d{2}-\d{2}$'
+                  description: >
+                    The calendar day in the clinic's local timezone — a plain
+                    day string, never a UTC instant, exactly as on TimeSlot.
+                  example: '2026-08-18'
+                startTime:
+                  type: string
+                  pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+                  description: Wall-clock start in 24h `HH:mm`, rendered verbatim.
+                  example: '09:00'
+                endTime:
+                  type: string
+                  pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+                  description: Wall-clock end in 24h `HH:mm`.
+                  example: '10:30'
 
     CreateAppointmentRequest:
       type: object

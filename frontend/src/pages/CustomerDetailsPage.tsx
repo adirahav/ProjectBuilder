@@ -67,11 +67,13 @@ export function CustomerDetailsPage() {
     // Read at failure time rather than closed over, so switching language
     // mid-request cannot show a message in the language that was active when
     // the request left.
-    const activeLocale = useStore.getState().locale
+    const { locale: activeLocale, appointment } = useStore.getState()
 
     if (outcome === 'created') {
       toast.success(translate(activeLocale, 'details.success.toast'))
-      navigate(`/book/${serviceId ?? ''}/confirmation`)
+      // The id travels in the path, not only in memory, so the confirmation
+      // survives a reload — it is the Customer's only receipt (PRD Screen 4).
+      navigate(`/book/${serviceId ?? ''}/confirmation/${appointment?.id ?? ''}`)
       return
     }
 

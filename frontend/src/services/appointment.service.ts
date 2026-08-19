@@ -4,6 +4,7 @@ import { httpService } from './http.service'
 import { normalizeCustomerDetails, validateCustomerDetails } from '../utils/customer.utils'
 import type {
   Appointment,
+  AppointmentReceipt,
   CreateAppointmentPayload,
   CustomerDetails,
 } from '../types/appointment.types'
@@ -18,6 +19,9 @@ const BASE_URL = '/api/appointments'
  */
 export const CONFLICT_STATUS = 409
 
+/** HTTP status booking-service returns when no Appointment has the given id. */
+export const NOT_FOUND_STATUS = 404
+
 /**
  * True for the one error the booking flow treats as an expected outcome rather
  * than a failure: the hold is gone by the time the Customer submits (PRD F3b —
@@ -27,6 +31,16 @@ export const CONFLICT_STATUS = 409
  */
 export function isAppointmentConflictError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === CONFLICT_STATUS
+}
+
+/**
+ * True for the 404 that means "no Appointment with that id" — a stale link, a
+ * mistyped URL, or a booking that no longer exists. Distinct from a network or
+ * server failure: nothing is wrong and retrying will not help, so the page says
+ * "we could not find that booking" instead of offering a retry.
+ */
+export function isAppointmentNotFoundError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === NOT_FOUND_STATUS
 }
 
 /**
@@ -81,6 +95,30 @@ async function create(
   return httpService.post<Appointment>(BASE_URL, toCreatePayload(serviceId, slotId, details))
 }
 
+/**
+ * Public, unauthenticated (PRD Screen 4). Re-reads one Appointment as a
+ * receipt, enriched server-side with the Service and TimeSlot facts the
+ * confirmation page shows.
+ *
+ * This exists for one case only: the Customer reloads, bookmarks or reopens the
+ * confirmation URL, so the in-memory booking is gone. The happy path never
+ * calls it — the Appointment is already in hand at that point, and spending a
+ * round-trip to re-learn what we just created would be waste.
+ *
+ * A 404 here is an ordinary outcome (a stale or mistyped id), not a fault; the
+ * error is left to propagate so the caller can render the "we could not find
+ * that booking" state rather than a failure (.rule/error-handling-rules.md).
+ */
+async function getReceipt(appointmentId: string): Promise<AppointmentReceipt> {
+  if (!appointmentId) {
+    console.log('[APPOINTMENT] refusing to fetch a receipt without an appointment id')
+    throw new Error('Missing appointmentId')
+  }
+
+  return httpService.get<AppointmentReceipt>(`${BASE_URL}/${encodeURIComponent(appointmentId)}`)
+}
+
 export const appointmentService = {
   create,
+  getReceipt,
 }

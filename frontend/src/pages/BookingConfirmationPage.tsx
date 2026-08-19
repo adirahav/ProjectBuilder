@@ -1,132 +1,126 @@
-import { Link } from 'react-router-dom'
-import { CalendarCheck, CalendarX2, Clock, PartyPopper } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { AlertTriangle, CalendarX2, PawPrint } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { PageHeader } from '../components/common/PageHeader'
 import { StateMessage } from '../components/common/StateMessage'
+import { ConfirmationSummary } from '../components/appointment/ConfirmationSummary'
+import { useBookingReceipt } from '../hooks/useBookingReceipt'
 import { useI18n } from '../hooks/useI18n'
 import { useStore } from '../store/store'
+import { translate } from '../i18n/strings'
 import { cn } from '../lib/utils'
-import { formatDateLabel, formatTimeRange } from '../utils/date.utils'
-import {
-  appointmentStatusIconStyles,
-  appointmentStatusIcons,
-  appointmentStatusLabelKeys,
-  appointmentStatusStyles,
-} from '../utils/appointmentStatus.utils'
 
 /**
- * Screen 4 placeholder. The routing contract (`/book/:serviceId/confirmation`)
- * and the handoff of the created Appointment are established here so the
- * Booking Confirmation ticket only has to fill in the summary, not invent the
- * navigation into it.
+ * Screen 4 — the Booking Confirmation (PRD). Public and unauthenticated, like
+ * the rest of the booking flow: a Customer has no account, so this page is the
+ * only receipt they get.
  *
- * It already renders enough to close the loop honestly — the booking reference
- * and its `pending` status — because telling someone "booked!" and showing them
- * nothing to prove it is worse than showing them a little.
+ * That last point drives the design. The receipt is resolved by
+ * `useBookingReceipt` from the just-created booking when it is still in memory,
+ * and re-fetched by the id in the URL when it is not — so a reload or a
+ * bookmark does not destroy the only proof the Customer has.
+ *
+ * Nothing here is ever a blank page: a missing booking gets an explanation and
+ * a route back to the Service List, and a failed lookup gets a retry, per
+ * .rule/error-handling-rules.md.
  */
 export function BookingConfirmationPage() {
-  const { locale, t } = useI18n()
+  const { appointmentId } = useParams<{ appointmentId: string }>()
+  const { t } = useI18n()
 
-  const appointment = useStore((state) => state.appointment)
-  // The slot the Appointment was made from, kept in the store through the
-  // booking; it is what makes the date and time renderable without a re-fetch.
-  const heldSlot = useStore((state) => state.heldSlot)
+  const { receipt, state, retry } = useBookingReceipt(appointmentId)
 
-  if (!appointment) {
-    return (
-      <main id="main-content" className="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-10">
-        <PageHeader title={t('confirmation.title')} className="mb-6 md:mb-8" />
+  // One toast per failed lookup, not one per render. A "not found" is a normal
+  // answer and gets no toast — the message on the page says it plainly, and a
+  // toast would only repeat it (.rule/error-handling-rules.md).
+  const hasToastedRef = useRef(false)
 
-        <StateMessage
-          icon={CalendarX2}
-          title={t('confirmation.noAppointment.title')}
-          body={t('confirmation.noAppointment.body')}
-        />
+  useEffect(() => {
+    if (state !== 'error') {
+      hasToastedRef.current = false
+      return
+    }
 
-        <BackToServicesLink label={t('confirmation.back')} />
-      </main>
-    )
-  }
+    if (hasToastedRef.current) return
+    hasToastedRef.current = true
+    toast.error(translate(useStore.getState().locale, 'confirmation.error.toast'))
+  }, [state])
 
-  const StatusIcon = appointmentStatusIcons[appointment.status]
+  const isReady = state === 'ready' && receipt !== null
 
   return (
     <main id="main-content" className="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title={t('confirmation.title')}
-        subtitle={t('confirmation.subtitle')}
+        subtitle={isReady ? t('confirmation.subtitle') : undefined}
         className="mb-6 md:mb-8"
       />
 
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-4 rounded-2xl border border-success/40 bg-primary-light p-4 md:p-5">
-          <p className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
-            <PartyPopper className="size-4 shrink-0 text-success" aria-hidden="true" />
-            {appointment.customerName}
-          </p>
+      {/* A single live region across every outcome, so a screen reader hears the
+          receipt arrive — or hears why it did not — without re-navigating. */}
+      <section aria-live="polite" aria-busy={state === 'loading'}>
+        {state === 'loading' ? (
+          <>
+            <span className="sr-only">{t('confirmation.loading')}</span>
+            <ConfirmationSkeleton />
+          </>
+        ) : state === 'error' ? (
+          <StateMessage
+            icon={AlertTriangle}
+            tone="danger"
+            title={t('confirmation.error.title')}
+            body={t('confirmation.error.body')}
+            actionLabel={t('common.retry')}
+            onAction={retry}
+          />
+        ) : isReady ? (
+          <ConfirmationSummary receipt={receipt} />
+        ) : (
+          <StateMessage
+            icon={CalendarX2}
+            title={t('confirmation.notFound.title')}
+            body={t('confirmation.notFound.body')}
+          />
+        )}
+      </section>
 
-          {heldSlot && (
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-base text-neutral-900">
-              <CalendarCheck className="size-4 shrink-0 text-primary" aria-hidden="true" />
-              <span>{formatDateLabel(heldSlot.date, locale)}</span>
-              <span className="flex items-center gap-1.5 font-semibold">
-                <Clock className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                <span dir="ltr" className="tabular-nums">
-                  {formatTimeRange(heldSlot.startTime, heldSlot.endTime)}
-                </span>
-              </span>
-            </p>
-          )}
-
-          <p className="flex flex-wrap items-center gap-2 text-sm text-neutral-900">
-            <span className="text-neutral-900/70">{t('confirmation.statusLabel')}:</span>
-            {/* Status is a word and an icon first; the tint only reinforces it
-                (.rule/style-rules.md, accessibility-layer). */}
-            <span
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-semibold',
-                appointmentStatusStyles[appointment.status],
-              )}
-            >
-              <StatusIcon
-                className={cn('size-4 shrink-0', appointmentStatusIconStyles[appointment.status])}
-                aria-hidden="true"
-              />
-              {t(appointmentStatusLabelKeys[appointment.status])}
-            </span>
-          </p>
-
-          <p className="flex flex-wrap items-center gap-2 text-sm text-neutral-900">
-            <span className="text-neutral-900/70">{t('confirmation.referenceLabel')}:</span>
-            <span dir="ltr" className="font-mono text-xs tabular-nums">
-              {appointment.id}
-            </span>
-          </p>
-        </div>
-
-        <StateMessage
-          icon={CalendarCheck}
-          title={t('confirmation.comingSoon.title')}
-          body={t('confirmation.comingSoon.body')}
-        />
-      </div>
-
-      <BackToServicesLink label={t('confirmation.back')} />
+      <Link
+        to="/"
+        className={cn(
+          'mt-6 inline-flex items-center gap-2 rounded-xl px-4 py-2.5',
+          'text-sm font-semibold text-primary transition-colors hover:bg-primary-light',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+        )}
+      >
+        <PawPrint className="size-4 shrink-0" aria-hidden="true" />
+        {isReady ? t('confirmation.bookAnother') : t('confirmation.back')}
+      </Link>
     </main>
   )
 }
 
-function BackToServicesLink({ label }: { label: string }) {
+/**
+ * Placeholder of roughly the receipt's shape, so the page does not jump when
+ * the real thing arrives. Purely decorative: the loading state is announced in
+ * text by the region above.
+ */
+function ConfirmationSkeleton() {
   return (
-    <Link
-      to="/"
-      className={cn(
-        'mt-6 inline-flex items-center gap-2 rounded-xl px-4 py-2.5',
-        'text-sm font-semibold text-primary transition-colors hover:bg-primary-light',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
-      )}
+    <div
+      aria-hidden="true"
+      className="flex flex-col gap-4 rounded-2xl border border-neutral-900/10 bg-white p-4 md:p-6"
     >
-      {label}
-    </Link>
+      <div className="h-10 w-full animate-pulse rounded-xl bg-primary-light" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="flex flex-col gap-2">
+            <div className="h-3 w-20 animate-pulse rounded bg-neutral-900/10" />
+            <div className="h-5 w-32 animate-pulse rounded bg-neutral-900/10" />
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }

@@ -108,8 +108,10 @@
   .node[data-agent="frontend"].active     { border-color: var(--frontend);     box-shadow: 0 0 24px var(--frontend); }
   .node[data-agent="qa"].active           { border-color: var(--qa);           box-shadow: 0 0 24px var(--qa); }
   .node[data-agent="security"].active     { border-color: var(--security);     box-shadow: 0 0 24px var(--security); }
-  .node[data-agent$="-service"].active,
-  .node[data-agent="gateway"].active,
+  /* .satellite covers every backend service regardless of its key/name —
+     not a name-pattern guess like the old ".../-service"/"gateway" match,
+     which broke the moment a service's key didn't happen to fit that shape. */
+  .node.satellite.active,
   .node[data-agent="backend"].active      { border-color: var(--backend);      box-shadow: 0 0 24px var(--backend); }
 
   @keyframes pulse {
@@ -244,27 +246,34 @@
 
 <script>
 // Primary ring: one portrait node per category, "backend" standing in for
-// all backend work generically (matching frontend/qa/security). The 4 real
-// backend services are plain text badges branching off "backend" — no
-// portrait needed for those, since the hub node already carries the identity.
+// all backend work generically (matching frontend/qa/security) — these 4
+// are fixed system roles, not per-project data. The real backend SERVICES
+// (however many the current project actually has) are plain text badges
+// branching off "backend" — no portrait needed, the hub's portrait already
+// carries the "this is backend work" identity. That list is fetched from
+// the server at load time (see initDashboard() below) instead of hardcoded,
+// so a project with different/more/fewer services just works.
 const PRIMARY_AGENTS = [
   { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
   { key: "backend",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "backend" },
   { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
   { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
 ];
-// angleOffset is relative to the backend hub's own angle (0°).
-// ringLabel controls exactly where the badge's 2-line break falls (via <br>)
-// — left to CSS auto-wrap, "notification-service" wrapped mid-word into an
-// illegible ellipsis instead of breaking cleanly at the hyphen.
-const BACKEND_SERVICES = [
-  { key: "gateway",              angleOffset: -120, name: "api-gateway",              ringLabel: "api-<br>gateway" },
-  { key: "booking-service",      angleOffset: -40,  name: "booking-service",          ringLabel: "booking-<br>service" },
-  { key: "user-service",         angleOffset: 40,   name: "user-service",             ringLabel: "user-<br>service" },
-  { key: "notification-service", angleOffset: 120,  name: "notification-service",     ringLabel: "notification-<br>service" },
-];
-const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
+
+// Breaks a kebab-case service key into a 2-line ring label at its first
+// hyphen (e.g. "notification-service" -> "notification-<br>service") — left
+// to CSS auto-wrap instead, a long single word wrapped mid-letter into an
+// illegible ellipsis. Keys without a hyphen render on one line as-is.
+function serviceRingLabel(key) {
+  return key.includes("-") ? key.replace("-", "-<br>") : key;
+}
+
+// Populated once the real per-project service list is fetched — see
+// initDashboard(). Declared here (not const) because everything below that
+// references them runs only after that fetch resolves.
+let BACKEND_SERVICES = [];
+let AGENTS = [...PRIMARY_AGENTS];
 
 // "Thinking..."-style ambient words shown under the current action while an
 // agent is busy — a themed replacement for the terminal's plain heartbeat
@@ -372,9 +381,12 @@ setInterval(tickThinking, 3200);
 // One category can cover several ring nodes (every backend service, no
 // matter its real name, is the same "backend" voice/visual category) — so
 // highlighting works by category, not by a single node key.
+// `backend` list is filled in once the real service keys are known — see
+// initDashboard(). This object is only ever a fallback anyway (the server
+// always sends explicit `data.keys` in normal operation).
 const CATEGORY_TO_KEYS = {
   frontend: ["frontend"],
-  backend: ["gateway", "booking-service", "user-service", "notification-service"],
+  backend: [],
   qa: ["qa"],
   security: ["security"],
   orchestrator: ["orchestrator"],
@@ -503,25 +515,59 @@ function makeBeam(key, from, to) {
 }
 
 const nodePositions = {};
-PRIMARY_AGENTS.forEach((agent) => {
-  const radius = agent.key === "backend" ? HUB_RADIUS_PCT : PRIMARY_RADIUS_PCT;
-  const pos = pointAt(centerPos.x, centerPos.y, radius, agent.angle);
-  nodePositions[agent.key] = pos;
-  makeNode(agent, pos, false, false);
-  makeBeam(agent.key, centerPos, pos);
-});
+let ALL_KEYS = ["orchestrator", ...AGENTS.map((a) => a.key)];
+let BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map((a) => [a.key, a]));
 
-const hubPos = nodePositions["backend"];
-const hubAngle = PRIMARY_AGENTS.find((a) => a.key === "backend").angle;
-BACKEND_SERVICES.forEach((agent) => {
-  const pos = pointAt(hubPos.x, hubPos.y, SATELLITE_RADIUS_PCT, hubAngle + agent.angleOffset);
-  nodePositions[agent.key] = pos;
-  makeNode(agent, pos, false, true);
-  makeBeam(agent.key, hubPos, pos);
-});
+// Angle spacing between adjacent satellites — verified numerically for the
+// 4-service case (offsets end up -120/-40/40/120, matching the layout this
+// was hand-tuned against). Holds up reasonably for 1-4 services; a project
+// with 5+ backend services will need this re-checked for overlap, since the
+// satellites would start wrapping back around toward the primary ring.
+const SATELLITE_ANGLE_STEP = 80;
 
-const ALL_KEYS = ["orchestrator", ...AGENTS.map(a => a.key)];
-const BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map(a => [a.key, a]));
+// Fetches this project's actual backend-service list from the server (see
+// the /status.json route in dev-loop.js, which injects `services` fresh
+// from a live backend/ directory scan) and builds the ring around whatever
+// that turns out to be — no service list hardcoded client-side.
+async function initDashboard() {
+  let services = [];
+  try {
+    const res = await fetch("/status.json", { cache: "no-store" });
+    const data = await res.json();
+    services = Array.isArray(data.services) ? data.services : [];
+  } catch {
+    // Dashboard server not reachable yet — ring just stays empty (backend
+    // hub with no satellites) until a later poll() successfully retries.
+  }
+
+  BACKEND_SERVICES = services.map((key, i, arr) => ({
+    key,
+    angleOffset: (i - (arr.length - 1) / 2) * SATELLITE_ANGLE_STEP,
+    name: key,
+    ringLabel: serviceRingLabel(key),
+  }));
+  AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
+  CATEGORY_TO_KEYS.backend = BACKEND_SERVICES.map((s) => s.key);
+  ALL_KEYS = ["orchestrator", ...AGENTS.map((a) => a.key)];
+  BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map((a) => [a.key, a]));
+
+  PRIMARY_AGENTS.forEach((agent) => {
+    const radius = agent.key === "backend" ? HUB_RADIUS_PCT : PRIMARY_RADIUS_PCT;
+    const pos = pointAt(centerPos.x, centerPos.y, radius, agent.angle);
+    nodePositions[agent.key] = pos;
+    makeNode(agent, pos, false, false);
+    makeBeam(agent.key, centerPos, pos);
+  });
+
+  const hubPos = nodePositions["backend"];
+  const hubAngle = PRIMARY_AGENTS.find((a) => a.key === "backend").angle;
+  BACKEND_SERVICES.forEach((agent) => {
+    const pos = pointAt(hubPos.x, hubPos.y, SATELLITE_RADIUS_PCT, hubAngle + agent.angleOffset);
+    nodePositions[agent.key] = pos;
+    makeNode(agent, pos, false, true);
+    makeBeam(agent.key, hubPos, pos);
+  });
+}
 
 // `keys` is the exact set of ring nodes to light up (from the server's
 // `data.keys`) — NOT every node in the category. A task usually only has
@@ -632,8 +678,10 @@ function renderCostTable(rows, totalUsd, totalNis, task) {
 }
 
 setActiveCategory("orchestrator");
-poll();
-setInterval(poll, 1000);
+initDashboard().finally(() => {
+  poll();
+  setInterval(poll, 1000);
+});
 </script>
 </body>
 </html>

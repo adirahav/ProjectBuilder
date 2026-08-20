@@ -2,23 +2,22 @@
 /**
  * Dev Loop Orchestrator — Dog Grooming Clinic Appointment Booking
  *
- * This repo is a monorepo: `frontend/` + `backend/` with three services —
- * `gateway` (stateless reverse proxy in front of the other two; most tasks
- * won't scope it in, only deploy/production-setup tasks per
- * `agents/backend/CLAUDE.md`), `booking-service` (owns Service, TimeSlot,
- * Appointment) and `user-service` (owns Admin accounts/auth). All three
- * backend services are built and run from here, via `agents/backend/CLAUDE.md`
- * (one shared prompt, parameterized per service). There is no external design
- * source — the Frontend Agent designs the UI itself per `.rule/style-rules.md`.
- * There is no issue tracker; task approval happens entirely through local
- * plan files and terminal/chat approval gates.
+ * This repo is a monorepo: `frontend/` + `backend/`, with one subfolder per
+ * backend service (currently `api-gateway`, `booking-service`,
+ * `user-service`, `notification-service` — discovered at runtime from
+ * each backend/<service>/package.json, see `discoverBackendServices()` below, not
+ * hardcoded here). All backend services are built and run via
+ * `agents/backend/CLAUDE.md` (one shared prompt, parameterized per service).
+ * There is no external design source — the Frontend Agent designs the UI
+ * itself per `.rule/style-rules.md`. There is no issue tracker; task approval
+ * happens entirely through local plan files and terminal/chat approval gates.
  *
  * Loop per backlog item:
  *   1) Pick next task from .plan/000-backlog.md
  *   2) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
  *   3) Launch the Frontend agent (builds UI per .rule/style-rules.md, defines API contract(s))
- *   4) Launch Backend agents in parallel — gateway, booking-service, and
- *      user-service — independent services, per .rule/architecture.md
+ *   4) Launch Backend agents in parallel — one per discovered backend
+ *      service, per .rule/architecture.md
  *   5) Launch QA validation
  *   6) Report done and wait for approval
  *   7) Launch Security audit
@@ -51,15 +50,14 @@ const MODEL_FOR = {
   planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
   "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
   frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
-  gateway:             "claude-opus-5",   // Backend Agent — gateway — multi-file code generation (reverse proxy/routing)
-  "booking-service": "claude-opus-5", // Backend Agent — booking-service — multi-file code generation, owns TimeSlot concurrency logic
-  "user-service":      "claude-opus-5",   // Backend Agent — user-service — multi-file code generation (auth + admin accounts)
-  "notification-service": "claude-opus-5", // Backend Agent — notification-service — multi-file code generation (server-to-server notification sending)
   qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
   security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
   "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
 }
 
+// Any backend service key (discovered per-project, not listed here by name)
+// falls through to MODEL_FOR.frontend, i.e. Opus — backend code generation
+// gets the same treatment as frontend regardless of the service's name.
 function modelFor(operation) {
   return MODEL_FOR[operation] || MODEL_FOR.frontend
 }
@@ -144,7 +142,28 @@ const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
-const ALL_AGENT_KEYS = ["orchestrator", "frontend", "gateway", "booking-service", "user-service", "notification-service", "qa", "security"]
+
+// Backend services are discovered from backend/*/package.json instead of
+// hardcoded — a project with a different set of services (more, fewer,
+// different names) just works, no code edit needed. Sorted for a stable,
+// reproducible order (port/ticket-code assignment below depends on it).
+// Falls back to [] before any backend service has been scaffolded yet.
+function discoverBackendServices() {
+  if (!existsSync("backend")) return []
+  return readdirSync("backend", { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(`backend/${e.name}/package.json`))
+    .map((e) => e.name)
+    .sort()
+}
+
+// kebab-case service key -> camelCase property name, used to key the
+// per-service config objects below (BACKEND_PORTS, API_CONTRACTS, tickets).
+function camelKey(kebabKey) {
+  return kebabKey.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+}
+
+const BACKEND_SERVICE_KEYS = discoverBackendServices()
+const ALL_AGENT_KEYS = ["orchestrator", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -180,14 +199,13 @@ function clearTaskState(slug) {
 const RESET = "\x1b[0m"
 
 const AGENT_IDENTITY = {
-  "orchestrator":         { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
-  "frontend":             { icon: "🎨", color: "\x1b[35m", label: "frontend" },
-  "gateway":              { icon: "🔧", color: "\x1b[34m", label:  " 🚪 api-gateway" },
-  "booking-service":  { icon: "🔧", color: "\x1b[34m", label: " 📅 booking-service" },
-  "user-service":         { icon: "🔧", color: "\x1b[34m", label: " 🔑 user-service" },
-  "notification-service": { icon: "🔧", color: "\x1b[34m", label: " ✉️ notification-service" },
-  "qa":                   { icon: "🐛", color: "\x1b[32m", label: "qa" },
-  "security":             { icon: "🛡️", color: "\x1b[36m", label: "security" },
+  "orchestrator": { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
+  "frontend":     { icon: "🎨", color: "\x1b[35m", label: "frontend" },
+  "qa":           { icon: "🐛", color: "\x1b[32m", label: "qa" },
+  "security":     { icon: "🛡️", color: "\x1b[36m", label: "security" },
+}
+for (const key of BACKEND_SERVICE_KEYS) {
+  AGENT_IDENTITY[key] = { icon: "🔧", color: "\x1b[34m", label: ` ${key}` }
 }
 
 function agentPrefix(agentKey) {
@@ -526,10 +544,16 @@ function startDashboardServer() {
 
   const server = http.createServer((req, res) => {
     if (req.url === "/status.json") {
+      // `services` is injected fresh from the in-memory discovery result on
+      // every request (not just written once to the file) — the dashboard
+      // needs the CURRENT project's backend service list, and this is the
+      // one place both the "file missing yet" default and the persisted
+      // status object are guaranteed to pass through.
+      const base = existsSync(AGENT_STATUS_PATH)
+        ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
+        : { message: "", category: null, keys: [], task: "", updatedAt: null, lastEvent: null }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      res.end(existsSync(AGENT_STATUS_PATH)
-        ? readFileSync(AGENT_STATUS_PATH, "utf-8")
-        : JSON.stringify({ message: "", category: null, keys: [], task: "", updatedAt: null, lastEvent: null }))
+      res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
       return
     }
 
@@ -794,15 +818,10 @@ async function main() {
       reports = state.reports
       log("Report paths reused from saved state (keeps original run date).")
     } else {
-      reports = makeReportPaths(task.slug, {
-        frontend: tickets.frontend.id,
-        gateway: tickets.gateway.id,
-        bookingService: tickets.bookingService.id,
-        userService: tickets.userService.id,
-        notificationService: tickets.notificationService.id,
-        qa: tickets.qa.id,
-        security: tickets.security.id,
-      })
+      const ticketIds = Object.fromEntries(
+        Object.entries(tickets).map(([key, ticket]) => [key, ticket.id])
+      )
+      reports = makeReportPaths(task.slug, ticketIds)
       state = { ...state, reports }
       saveTaskState(task.slug, state)
     }
@@ -832,103 +851,42 @@ async function main() {
       writeSkippedReport(reports.fe, "Frontend Agent")
     }
 
-    // ── Step: Backend (all three services, in parallel — only those in scope) ──
-    // gateway is a stateless reverse proxy; most tasks won't scope it in — only
-    // deploy/production-setup tasks per agents/backend/CLAUDE.md.
-    // One combined start/skip event for the whole group, not one per service
-    // — the dashboard's voice/visual "backend" category is already generic
-    // across every service name, so four near-simultaneous per-service
+    // ── Step: Backend (every discovered service, in parallel — only those in
+    // scope). One combined start/skip event for the whole group, not one per
+    // service — the dashboard's voice/visual "backend" category is already
+    // generic across every service name, so N near-simultaneous per-service
     // events would just be redundant noise.
-    const backendKeysInScope = ["gateway", "booking-service", "user-service", "notification-service"].filter((k) => inScope(task, k))
+    const backendKeysInScope = BACKEND_SERVICE_KEYS.filter((k) => inScope(task, k))
     emitEvent(backendKeysInScope.length > 0 ? "agent-start" : "agent-skip", "backend", null, backendKeysInScope)
     log("Launching backend agents (only those in scope, in parallel)...")
 
-    await Promise.all([
-      inScope(task, "gateway")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.gateway.id}`,
-              `Service: gateway`,
-              `Port: ${BACKEND_PORTS.gateway}`,
-              `API contract: ${API_CONTRACTS.gateway}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.gateway,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — gateway",
-            agentKey: "gateway",
-          })
-        : (logSkip("Backend Agent — gateway", "out of scope for this task"),
-           writeSkippedReport(reports.gateway, "Backend Agent — gateway")),
-      inScope(task, "booking-service")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.bookingService.id}`,
-              `Service: booking-service`,
-              `Port: ${BACKEND_PORTS.bookingService}`,
-              `API contract: ${API_CONTRACTS.bookingService}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.bookingService,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — booking-service",
-            agentKey: "booking-service",
-          })
-        : (logSkip("Backend Agent — booking-service", "out of scope for this task"),
-           writeSkippedReport(reports.bookingService, "Backend Agent — booking-service")),
-      inScope(task, "user-service")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.userService.id}`,
-              `Service: user-service`,
-              `Port: ${BACKEND_PORTS.userService}`,
-              `API contract: ${API_CONTRACTS.userService}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.userService,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — user-service",
-            agentKey: "user-service",
-          })
-        : (logSkip("Backend Agent — user-service", "out of scope for this task"),
-           writeSkippedReport(reports.userService, "Backend Agent — user-service")),
-      inScope(task, "notification-service")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.notificationService.id}`,
-              `Service: notification-service`,
-              `Port: ${BACKEND_PORTS.notificationService}`,
-              `API contract: ${API_CONTRACTS.notificationService}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.notificationService,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — notification-service",
-            agentKey: "notification-service",
-          })
-        : (logSkip("Backend Agent — notification-service", "out of scope for this task"),
-           writeSkippedReport(reports.notificationService, "Backend Agent — notification-service")),
-    ])
+    await Promise.all(BACKEND_SERVICE_KEYS.map((key) => {
+      const label = `Backend Agent — ${key}`
+      const ck = camelKey(key)
+      if (!inScope(task, key)) {
+        logSkip(label, "out of scope for this task")
+        writeSkippedReport(reports[ck], label)
+        return undefined
+      }
+      return runAgent({
+        systemPrompt: "agents/backend/CLAUDE.md",
+        input: [
+          `You are the Backend Agent.`,
+          `Task: ${task.title}`,
+          `Task id: ${tickets[ck].id}`,
+          `Service: ${key}`,
+          `Port: ${BACKEND_PORTS[ck]}`,
+          `API contract: ${API_CONTRACTS[ck]}`,
+          `Approved plan: ${planPath}`,
+          `Follow your CLAUDE.md instructions exactly.`,
+          `End your final response with exact line: STATUS: DONE`,
+        ].join("\n"),
+        outputFile: reports[ck],
+        doneMarker: "STATUS: DONE",
+        label,
+        agentKey: key,
+      })
+    }))
 
     // Real config values (MONGODB_URI, JWT_SECRET, ...) are collected HERE by
     // the orchestrator via a real blocking terminal prompt — not left to the
@@ -937,10 +895,9 @@ async function main() {
     // streamed output is easy to scroll past unanswered. This runs once per
     // service (only after that service's .env.example exists, i.e. after its
     // scaffold task), and reuses any value already set for a sibling service.
-    if (inScope(task, "gateway")) await ensureBackendEnv("api-gateway")
-    if (inScope(task, "booking-service")) await ensureBackendEnv("booking-service")
-    if (inScope(task, "user-service")) await ensureBackendEnv("user-service")
-    if (inScope(task, "notification-service")) await ensureBackendEnv("notification-service")
+    for (const key of BACKEND_SERVICE_KEYS) {
+      if (inScope(task, key)) await ensureBackendEnv(key)
+    }
 
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
@@ -953,10 +910,7 @@ async function main() {
           `Task id: ${tickets.qa.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.gateway}`,
-          `- ${API_CONTRACTS.bookingService}`,
-          `- ${API_CONTRACTS.userService}`,
-          `- ${API_CONTRACTS.notificationService}`,
+          ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
           `Run validation across frontend, all in-scope backend services, and e2e.`,
           `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -985,10 +939,7 @@ async function main() {
           `Task id: ${tickets.security.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.gateway}`,
-          `- ${API_CONTRACTS.bookingService}`,
-          `- ${API_CONTRACTS.userService}`,
-          `- ${API_CONTRACTS.notificationService}`,
+          ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
           `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
           `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -1031,8 +982,8 @@ function ensurePlanDirAndBacklog() {
   }
 }
 
-// Which of the 6 gated agents (frontend/gateway/booking-service/
-// user-service/qa/security) a task actually needs, read from the backlog line's `scope:`
+// Which of the gated agents (frontend / each discovered backend service /
+// qa / security) a task actually needs, read from the backlog line's `scope:`
 // field (comma-separated agent keys, or "none" for zero of them). No
 // `scope:` field at all means "unknown scope" — run everything, since that's
 // the only safe default when nobody has classified the task yet.
@@ -1238,30 +1189,29 @@ async function markPlanStatus(planPath, status) {
 
 function makeReportPaths(slug, ticketIds) {
   const date = new Date().toISOString().slice(0, 10)
-  return {
-    fe:                 `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
-    gateway:            `${REPORTS_DIR}/${date}-${ticketIds.gateway}-${slug}-gateway.md`,
-    bookingService: `${REPORTS_DIR}/${date}-${ticketIds.bookingService}-${slug}-booking-service.md`,
-    userService:        `${REPORTS_DIR}/${date}-${ticketIds.userService}-${slug}-user-service.md`,
-    notificationService: `${REPORTS_DIR}/${date}-${ticketIds.notificationService}-${slug}-notification-service.md`,
-    qa:                 `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
-    security:           `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
+  const paths = {
+    fe:       `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
+    qa:       `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
+    security: `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
   }
+  for (const key of BACKEND_SERVICE_KEYS) {
+    paths[camelKey(key)] = `${REPORTS_DIR}/${date}-${ticketIds[camelKey(key)]}-${slug}-${key}.md`
+  }
+  return paths
 }
 
-const API_CONTRACTS = {
-  gateway:            "docs/api-contract/api-contract.api-gateway.yaml",
-  bookingService: "docs/api-contract/api-contract.booking-service.yaml",
-  userService:        "docs/api-contract/api-contract.user-service.yaml",
-  notificationService: "docs/api-contract/api-contract.notification-service.yaml",
-}
+const API_CONTRACTS = Object.fromEntries(
+  BACKEND_SERVICE_KEYS.map((key) => [camelKey(key), `docs/api-contract/api-contract.${key}.yaml`])
+)
 
-const BACKEND_PORTS = {
-  gateway: 4000,
-  bookingService: 4001,
-  userService: 4002,
-  notificationService: 4003,
-}
+// Sequential ports starting at 4000, in the same stable sorted order as
+// BACKEND_SERVICE_KEYS — adding a new service later appends at the end of
+// that sort order in most cases, but an insertion earlier in the alphabet
+// will shift everything after it. Re-run once after adding a service to
+// confirm the assignment still matches what's in each service's .env.
+const BACKEND_PORTS = Object.fromEntries(
+  BACKEND_SERVICE_KEYS.map((key, i) => [camelKey(key), 4000 + i])
+)
 
 // ─── Claude planning ──────────────────────────────────────────────────────────
 
@@ -1411,17 +1361,25 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
 // No issue tracker is configured for this project, so agent steps are keyed
 // by simple local task identifiers instead of tickets in an external system.
 
+// Short per-service code derived mechanically from the key (first 4 letters
+// with hyphens stripped, e.g. "booking-service" -> "BOOK") — not as
+// hand-picked/memorable as the old fixed abbreviations, but works for any
+// service name without a code edit.
+function ticketCode(kebabKey) {
+  return kebabKey.replace(/-/g, "").toUpperCase().slice(0, 4)
+}
+
 function simulateTickets(slug) {
   const up = slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "TASK"
-  return {
-    frontend:           { id: `${up}-FE` },
-    gateway:            { id: `${up}-GW` },
-    bookingService: { id: `${up}-APT` },
-    userService:        { id: `${up}-USR` },
-    notificationService: { id: `${up}-NOT` },
-    qa:                 { id: `${up}-QA` },
-    security:           { id: `${up}-SEC` },
+  const tickets = {
+    frontend: { id: `${up}-FE` },
+    qa:       { id: `${up}-QA` },
+    security: { id: `${up}-SEC` },
   }
+  for (const key of BACKEND_SERVICE_KEYS) {
+    tickets[camelKey(key)] = { id: `${up}-${ticketCode(key)}` }
+  }
+  return tickets
 }
 
 // ─── Agent runner ─────────────────────────────────────────────────────────────
@@ -1847,7 +1805,7 @@ function generatePlanFallback({ task }) {
 Status: draft
 Owner: Orchestrator
 Last updated: ${today}
-Scope-Agents: frontend,booking-service,user-service,notification-service,qa,security
+Scope-Agents: frontend,${BACKEND_SERVICE_KEYS.join(",")},qa,security
 
 ## Goal
 Deliver ${task.title} in the existing product.
@@ -1866,16 +1824,13 @@ Deliver ${task.title} in the existing product.
 
 ## Steps
 1. Frontend agent implements UI and defines API contract(s) if needed.
-2. Backend agents (booking-service, user-service, notification-service, and gateway if in scope) run in parallel — independent services.
+2. Backend agents (${BACKEND_SERVICE_KEYS.join(", ")} — whichever are in scope) run in parallel — independent services.
 3. QA agent runs unit, integration, and e2e checks across frontend and all in-scope backend services.
 4. Security agent audits frontend, all in-scope backend services, and API contracts.
 
 ## Validation
 - frontend: npm --prefix frontend run lint && npm --prefix frontend run build && npm --prefix frontend run test
-- backend/booking-service: npm --prefix backend/booking-service run test
-- backend/user-service: npm --prefix backend/user-service run test
-- backend/notification-service (only if in scope): npm --prefix backend/notification-service run test
-- backend/api-gateway (only if in scope): npm --prefix backend/api-gateway run test
+${BACKEND_SERVICE_KEYS.map((key) => `- backend/${key} (only if in scope): npm --prefix backend/${key} run test`).join("\n")}
 
 ## Risks
 - TimeSlot concurrency (booking-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.

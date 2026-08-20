@@ -31,7 +31,7 @@
 	- `Status:` `draft|active|done|superseded`
 	- `Owner:`
 	- `Last updated:` `YYYY-MM-DD`
-	- `Scope-Agents:` comma-separated subset of `frontend, booking-service, user-service, notification-service, qa, security` — or `none` for pure tooling/config tasks with no product code. This is machine-parsed by the orchestrator to decide which agents actually run for this task, so it must be accurate, not a default.
+	- `Scope-Agents:` comma-separated subset of `frontend, api-gateway, booking-service, user-service, notification-service, qa, security` — or `none` for pure tooling/config tasks with no product code. This is machine-parsed by the orchestrator to decide which agents actually run for this task, so it must be accurate, not a default.
 		- Include `qa` unless the task genuinely has nothing to validate (e.g. dependency installs).
 		- Include a backend service only if this task adds/changes code in it, OR — even when only "confirming" existing endpoints — the `Risks` section of this same plan calls out a concurrency, auth, or data-integrity risk in that service. Do not exclude a backend service solely because "no new endpoints are expected" if the Risks section says otherwise; that self-contradiction is a known planning mistake.
 		- Include a gateway/deploy service only when the task's own Steps section assigns it work — omitting it from this line while still describing it as a deliverable in Steps is the same self-contradiction: the orchestrator only launches agents listed here, regardless of what Steps says.

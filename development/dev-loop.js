@@ -557,6 +557,20 @@ function startDashboardServer() {
       return
     }
 
+    // The dashboard's Refresh button hits this before reloading the iframe —
+    // reuses the exact same check-then-spawn logic as startup, so clicking
+    // Refresh after "refused to connect" actually starts the frontend dev
+    // server instead of just re-showing the same failure.
+    if (req.url === "/ensure-frontend" && req.method === "POST") {
+      ensureFrontendDevServerRunning()
+        .catch(() => {})
+        .finally(() => {
+          res.writeHead(204)
+          res.end()
+        })
+      return
+    }
+
     if (req.url && req.url.startsWith("/assets/")) {
       const assetName = req.url.slice("/assets/".length).split("?")[0]
       const assetPath = `${assetsDir}/${assetName}`

@@ -473,13 +473,26 @@ soundToggleBtn.addEventListener("click", () => {
   }
 });
 
-document.getElementById("iframe-refresh").addEventListener("click", () => {
+document.getElementById("iframe-refresh").addEventListener("click", async () => {
+  const btn = document.getElementById("iframe-refresh");
   const frame = document.getElementById("app-frame");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+  try {
+    // Server-side: no-ops if something's already answering on the frontend
+    // URL, otherwise spawns `npm run dev` for it — same check-then-spawn
+    // logic dev-loop.js runs at startup, just triggerable on demand here.
+    await fetch("/ensure-frontend", { method: "POST" });
+  } catch {
+    // Dashboard server itself unreachable — reload attempt below will just
+    // fail the same way the iframe already has; nothing more to do here.
+  }
   // Re-assigning src (not frame.contentWindow.location.reload()) works even
-  // when the previous load failed outright ("refused to connect"), e.g. the
-  // frontend dev server was still starting up — a failed load has no
-  // same-origin document to reload via the other approach.
+  // when the previous load failed outright ("refused to connect") — a
+  // failed load has no same-origin document to reload the other way.
   frame.src = frame.src;
+  btn.disabled = false;
+  btn.textContent = "↻ Refresh";
 });
 
 const ring = document.getElementById("ring");

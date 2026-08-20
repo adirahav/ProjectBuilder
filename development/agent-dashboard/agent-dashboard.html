@@ -241,9 +241,9 @@ const PRIMARY_AGENTS = [
   { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
 ];
 const BACKEND_SERVICES = [
-  { key: "booking-service",      angleOffset: -45, icon: "🔧", img: "backend-agent.png", name: "booking-service" },
+  { key: "booking-service",      angleOffset: -65, icon: "🔧", img: "backend-agent.png", name: "booking-service" },
   { key: "user-service",         angleOffset: 0,   icon: "🔧", img: "backend-agent.png", name: "user-service" },
-  { key: "notification-service", angleOffset: 45,  icon: "🔧", img: "backend-agent.png", name: "notification-service" },
+  { key: "notification-service", angleOffset: 65,  icon: "🔧", img: "backend-agent.png", name: "notification-service" },
 ];
 const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
@@ -429,8 +429,8 @@ const beams = document.getElementById("beams");
 // closer in (GATEWAY_RADIUS_PCT) to leave room on the right for its own
 // small satellite cluster of backend services at SATELLITE_RADIUS_PCT.
 const PRIMARY_RADIUS_PCT = 36;
-const GATEWAY_RADIUS_PCT = 24;
-const SATELLITE_RADIUS_PCT = 17;
+const GATEWAY_RADIUS_PCT = 22;
+const SATELLITE_RADIUS_PCT = 18;
 
 function pointAt(cx, cy, radiusPct, angleDeg) {
   const rad = (angleDeg * Math.PI) / 180;

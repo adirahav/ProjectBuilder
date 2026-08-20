@@ -76,9 +76,17 @@
   /* Backend-service satellites are plain text badges (no portrait) — smaller
      than the primary ring so 4 of them fit around the backend hub without
      overlapping it, each other, or the box edge. */
-  .node.satellite { width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 4px; }
+  .node.satellite {
+    width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 4px;
+    background: radial-gradient(circle at 32% 30%, rgba(59, 130, 246, 0.24), var(--panel) 72%);
+  }
+  /* Extra attribute selector to out-specificity the generic idle-border rule
+     below (.node[data-agent]) — satellites keep their own static tint even
+     while idle, instead of falling back to the plain gray border. */
+  .node.satellite[data-agent] { border-color: rgba(59, 130, 246, 0.45); }
   .node.satellite .name {
-    font-size: 7.5px; line-height: 1.15; font-weight: 600; color: var(--text);
+    font-size: 8px; line-height: 1.2; font-weight: 700; letter-spacing: 0.01em;
+    color: #eaf2ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     max-width: 44px; white-space: normal; margin-top: 0; overflow: hidden;
   }
 

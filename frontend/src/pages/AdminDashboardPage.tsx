@@ -1,9 +1,8 @@
-import { LayoutDashboard, LogOut } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { ArrowRight, CalendarClock, LogOut, Scissors } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { PageHeader } from '../components/common/PageHeader'
-import { StateMessage } from '../components/common/StateMessage'
 import { useI18n } from '../hooks/useI18n'
 import { useStore } from '../store/store'
 import { translate } from '../i18n/strings'
@@ -11,11 +10,12 @@ import { cn } from '../lib/utils'
 import { ADMIN_LOGIN_ROUTE } from '../components/ProtectedRoute'
 
 /**
- * Placeholder for the Admin dashboard. Screens 6 and 7 (Services, F6-F8, and
- * Appointments, F9-F11) are separate tickets — this page exists so the guard
- * has something real to protect and so signing in visibly lands somewhere.
+ * The Admin dashboard: a shell that hands off to the screens that do the real
+ * work. Services (F6-F8) is live; Appointments (F9-F11) is a separate ticket and
+ * is shown as an unreachable, plainly-labelled card rather than a link that
+ * would only dead-end.
  *
- * It does carry one piece of finished behaviour: sign-out. Logout is purely
+ * It carries one piece of behaviour of its own: sign-out. Logout is purely
  * client-side in v1 — the stored token is dropped, but there is no server-side
  * revocation, so the token remains technically valid until it expires.
  */
@@ -59,11 +59,48 @@ export function AdminDashboardPage() {
         </div>
       </div>
 
-      <StateMessage
-        icon={LayoutDashboard}
-        title={t('admin.dashboard.placeholder.title')}
-        body={t('admin.dashboard.placeholder.body')}
-      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Link
+          to="/admin/services"
+          className={cn(
+            'flex flex-col gap-3 rounded-2xl border border-neutral-900/10 bg-white p-6 text-start',
+            'transition-colors hover:border-primary/40 hover:bg-primary-light',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+          )}
+        >
+          <span className="flex size-11 items-center justify-center rounded-xl bg-primary-light text-primary">
+            <Scissors className="size-5" aria-hidden="true" />
+          </span>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            {t('admin.dashboard.services.title')}
+          </h2>
+          <p className="text-sm text-neutral-900/70">{t('admin.dashboard.services.body')}</p>
+          <span className="mt-auto inline-flex items-center gap-2 pt-2 text-sm font-semibold text-primary">
+            {t('admin.dashboard.services.action')}
+            <ArrowRight className="size-4 shrink-0 rtl:rotate-180" aria-hidden="true" />
+          </span>
+        </Link>
+
+        <div
+          className={cn(
+            'flex flex-col gap-3 rounded-2xl border border-dashed border-neutral-900/15',
+            'bg-white p-6 text-start',
+          )}
+        >
+          <span className="flex size-11 items-center justify-center rounded-xl bg-neutral-900/5 text-neutral-900/60">
+            <CalendarClock className="size-5" aria-hidden="true" />
+          </span>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            {t('admin.dashboard.appointments.title')}
+          </h2>
+          <p className="text-sm text-neutral-900/70">{t('admin.dashboard.appointments.body')}</p>
+          {/* A word, not a greyed-out link: nothing here is clickable yet, and
+              pretending otherwise only costs a wasted press. */}
+          <span className="mt-auto pt-2 text-sm font-semibold text-neutral-900/60">
+            {t('admin.dashboard.appointments.soon')}
+          </span>
+        </div>
+      </div>
     </main>
   )
 }

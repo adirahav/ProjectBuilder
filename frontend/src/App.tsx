@@ -11,6 +11,7 @@ import { CustomerDetailsPage } from './pages/CustomerDetailsPage'
 import { BookingConfirmationPage } from './pages/BookingConfirmationPage'
 import { AdminLoginPage } from './pages/AdminLoginPage'
 import { AdminDashboardPage } from './pages/AdminDashboardPage'
+import { AdminServicesPage } from './pages/AdminServicesPage'
 import { useDocumentDirection } from './hooks/useI18n'
 import { useStore } from './store/store'
 import { directionFor } from './store/slices/app.slice'
@@ -21,10 +22,9 @@ import { setUnauthorizedHandler } from './services/http.service'
  * mount it inside a MemoryRouter without a second router in the tree.
  *
  * The booking routes are public by design (a Customer has no account). `/admin`
- * sits behind ProtectedRoute; `/admin/login` stays public, since it is how the
- * token is obtained in the first place. The remaining Admin screens (`/admin`'s
- * Services and Appointments views) land with their own tickets, underneath the
- * same guard.
+ * and `/admin/services` sit behind ProtectedRoute; `/admin/login` stays public,
+ * since it is how the token is obtained in the first place. The Appointments
+ * view lands with its own ticket, underneath the same guard.
  */
 export function AppRoutes() {
   const locale = useStore((state) => state.locale)
@@ -69,6 +69,7 @@ export function AppRoutes() {
         <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/admin" element={<AdminDashboardPage />} />
+          <Route path="/admin/services" element={<AdminServicesPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

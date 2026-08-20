@@ -8,11 +8,11 @@ info:
     Grooming Appointment Booking System. It verifies the Admin JWT and forwards
     the request to the service that owns the data.
 
-    Scope of this revision: PRD F5 only — `POST /api/auth/login`, which the
-    gateway proxies through to user-service, plus the JWT verification contract
-    that every future Admin route depends on (AC-7). The Admin Service writes
-    (F6-F8) and the Admin Appointment routes (F9-F11) are defined by their own
-    tickets and are deliberately absent here.
+    Scope of this revision: PRD F5 (`POST /api/auth/login`, proxied through to
+    user-service) plus the Admin Service management routes F6-F8, proxied
+    through to booking-service and gated by the gateway's JWT verification
+    (AC-7). The Admin Appointment routes (F9-F11) are defined by their own
+    ticket and are deliberately absent here.
 
     The public booking routes (F1-F4b) are NOT part of this contract: they are
     unauthenticated by design and the frontend calls booking-service directly.
@@ -25,8 +25,59 @@ servers:
 tags:
   - name: Auth
     description: Admin authentication. There is exactly one Admin account in v1.
+  - name: Admin Services
+    description: >
+      Admin-only management of the `Service` catalogue (PRD F6-F8). Every route
+      here requires a valid Admin JWT and is forwarded to booking-service.
+
+      The public, unauthenticated `GET /api/services` is deliberately NOT part
+      of this contract: the frontend calls booking-service directly for it, and
+      it must keep returning active services only. The admin list is a separate
+      path (`/api/services/all`) rather than a flag on the public one, so a
+      deactivated Service is never one misread query parameter away from the
+      customer-facing screen.
 
 components:
+  responses:
+    Unauthorized:
+      description: >
+        The Admin JWT is missing, malformed, or expired. Every Admin route must
+        answer this — proving it is actually gated, not merely hidden behind a
+        client-side route guard. The frontend treats it as a session expiry:
+        it clears the stored token and returns to the Admin login screen.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Unauthorized
+
+    ServiceNotFound:
+      description: >
+        No Service with that id exists — typically because another Admin, or
+        another tab, removed it after this list was loaded. The frontend treats
+        this as its own case rather than a generic failure: it says the record
+        is gone and reloads the list, instead of offering a retry that could
+        never succeed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Service not found
+
+    BookingServiceUnavailable:
+      description: >
+        The gateway could not reach booking-service. Surfaced to the Admin as a
+        generic "we could not save that" failure, never as a validation problem
+        with what they typed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Booking service unavailable
+
   securitySchemes:
     adminJwt:
       type: http
@@ -38,10 +89,11 @@ components:
         verifies it and rejects a missing, malformed, or expired token with 401
         before the request reaches any downstream service.
 
-        No Admin route is defined yet (Screens 6-7 add them), but the scheme is
-        declared here because it is the contract those routes will use, and
-        because the frontend already attaches the header to every request it
-        makes once a token is stored.
+        The Admin Service routes below are the first routes actually gated by
+        it. The frontend attaches the header to every request it makes once a
+        token is stored, and treats any 401 outside the login endpoint as a
+        session expiry: it clears the stored token and returns to the login
+        screen.
 
   schemas:
     LoginRequest:
@@ -97,6 +149,105 @@ components:
           example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
         admin:
           $ref: '#/components/schemas/Admin'
+      additionalProperties: false
+
+    Service:
+      type: object
+      required: [id, name, durationMinutes, price, isActive]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >
+            The Service's client-facing identifier (the model's `uuid`). Mongo's
+            `_id` must never appear in a response — the frontend types have no
+            field for it and every write path below addresses records by this id.
+          example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          example: Full groom
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 480
+          description: >
+            Whole minutes only. TimeSlot boundaries are generated from this, so
+            a fractional duration would put every slot off the clock. The
+            frontend rejects a non-integer before sending; the server must
+            reject it too.
+          example: 90
+        price:
+          type: number
+          minimum: 0
+          maximum: 100000
+          description: >
+            In shekels. Zero is valid — a complimentary treatment is a real
+            case — so an absent price must never be coerced to 0.
+          example: 220
+        isActive:
+          type: boolean
+          description: >
+            False means soft-deleted: the record still exists and existing
+            Appointments still reference it, but it no longer appears on the
+            public `GET /api/services` list. There is no hard delete.
+          example: true
+      additionalProperties: false
+
+    ServiceDraft:
+      type: object
+      required: [name, durationMinutes, price]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          example: Bath and brush
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 480
+          example: 45
+        price:
+          type: number
+          minimum: 0
+          maximum: 100000
+          example: 120
+      description: >
+        The create payload. It carries no `isActive`: a newly created Service is
+        always active, and letting the client ask for an inactive one would only
+        produce a record nobody can see or reach.
+      additionalProperties: false
+
+    ServicePatch:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+        durationMinutes:
+          type: integer
+          minimum: 1
+          maximum: 480
+        price:
+          type: number
+          minimum: 0
+          maximum: 100000
+        isActive:
+          type: boolean
+          description: >
+            Patchable on purpose. Deactivation has its own endpoint, but
+            re-activating a soft-deleted Service has none, so this is the only
+            route back.
+      description: >
+        A partial update: the server applies exactly the fields present and
+        leaves the rest alone. The frontend sends only what the Admin actually
+        changed, so an untouched field can never overwrite another Admin's edit.
+        An empty object must be rejected as 400 — it is a request that cannot
+        accomplish anything.
       additionalProperties: false
 
     Error:
@@ -177,3 +328,177 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 error: Authentication service unavailable
+
+  /api/services/all:
+    get:
+      tags: [Admin Services]
+      operationId: listAllServices
+      summary: List every Service, active and deactivated alike
+      description: >
+        PRD F6-F8, Screen 6. The Admin view of the catalogue: unlike the public
+        `GET /api/services` on booking-service, this applies no `isActive`
+        filter, because showing the deactivated records is the entire point of
+        the screen.
+
+        Forwarded to booking-service after the JWT is verified. The frontend
+        keeps the result in a store slice separate from the public list, so a
+        soft-deleted Service can never render on a customer-facing screen.
+      security:
+        - adminJwt: []
+      responses:
+        '200':
+          description: >
+            Every Service on record. An empty array is a valid, non-error answer
+            — a clinic that has not added a treatment yet — and the frontend
+            renders it as an empty state, not a failure.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'
+
+  /api/services:
+    post:
+      tags: [Admin Services]
+      operationId: createService
+      summary: Create a Service
+      description: >
+        PRD F6. The created Service is always active; the payload carries no
+        `isActive` and the server must not accept one.
+
+        The frontend validates the same rules client-side before sending, so a
+        400 here means the two sides disagree — the server remains the only side
+        that decides, and its rejection must not be assumed impossible.
+      security:
+        - adminJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceDraft'
+      responses:
+        '201':
+          description: >
+            The Service was created. The body is the stored record, including
+            its server-assigned `id` and `isActive: true` — the frontend puts
+            exactly this into its list and never the draft it sent, since only
+            the response proves the write happened.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '400':
+          description: >
+            The name is missing/blank, or the duration or price is missing,
+            non-numeric, or out of range. The duration must additionally be a
+            whole number.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Name, durationMinutes and price are required
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'
+
+  /api/services/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The Service's client-facing `id` (its `uuid`), never Mongo's `_id`.
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Admin Services]
+      operationId: updateService
+      summary: Update the given fields of a Service
+      description: >
+        PRD F7. A partial update: apply exactly the fields present in the body
+        and leave every other field as stored. A PUT-style full replacement is
+        deliberately not offered — it would let a stale form silently revert a
+        field another Admin changed in the meantime.
+
+        Setting `isActive: true` here is the supported way to offer a
+        deactivated Service again; there is no separate reactivate route.
+      security:
+        - adminJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServicePatch'
+      responses:
+        '200':
+          description: The updated Service, as stored after the patch was applied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '400':
+          description: >
+            The body is empty, or a field that is present fails validation.
+            Fields that are absent must not be validated — omitting the name is
+            not the same as blanking it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: durationMinutes must be a whole number of minutes
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ServiceNotFound'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'
+
+  /api/services/{id}/deactivate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Admin Services]
+      operationId: deactivateService
+      summary: Stop offering a Service (soft delete)
+      description: >
+        PRD F8. Sets `isActive: false` and nothing else. It is a soft delete:
+        the record survives so Appointments already booked against it stay
+        readable, it simply stops appearing on the public `GET /api/services`
+        list.
+
+        It must not cascade — existing TimeSlot and Appointment records for this
+        Service are left exactly as they are.
+
+        Its own endpoint rather than a `PATCH /api/services/{id}` with
+        `isActive: false`, so the intent is explicit in the routing and in the
+        server's logs. No request body.
+      security:
+        - adminJwt: []
+      responses:
+        '200':
+          description: The Service, now with `isActive: false`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ServiceNotFound'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'

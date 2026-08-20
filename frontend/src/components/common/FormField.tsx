@@ -18,7 +18,7 @@ interface FormFieldProps {
   placeholder?: string
   type?: 'text' | 'tel' | 'email' | 'password'
   autoComplete?: string
-  inputMode?: 'text' | 'tel' | 'email'
+  inputMode?: 'text' | 'tel' | 'email' | 'numeric' | 'decimal'
   /**
    * Forces the value's direction. Phone numbers and email addresses are always
    * LTR even inside a Hebrew page, or they render with the punctuation flipped

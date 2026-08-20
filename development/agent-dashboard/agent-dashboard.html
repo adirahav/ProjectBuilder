@@ -657,12 +657,16 @@ async function poll() {
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
       : "";
 
-    // Task title folded into the existing label lines (no new element, no
-    // extra height) — truncated with ellipsis via CSS if it's long.
+    // Task title (+ its "N of M" backlog position, when known) folded into
+    // the existing label lines — no new element, no extra height, truncated
+    // with ellipsis via CSS if it's long.
     const taskLabel = document.getElementById("status-label");
     const costLabel = document.getElementById("cost-label");
-    taskLabel.textContent = data.task ? `Live status — ${data.task}` : "Live status";
-    costLabel.textContent = data.task ? `💰 Cost — ${data.task}` : "💰 Cost — this task";
+    const progress = data.taskProgress && data.taskProgress.current
+      ? `[${data.taskProgress.current}/${data.taskProgress.total}] `
+      : "";
+    taskLabel.textContent = data.task ? `Live status — ${progress}${data.task}` : "Live status";
+    costLabel.textContent = data.task ? `💰 Cost — ${progress}${data.task}` : "💰 Cost — this task";
 
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely

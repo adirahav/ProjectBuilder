@@ -422,6 +422,7 @@ function voiceCategory(agentKey) {
 // unique or comparable.
 let eventSeq = 0
 let currentTaskTitle = ""
+let currentTaskProgress = null // { current, total } — set alongside currentTaskTitle, see getBacklogProgress()
 
 function readStatus() {
   try {
@@ -475,6 +476,7 @@ function emitEvent(eventType, agentKey, message, keys) {
   status.category = agentKey ? voiceCategory(agentKey) : status.category || null
   status.keys = resolvedKeys
   status.task = currentTaskTitle
+  status.taskProgress = currentTaskProgress
   status.updatedAt = new Date().toISOString()
   status.lastEvent = {
     seq: eventSeq,
@@ -499,6 +501,7 @@ function writeAgentStatus(agentKey, message) {
   status.category = agentKey ? voiceCategory(agentKey) : status.category || null
   status.keys = agentKey ? [agentKey] : status.keys || []
   status.task = currentTaskTitle
+  status.taskProgress = currentTaskProgress
   status.updatedAt = new Date().toISOString()
   writeStatus(status)
 }
@@ -568,7 +571,7 @@ function startDashboardServer() {
       // status object are guaranteed to pass through.
       const base = existsSync(AGENT_STATUS_PATH)
         ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
-        : { message: "", category: null, keys: [], task: "", updatedAt: null, lastEvent: null }
+        : { message: "", category: null, keys: [], task: "", taskProgress: null, updatedAt: null, lastEvent: null }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
       res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
       return
@@ -755,6 +758,7 @@ async function main() {
     banner(`LOOP ${loopCount} · ${task.title}`)
     log(`Picked task from backlog: ${task.title}`)
     currentTaskTitle = task.title
+    currentTaskProgress = getBacklogProgress(task)
     emitEvent("picking-next-task", null, task.title)
 
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })
@@ -1185,6 +1189,19 @@ function getNextBacklogTask() {
   }
 
   return null
+}
+
+// "Task N of M" for the dashboard — position of `task.lineIndex` among every
+// checklist line in the backlog (done or not), 1-based. Recomputed fresh
+// each time (not cached) since the backlog file itself is the source of
+// truth and can gain/lose lines between runs.
+function getBacklogProgress(task) {
+  const lines = readFileSync(BACKLOG_FILE, "utf-8").split("\n")
+  const checklistLineIndexes = lines
+    .map((line, i) => (line.trim().match(/^\s*-\s*\[( |x|X)\]/) ? i : -1))
+    .filter((i) => i !== -1)
+  const position = checklistLineIndexes.indexOf(task.lineIndex)
+  return { current: position === -1 ? null : position + 1, total: checklistLineIndexes.length }
 }
 
 function markBacklogTaskDone(task) {

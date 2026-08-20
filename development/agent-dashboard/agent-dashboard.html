@@ -148,6 +148,16 @@
     overflow: hidden;
   }
   #cost-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .progress-badge {
+    display: inline-block;
+    font-size: 10px; font-weight: 700; letter-spacing: normal; text-transform: none;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: rgba(240, 180, 41, 0.18);
+    color: var(--orchestrator);
+    vertical-align: middle;
+  }
+  .progress-badge:empty { display: none; }
   #cost-table-wrap { overflow-x: auto; }
   #cost-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
   #cost-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); }
@@ -228,7 +238,7 @@
 
   <div id="sidebar">
     <div id="status-card">
-      <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span></div>
+      <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span></div>
       <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
@@ -236,7 +246,7 @@
     </div>
 
     <div id="cost-card">
-      <div class="label" id="cost-label">💰 Cost — this task</div>
+      <div class="label"><span id="cost-label">💰 Cost — this task</span> <span id="cost-progress" class="progress-badge"></span></div>
       <div id="cost-table-wrap">
         <table id="cost-table">
           <thead>
@@ -657,16 +667,15 @@ async function poll() {
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
       : "";
 
-    // Task title (+ its "N of M" backlog position, when known) folded into
-    // the existing label lines — no new element, no extra height, truncated
-    // with ellipsis via CSS if it's long.
-    const taskLabel = document.getElementById("status-label");
-    const costLabel = document.getElementById("cost-label");
-    const progress = data.taskProgress && data.taskProgress.current
-      ? `[${data.taskProgress.current}/${data.taskProgress.total}] `
+    // Just the "N of M" backlog position as a small badge — the task's full
+    // title used to be appended here too, but that made the label too long
+    // and the title itself is already shown as the current message/context
+    // elsewhere, so this stays a compact position indicator only.
+    const progressText = data.taskProgress && data.taskProgress.current
+      ? `${data.taskProgress.current}/${data.taskProgress.total}`
       : "";
-    taskLabel.textContent = data.task ? `Live status — ${progress}${data.task}` : "Live status";
-    costLabel.textContent = data.task ? `💰 Cost — ${progress}${data.task}` : "💰 Cost — this task";
+    document.getElementById("status-progress").textContent = progressText;
+    document.getElementById("cost-progress").textContent = progressText;
 
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely

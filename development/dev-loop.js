@@ -137,6 +137,13 @@ const AUTO_MERGE_TASKS = process.env.AUTO_MERGE_TASKS != null || getArg("--auto-
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
 const COST_DIR = "docs/cost"
+// The dashboard's "last completed task" cost card reads from here, not from
+// the ephemeral docs/agent-status.json — that file is live/transient by
+// design (safe to delete, gets rebuilt from scratch), but a finished task's
+// final cost is real historical data that should survive a dev-loop.js
+// restart or a status-file cleanup, same as the per-task .txt files already
+// written into COST_DIR.
+const LAST_TASK_COST_PATH = "docs/cost/last-task.json"
 const BACKLOG_FILE = `${PLAN_DIR}/000-backlog.md`
 const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
@@ -256,20 +263,23 @@ function recordCost(role, label, rawStdout) {
     costUsd:         parsed.total_cost_usd ?? 0,
     durationMs:      parsed.duration_ms ?? 0,
   })
-  // NOT writeCostStatus() here — the dashboard's cost card is meant to show
-  // a completed task's final total, not a live-growing partial number for
-  // whichever task is still in progress (that number isn't the real answer
-  // yet, so showing it invites reading it as final when it's still climbing).
-  // The one and only write happens in printCostTable(), once a task is done.
+  // NOT writeLastTaskCost() here — the dashboard's cost card is meant to
+  // show a completed task's final total, not a live-growing partial number
+  // for whichever task is still in progress (that number isn't the real
+  // answer yet, so showing it invites reading it as final when it's still
+  // climbing). The one and only write happens in printCostTable(), once a
+  // task is done.
 
   return parsed.result ?? rawStdout
 }
 
 // Mirrors the terminal's cost table (console.table in logLastCost/
-// printCostTable) into the dashboard's status feed. Written on its own key
-// (`costLog`/`costTotal`) in the same status file, independent of
-// message/category/lastEvent, so it can't clobber or be clobbered by them.
-function writeCostStatus(taskLabel) {
+// printCostTable) into a small persistent file the dashboard reads — NOT
+// into docs/agent-status.json, which is ephemeral/rebuildable by design.
+// A finished task's cost is real history and should survive a dev-loop.js
+// restart or that file being deleted, exactly like the per-task .txt/JSON
+// records already written into COST_DIR.
+function writeLastTaskCost(taskLabel) {
   const rows = costLog.map((entry) => ({
     role: entry.role,
     label: entry.label,
@@ -280,16 +290,26 @@ function writeCostStatus(taskLabel) {
     costNis: entry.costUsd * USD_TO_NIS,
     durationS: entry.durationMs / 1000,
   }))
-  const status = readStatus()
-  status.costLog = rows
-  status.costTotalUsd = rows.reduce((sum, r) => sum + r.costUsd, 0)
-  status.costTotalNis = rows.reduce((sum, r) => sum + r.costNis, 0)
-  // Separate from `status.task` (the currently-running task) on purpose —
-  // this is which task the cost numbers above actually belong to, which by
-  // the time this is called is already the PREVIOUS task from the dashboard's
-  // point of view (the new one may already be picked and shown as running).
-  status.costTask = taskLabel
-  writeStatus(status)
+  const record = {
+    costTask: taskLabel,
+    costLog: rows,
+    costTotalUsd: rows.reduce((sum, r) => sum + r.costUsd, 0),
+    costTotalNis: rows.reduce((sum, r) => sum + r.costNis, 0),
+  }
+  try {
+    if (!existsSync(COST_DIR)) mkdirSync(COST_DIR, { recursive: true })
+    writeFileSync(LAST_TASK_COST_PATH, JSON.stringify(record, null, 2), "utf-8")
+  } catch (e) {
+    warn(`Could not write ${LAST_TASK_COST_PATH} (${e.message}) — the dashboard's cost card may not reflect this task's final total.`)
+  }
+}
+
+function readLastTaskCost() {
+  try {
+    return existsSync(LAST_TASK_COST_PATH) ? JSON.parse(readFileSync(LAST_TASK_COST_PATH, "utf-8")) : null
+  } catch {
+    return null
+  }
 }
 
 function formatTextTable(rows) {
@@ -396,10 +416,10 @@ function printCostTable(taskLabel) {
 
   // The one and only dashboard write for this task's cost data — a single
   // final snapshot, taken now that the total is actually final, tagged with
-  // which task it belongs to. Stays on screen (untouched) through the whole
-  // next task, since nothing writes `costLog`/`costTask` again until THIS
-  // function runs once more.
-  writeCostStatus(taskLabel)
+  // which task it belongs to. Persisted (not just in the live status file),
+  // so it survives a restart and stays visible through the whole next task,
+  // since nothing overwrites it again until THIS function runs once more.
+  writeLastTaskCost(taskLabel)
   costLog = []
 }
 
@@ -581,8 +601,12 @@ function startDashboardServer() {
       const base = existsSync(AGENT_STATUS_PATH)
         ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
         : { message: "", category: null, keys: [], task: "", taskProgress: null, updatedAt: null, lastEvent: null }
+      // Cost fields come from the persistent last-task-cost file, not the
+      // live status file — see writeLastTaskCost()'s comment. Read fresh on
+      // every request, same reasoning as `services` above.
+      const lastCost = readLastTaskCost() || { costTask: null, costLog: [], costTotalUsd: 0, costTotalNis: 0 }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
+      res.end(JSON.stringify({ ...base, ...lastCost, services: BACKEND_SERVICE_KEYS }))
       return
     }
 

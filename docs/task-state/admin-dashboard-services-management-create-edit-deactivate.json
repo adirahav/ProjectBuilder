@@ -1,0 +1,37 @@
+{
+  "slug": "admin-dashboard-services-management-create-edit-deactivate",
+  "planPath": ".plan/012-2026-08-19-admin-dashboard-services-management-create-edit-deactivate.md",
+  "approved": true,
+  "tickets": {
+    "frontend": {
+      "id": "ADMINDAS-FE"
+    },
+    "gateway": {
+      "id": "ADMINDAS-GW"
+    },
+    "bookingService": {
+      "id": "ADMINDAS-APT"
+    },
+    "userService": {
+      "id": "ADMINDAS-USR"
+    },
+    "notificationService": {
+      "id": "ADMINDAS-NOT"
+    },
+    "qa": {
+      "id": "ADMINDAS-QA"
+    },
+    "security": {
+      "id": "ADMINDAS-SEC"
+    }
+  },
+  "reports": {
+    "fe": "docs/agent-reports/2026-08-19-ADMINDAS-FE-admin-dashboard-services-management-create-edit-deactivate-frontend.md",
+    "gateway": "docs/agent-reports/2026-08-19-ADMINDAS-GW-admin-dashboard-services-management-create-edit-deactivate-gateway.md",
+    "bookingService": "docs/agent-reports/2026-08-19-ADMINDAS-APT-admin-dashboard-services-management-create-edit-deactivate-booking-service.md",
+    "userService": "docs/agent-reports/2026-08-19-ADMINDAS-USR-admin-dashboard-services-management-create-edit-deactivate-user-service.md",
+    "notificationService": "docs/agent-reports/2026-08-19-ADMINDAS-NOT-admin-dashboard-services-management-create-edit-deactivate-notification-service.md",
+    "qa": "docs/agent-reports/2026-08-19-ADMINDAS-QA-admin-dashboard-services-management-create-edit-deactivate-qa.md",
+    "security": "docs/agent-reports/2026-08-19-ADMINDAS-SEC-admin-dashboard-services-management-create-edit-deactivate-security.md"
+  }
+}

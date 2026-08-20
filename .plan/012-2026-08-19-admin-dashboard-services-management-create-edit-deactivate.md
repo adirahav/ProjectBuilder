@@ -1,6 +1,6 @@
 # Plan 012 — Admin Dashboard: Services management (create/edit/deactivate)
 
-- Status: active
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-19
 - Scope-Agents: frontend, booking-service, api-gateway, qa, security

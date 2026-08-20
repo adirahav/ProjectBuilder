@@ -6,7 +6,7 @@
     "frontend": {
       "id": "ADMINDAS-FE"
     },
-    "gateway": {
+    "apiGateway": {
       "id": "ADMINDAS-GW"
     },
     "bookingService": {
@@ -27,7 +27,7 @@
   },
   "reports": {
     "fe": "docs/agent-reports/2026-08-19-ADMINDAS-FE-admin-dashboard-services-management-create-edit-deactivate-frontend.md",
-    "gateway": "docs/agent-reports/2026-08-19-ADMINDAS-GW-admin-dashboard-services-management-create-edit-deactivate-gateway.md",
+    "apiGateway": "docs/agent-reports/2026-08-19-ADMINDAS-GW-admin-dashboard-services-management-create-edit-deactivate-gateway.md",
     "bookingService": "docs/agent-reports/2026-08-19-ADMINDAS-APT-admin-dashboard-services-management-create-edit-deactivate-booking-service.md",
     "userService": "docs/agent-reports/2026-08-19-ADMINDAS-USR-admin-dashboard-services-management-create-edit-deactivate-user-service.md",
     "notificationService": "docs/agent-reports/2026-08-19-ADMINDAS-NOT-admin-dashboard-services-management-create-edit-deactivate-notification-service.md",

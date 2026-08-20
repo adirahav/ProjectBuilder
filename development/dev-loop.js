@@ -762,7 +762,16 @@ async function main() {
     let state = loadTaskState(task.slug)
     const planResumable = Boolean(state?.approved && state?.planPath && existsSync(state.planPath))
     const draftResumable = Boolean(!planResumable && state?.planPath && existsSync(state.planPath))
-    const ticketsResumable = planResumable && Boolean(state?.tickets)
+    // A saved `tickets`/`reports` object from before a backend service was
+    // added/renamed (e.g. discoverBackendServices() found a different set
+    // than it did when this state was written) is missing keys the rest of
+    // this function assumes exist — reusing it crashes deep in the backend
+    // launch loop with "Cannot read properties of undefined". Requiring
+    // every currently-expected key to be present makes stale state regenerate
+    // fresh instead (same as if this were a first run), rather than crash.
+    const expectedTicketKeys = ["frontend", "qa", "security", ...BACKEND_SERVICE_KEYS.map(camelKey)]
+    const hasAllExpectedKeys = (obj) => Boolean(obj) && expectedTicketKeys.every((k) => k in obj)
+    const ticketsResumable = planResumable && hasAllExpectedKeys(state?.tickets)
     if (state) {
       if (planResumable) {
         log(`Resuming task '${task.slug}' from saved state — reusing approved plan${ticketsResumable ? " and existing task ids" : ""}.`)
@@ -845,7 +854,9 @@ async function main() {
     // "already done" check in runAgent can never find yesterday's completed work
     // and reruns every agent from Frontend on.
     let reports
-    if (state?.reports) {
+    const expectedReportKeys = ["fe", "qa", "security", ...BACKEND_SERVICE_KEYS.map(camelKey)]
+    const reportsResumable = Boolean(state?.reports) && expectedReportKeys.every((k) => k in state.reports)
+    if (reportsResumable) {
       reports = state.reports
       log("Report paths reused from saved state (keeps original run date).")
     } else {

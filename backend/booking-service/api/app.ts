@@ -37,7 +37,10 @@ export function createApp(): Express {
   app.use(cors({ origin: config.frontendOrigin, credentials: true }))
   app.use(express.json())
 
-  // Public, unauthenticated Service list (PRD F1 / SERVICEL-APT).
+  // Public, unauthenticated Service list (PRD F1 / SERVICEL-APT), plus the
+  // Admin Service writes (PRD F6-F8 / ADMINDAS-APT). The Admin routes carry no
+  // auth check in this service: api-gateway verifies the Admin JWT and only
+  // then forwards them, so this port must not be publicly exposed.
   app.use('/api/services', serviceRouter)
 
   // Public, unauthenticated TimeSlot availability + atomic hold
@@ -48,10 +51,10 @@ export function createApp(): Express {
   // hold -> book lifecycle (PRD F4/F4b, CUSTOMER-APT).
   app.use('/api/appointments', appointmentRouter)
 
-  // NOTE: the Admin Service writes (F6-F8) and the Admin Appointment
-  // management routes (F9-F11) are intentionally NOT part of this ticket —
-  // they land in their own. So an Appointment can only ever be created
-  // `pending` here; nothing yet moves it to `confirmed` or `cancelled`.
+  // NOTE: the Admin Appointment management routes (F9-F11) are intentionally
+  // NOT part of this ticket — they land in their own. So an Appointment can
+  // only ever be created `pending` here; nothing yet moves it to `confirmed`
+  // or `cancelled`.
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

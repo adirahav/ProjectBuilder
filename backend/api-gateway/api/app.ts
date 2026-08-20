@@ -3,6 +3,8 @@ import cors from 'cors'
 
 import { authProxyRouter } from './auth-proxy/auth-proxy.routes.ts'
 import { config } from './lib/config.ts'
+import { verifyJwt } from './routing/routing.middleware.ts'
+import { serviceProxyRouter } from './service-proxy/service-proxy.routes.ts'
 
 // Builds the Express app without binding a port, so tests can drive it
 // with Supertest and the entrypoint can own the actual listen() call.
@@ -24,11 +26,21 @@ export function createApp(): Express {
   // how a token is obtained in the first place.
   app.use('/api/auth', authProxyRouter)
 
-  // NOTE: `verifyJwt` (api/routing/routing.middleware.ts) is implemented and
-  // exported ready to gate Admin routes, but no Admin business route exists
-  // yet — the Service writes (F6-F8) and Appointment routes (F9-F11) land with
-  // Screens 6-7 and must each be mounted behind it. The reverse-proxy routes to
-  // booking-service / notification-service are likewise still out of scope.
+  // PRD F6-F8 (ADMINDAS-GW), Screen 6. The Admin Service management routes,
+  // gated at the MOUNT POINT so every route in the router — including any added
+  // later — is behind the JWT check by default. verifyJwt also strips any
+  // client-supplied `x-internal-admin` before booking-service ever sees it.
+  //
+  // The public GET /api/services is NOT served here — the frontend calls
+  // booking-service directly for it. Because the guard sits at the mount point,
+  // an unauthenticated GET /api/services against the GATEWAY answers 401 rather
+  // than 404. That is intentional (fail closed): the gateway never serves the
+  // public list, and the public list is unaffected because it never comes here.
+  app.use('/api/services', verifyJwt, serviceProxyRouter)
+
+  // NOTE: the Admin Appointment routes (F9-F11) land with Screen 7 and must
+  // likewise be mounted behind `verifyJwt`. The reverse-proxy routes to
+  // notification-service are still out of scope.
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })

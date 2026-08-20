@@ -135,8 +135,8 @@
   #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
   .sidebar-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
-  #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; min-height: 3.2em; }
-  #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; }
+  #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; }
+  #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; margin-bottom:2.0em }
   #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
 
   #cost-card {
@@ -172,7 +172,20 @@
     display: flex; flex-direction: column;
     flex: 1; min-height: 0;
   }
-  #iframe-wrap .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; }
+  #iframe-wrap .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  #iframe-refresh {
+    font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: normal;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  #iframe-refresh:hover { border-color: var(--orchestrator); }
   #app-frame {
     flex: 1; min-height: 0;
     width: 100%;
@@ -237,7 +250,10 @@
   </div>
 
   <div id="iframe-wrap">
-    <div class="label">🌐 Live app — http://localhost:5173</div>
+    <div class="label">
+      🌐 Live app — http://localhost:5173
+      <button id="iframe-refresh" title="Reload the preview">↻ Refresh</button>
+    </div>
     <iframe id="app-frame" src="http://localhost:5173" title="Live app preview"></iframe>
   </div>
 </div>
@@ -455,6 +471,15 @@ soundToggleBtn.addEventListener("click", () => {
     unlock.volume = 0;
     unlock.play().catch(() => {});
   }
+});
+
+document.getElementById("iframe-refresh").addEventListener("click", () => {
+  const frame = document.getElementById("app-frame");
+  // Re-assigning src (not frame.contentWindow.location.reload()) works even
+  // when the previous load failed outright ("refused to connect"), e.g. the
+  // frontend dev server was still starting up — a failed load has no
+  // same-origin document to reload via the other approach.
+  frame.src = frame.src;
 });
 
 const ring = document.getElementById("ring");

@@ -246,10 +246,10 @@ const PRIMARY_AGENTS = [
 ];
 // angleOffset is relative to the backend hub's own angle (0°).
 const BACKEND_SERVICES = [
-  { key: "gateway",              angleOffset: -111, name: "api-gateway" },
-  { key: "booking-service",      angleOffset: -37,  name: "booking-service" },
-  { key: "user-service",         angleOffset: 37,   name: "user-service" },
-  { key: "notification-service", angleOffset: 111,  name: "notification-service" },
+  { key: "gateway",              angleOffset: -117, name: "api-gateway" },
+  { key: "booking-service",      angleOffset: -39,  name: "booking-service" },
+  { key: "user-service",         angleOffset: 39,   name: "user-service" },
+  { key: "notification-service", angleOffset: 117,  name: "notification-service" },
 ];
 const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
@@ -439,7 +439,7 @@ const PRIMARY_RADIUS_PCT = 36;
 // in is the only way its 4-badge satellite cluster has room to exist without
 // running off the box edge (verified numerically, not just eyeballed).
 const HUB_RADIUS_PCT = 31;
-const SATELLITE_RADIUS_PCT = 16;
+const SATELLITE_RADIUS_PCT = 21;
 // Must match .node.satellite's width in the <style> above.
 const SATELLITE_NODE_PX = 52;
 
@@ -466,7 +466,11 @@ function makeNode(agent, pos, isCenter, isSatellite) {
   return el;
 }
 
-const centerPos = { x: 50, y: 50 };
+// Shifted left of true-center (not 50) — the only way to buy the backend
+// cluster more room on the right without shrinking the orchestrator-backend
+// gap. Checked numerically: 46.5 is the most it can shift before "security"
+// on the left starts clipping the box edge.
+const centerPos = { x: 46.5, y: 50 };
 makeNode(CENTER, centerPos, true, false);
 
 function makeBeam(key, from, to) {

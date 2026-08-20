@@ -246,10 +246,10 @@ const PRIMARY_AGENTS = [
 ];
 // angleOffset is relative to the backend hub's own angle (0°).
 const BACKEND_SERVICES = [
-  { key: "gateway",              angleOffset: -117, name: "api-gateway" },
-  { key: "booking-service",      angleOffset: -39,  name: "booking-service" },
-  { key: "user-service",         angleOffset: 39,   name: "user-service" },
-  { key: "notification-service", angleOffset: 117,  name: "notification-service" },
+  { key: "gateway",              angleOffset: -120, name: "api-gateway" },
+  { key: "booking-service",      angleOffset: -40,  name: "booking-service" },
+  { key: "user-service",         angleOffset: 40,   name: "user-service" },
+  { key: "notification-service", angleOffset: 120,  name: "notification-service" },
 ];
 const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
@@ -438,8 +438,8 @@ const PRIMARY_RADIUS_PCT = 36;
 // The backend hub sits closer in than the other 3 primary nodes — pulling it
 // in is the only way its 4-badge satellite cluster has room to exist without
 // running off the box edge (verified numerically, not just eyeballed).
-const HUB_RADIUS_PCT = 31;
-const SATELLITE_RADIUS_PCT = 21;
+const HUB_RADIUS_PCT = 33.5;
+const SATELLITE_RADIUS_PCT = 18;
 // Must match .node.satellite's width in the <style> above.
 const SATELLITE_NODE_PX = 52;
 

@@ -85,9 +85,12 @@
      while idle, instead of falling back to the plain gray border. */
   .node.satellite[data-agent] { border-color: rgba(59, 130, 246, 0.45); }
   .node.satellite .name {
-    font-size: 8px; line-height: 1.2; font-weight: 700; letter-spacing: 0.01em;
+    font-size: 8.5px; line-height: 1.25; font-weight: 700; letter-spacing: 0.01em;
     color: #eaf2ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-    max-width: 44px; white-space: normal; margin-top: 0; overflow: hidden;
+    /* Overriding the base .node .name rule's nowrap/ellipsis — satellites
+       need real 2-line wrapping (via the explicit <br> in ringLabel above),
+       not a single-line ellipsis that mangles mid-word. */
+    max-width: 46px; white-space: normal; margin-top: 0; overflow: visible; text-overflow: clip;
   }
 
   .node.active {
@@ -253,11 +256,14 @@ const PRIMARY_AGENTS = [
   { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
 ];
 // angleOffset is relative to the backend hub's own angle (0°).
+// ringLabel controls exactly where the badge's 2-line break falls (via <br>)
+// — left to CSS auto-wrap, "notification-service" wrapped mid-word into an
+// illegible ellipsis instead of breaking cleanly at the hyphen.
 const BACKEND_SERVICES = [
-  { key: "gateway",              angleOffset: -120, name: "api-gateway" },
-  { key: "booking-service",      angleOffset: -40,  name: "booking-service" },
-  { key: "user-service",         angleOffset: 40,   name: "user-service" },
-  { key: "notification-service", angleOffset: 120,  name: "notification-service" },
+  { key: "gateway",              angleOffset: -120, name: "api-gateway",              ringLabel: "api-<br>gateway" },
+  { key: "booking-service",      angleOffset: -40,  name: "booking-service",          ringLabel: "booking-<br>service" },
+  { key: "user-service",         angleOffset: 40,   name: "user-service",             ringLabel: "user-<br>service" },
+  { key: "notification-service", angleOffset: 120,  name: "notification-service",     ringLabel: "notification-<br>service" },
 ];
 const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
@@ -469,7 +475,7 @@ function makeNode(agent, pos, isCenter, isSatellite) {
     : agent.img
       ? `<img class="icon-img" src="/assets/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
       : `<div class="icon">${agent.icon}</div>`;
-  el.innerHTML = `${iconHtml}<div class="name">${agent.name}</div>`;
+  el.innerHTML = `${iconHtml}<div class="name">${agent.ringLabel || agent.name}</div>`;
   ring.appendChild(el);
   return el;
 }

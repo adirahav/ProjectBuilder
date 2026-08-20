@@ -184,22 +184,22 @@
     margin: 0;
   }
 
-  #sound-gate {
-    position: fixed; inset: 0;
-    background: rgba(11, 11, 16, 0.92);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 50;
-  }
-  #enable-sound {
-    font-size: 16px; font-weight: 600;
-    padding: 16px 28px;
-    border-radius: 12px;
+  /* A small always-visible toggle, not a blocking overlay — the page and
+     everything on it is usable immediately; this just switches voice cues
+     on/off, same as any mute button. The very first click still doubles as
+     the browser's required user-gesture to unlock autoplay. */
+  #sound-toggle {
+    position: fixed; top: 16px; right: 24px; z-index: 50;
+    font-size: 13px; font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 20px;
     border: 1px solid var(--border);
     background: var(--panel);
     color: var(--text);
     cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
   }
-  #enable-sound:hover { border-color: var(--orchestrator); }
+  #sound-toggle:hover { border-color: var(--orchestrator); }
 </style>
 </head>
 <body>
@@ -240,9 +240,7 @@
   </div>
 </div>
 
-<div id="sound-gate">
-  <button id="enable-sound">🔊 Click to enable voice cues</button>
-</div>
+<button id="sound-toggle">🔇 Enable voice cues</button>
 
 <script>
 // Primary ring: one portrait node per category, "backend" standing in for
@@ -430,15 +428,21 @@ function playCue(fileName) {
   audio.play().catch(() => { /* still locked or file missing — ignore, not critical */ });
 }
 
-document.getElementById("enable-sound").addEventListener("click", () => {
-  soundEnabled = true;
-  document.getElementById("sound-gate").style.display = "none";
-  // Play a near-silent cue synchronously inside the click handler — this is
-  // what actually unlocks autoplay in most browsers, since the permission is
-  // tied to a real user-gesture call stack, not just a boolean flag.
-  const unlock = new Audio(`/assets/${AUDIO_MAP["orchestrator-start"]}`);
-  unlock.volume = 0;
-  unlock.play().catch(() => {});
+const soundToggleBtn = document.getElementById("sound-toggle");
+let audioUnlocked = false;
+soundToggleBtn.addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  soundToggleBtn.textContent = soundEnabled ? "🔊 Voice cues on" : "🔇 Enable voice cues";
+  if (soundEnabled && !audioUnlocked) {
+    // Play a near-silent cue synchronously inside the click handler — this is
+    // what actually unlocks autoplay in most browsers, since the permission
+    // is tied to a real user-gesture call stack, not just a boolean flag.
+    // Only needs doing once per page load, not on every re-enable.
+    audioUnlocked = true;
+    const unlock = new Audio(`/assets/${AUDIO_MAP["orchestrator-start"]}`);
+    unlock.volume = 0;
+    unlock.play().catch(() => {});
+  }
 });
 
 const ring = document.getElementById("ring");

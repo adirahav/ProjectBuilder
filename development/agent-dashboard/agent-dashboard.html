@@ -161,7 +161,7 @@
   #cost-table-wrap { overflow-x: auto; }
   #cost-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
   #cost-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); }
-  #cost-task-col { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #cost-task-col, #cost-task-cell { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
   #cost-table tr:last-child td { border-bottom: none; }
   #cost-table tr.total-row td { font-weight: 700; border-top: 1px solid var(--border); }
@@ -705,8 +705,7 @@ function renderCostTable(rows, totalUsd, totalNis, task) {
   const tbody = document.getElementById("cost-tbody");
   const totalEl = document.getElementById("cost-total");
   const taskCol = document.getElementById("cost-task-col");
-  taskCol.textContent = task || "Agent";
-  taskCol.title = task || "";
+  taskCol.textContent = "Task";
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7" style="color: var(--dim); font-style: italic;">No agent calls yet</td></tr>';
     totalEl.textContent = "";
@@ -715,7 +714,7 @@ function renderCostTable(rows, totalUsd, totalNis, task) {
   const sum = (key) => rows.reduce((acc, r) => acc + (r[key] || 0), 0);
   tbody.innerHTML = `
     <tr class="total-row">
-      <td>TOTAL</td>
+      <td id="cost-task-cell" title="${task || ""}">${task || "TOTAL"}</td>
       <td>${sum("inputTokens")}</td>
       <td>${sum("outputTokens")}</td>
       <td>${sum("cacheReadTokens")}</td>

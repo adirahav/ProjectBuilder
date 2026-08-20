@@ -247,7 +247,7 @@
     </div>
 
     <div id="cost-card">
-      <div class="label" id="cost-label">💰 Cost — this task</div>
+      <div class="label" id="cost-label">💰 Cost — last completed task</div>
       <div id="cost-table-wrap">
         <table id="cost-table">
           <thead>
@@ -695,7 +695,11 @@ async function poll() {
       }
     }
 
-    renderCostTable(data.costLog || [], data.costTotalUsd || 0, data.costTotalNis || 0, data.task);
+    // costTask (which task these numbers belong to) is deliberately separate
+    // from data.task (whichever task is running right now) — the cost card
+    // shows the last COMPLETED task's final total, not a live-growing number
+    // for a task that isn't done yet.
+    renderCostTable(data.costLog || [], data.costTotalUsd || 0, data.costTotalNis || 0, data.costTask);
   } catch {
     dot.classList.remove("live");
   }

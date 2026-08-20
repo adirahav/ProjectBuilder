@@ -256,18 +256,20 @@ function recordCost(role, label, rawStdout) {
     costUsd:         parsed.total_cost_usd ?? 0,
     durationMs:      parsed.duration_ms ?? 0,
   })
-  writeCostStatus()
+  // NOT writeCostStatus() here — the dashboard's cost card is meant to show
+  // a completed task's final total, not a live-growing partial number for
+  // whichever task is still in progress (that number isn't the real answer
+  // yet, so showing it invites reading it as final when it's still climbing).
+  // The one and only write happens in printCostTable(), once a task is done.
 
   return parsed.result ?? rawStdout
 }
 
 // Mirrors the terminal's cost table (console.table in logLastCost/
-// printCostTable) into the dashboard's status feed, so the same numbers the
-// terminal already shows after every agent call are also visible in the
-// browser — live, not just once at task end. Written on its own key
+// printCostTable) into the dashboard's status feed. Written on its own key
 // (`costLog`/`costTotal`) in the same status file, independent of
 // message/category/lastEvent, so it can't clobber or be clobbered by them.
-function writeCostStatus() {
+function writeCostStatus(taskLabel) {
   const rows = costLog.map((entry) => ({
     role: entry.role,
     label: entry.label,
@@ -282,6 +284,11 @@ function writeCostStatus() {
   status.costLog = rows
   status.costTotalUsd = rows.reduce((sum, r) => sum + r.costUsd, 0)
   status.costTotalNis = rows.reduce((sum, r) => sum + r.costNis, 0)
+  // Separate from `status.task` (the currently-running task) on purpose —
+  // this is which task the cost numbers above actually belong to, which by
+  // the time this is called is already the PREVIOUS task from the dashboard's
+  // point of view (the new one may already be picked and shown as running).
+  status.costTask = taskLabel
   writeStatus(status)
 }
 
@@ -387,10 +394,12 @@ function printCostTable(taskLabel) {
 
   writeCombinedCostFile(taskLabel, totalCost, date)
 
-  // Deliberately NOT calling writeCostStatus() here — the dashboard should
-  // keep showing this task's final recap (matching what stays visible in
-  // the terminal's own scrollback) until the next task's first agent call
-  // naturally replaces it, not blank out the instant the task ends.
+  // The one and only dashboard write for this task's cost data — a single
+  // final snapshot, taken now that the total is actually final, tagged with
+  // which task it belongs to. Stays on screen (untouched) through the whole
+  // next task, since nothing writes `costLog`/`costTask` again until THIS
+  // function runs once more.
+  writeCostStatus(taskLabel)
   costLog = []
 }
 

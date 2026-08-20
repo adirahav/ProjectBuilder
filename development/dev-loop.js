@@ -524,13 +524,30 @@ async function ensureFrontendDevServerRunning() {
     if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
     const logPath = "docs/frontend-dev-server.log"
     const logFd = openSync(logPath, "a")
-    const child = spawn("npm", ["run", "dev"], {
+    const spawnOpts = {
       cwd: frontendDir,
       detached: true,
       stdio: ["ignore", logFd, logFd],
-      shell: process.platform === "win32",
+      windowsHide: true,
       env: { ...process.env, CI: "1" },
-    })
+    }
+
+    // Windows only: `npm run dev` needs npm.cmd, a batch file, which forces
+    // either shell:true or (per a confirmed Node/Windows bug) an EINVAL crash
+    // if spawned directly with detached:true. shell:true wraps this in an
+    // extra cmd.exe that — despite detached:true — was observed staying
+    // attached to this script's own console: a Ctrl+C sent to THIS process
+    // reached that wrapper too, which then hung forever at an unanswerable
+    // "Terminate batch job (Y/N)?" prompt (stdin is "ignore") instead of the
+    // frontend ever actually starting. Bypassing npm entirely — spawning
+    // Vite's own JS entrypoint directly via node.exe, a real executable, no
+    // shell/batch-file involved at all — sidesteps both problems. Falls back
+    // to the npm/shell route (with the known Ctrl+C caveat) if that
+    // entrypoint isn't where expected, e.g. a non-Vite frontend tool.
+    const viteBin = join(frontendDir, "node_modules", "vite", "bin", "vite.js")
+    const child = process.platform === "win32" && existsSync(viteBin)
+      ? spawn(process.execPath, [join("node_modules", "vite", "bin", "vite.js")], spawnOpts)
+      : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev"], { ...spawnOpts, shell: process.platform === "win32" })
     child.unref()
     log(`Started the frontend dev server in the background (PID ${child.pid}) for the dashboard preview — output logged to ${logPath}.`)
   } catch (e) {

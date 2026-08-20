@@ -1,0 +1,72 @@
+[
+  {
+    "task": "Scaffold api-gateway service (package.json, Express, health check)",
+    "totalCostUsd": 0.5648,
+    "totalCostNis": 2.08976,
+    "callCount": null,
+    "completedAt": "2026-08-18T09:26:32.922Z"
+  },
+  {
+    "task": "Scaffold booking-service (package.json, Express, Mongoose, health check)",
+    "totalCostUsd": 0.6445,
+    "totalCostNis": 2.38465,
+    "callCount": null,
+    "completedAt": "2026-08-18T09:54:55.095Z"
+  },
+  {
+    "task": "Scaffold user-service (package.json, Express, Mongoose, JWT libs, health check)",
+    "totalCostUsd": 0.5873,
+    "totalCostNis": 2.17301,
+    "callCount": null,
+    "completedAt": "2026-08-18T09:57:58.429Z"
+  },
+  {
+    "task": "Scaffold notification-service (package.json, Express, health check)",
+    "totalCostUsd": 0.4448,
+    "totalCostNis": 1.64576,
+    "callCount": null,
+    "completedAt": "2026-08-18T10:47:39.314Z"
+  },
+  {
+    "task": "Service List page (public Customer screen)",
+    "totalCostUsd": 2.1378,
+    "totalCostNis": 7.90986,
+    "callCount": null,
+    "completedAt": "2026-08-18T15:45:34.644Z"
+  },
+  {
+    "task": "Time Slot Picker page (date_slot selection, hold-on-select)",
+    "totalCostUsd": 3.7975,
+    "totalCostNis": 14.05075,
+    "callCount": null,
+    "completedAt": "2026-08-19T05:44:57.444Z"
+  },
+  {
+    "task": "Customer Details Form (name_phone_email, creates Appointment)",
+    "totalCostUsd": 1.1001,
+    "totalCostNis": 4.0703700000000005,
+    "callCount": null,
+    "completedAt": "2026-08-19T18:46:14.800Z"
+  },
+  {
+    "task": "Booking Confirmation page",
+    "totalCostUsd": 1.2058,
+    "totalCostNis": 4.46146,
+    "callCount": null,
+    "completedAt": "2026-08-19T19:27:07.679Z"
+  },
+  {
+    "task": "Admin Login page and auth flow",
+    "totalCostUsd": 7.9571,
+    "totalCostNis": 29.44127,
+    "callCount": null,
+    "completedAt": "2026-08-20T07:06:10.681Z"
+  },
+  {
+    "task": "Admin Dashboard_ Services management (create_edit_deactivate)",
+    "totalCostUsd": 3.4631,
+    "totalCostNis": 12.81347,
+    "callCount": null,
+    "completedAt": "2026-08-20T22:22:56.811Z"
+  }
+]

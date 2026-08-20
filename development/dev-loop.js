@@ -144,6 +144,10 @@ const COST_DIR = "docs/cost"
 // restart or a status-file cleanup, same as the per-task .txt files already
 // written into COST_DIR.
 const LAST_TASK_COST_PATH = "docs/cost/last-task.json"
+// Running append-only log of every completed task's total — feeds the
+// dashboard's task-history list. Distinct from LAST_TASK_COST_PATH (which
+// holds the full per-agent breakdown for just the most recent task).
+const TASK_HISTORY_PATH = "docs/cost/task-history.json"
 const BACKLOG_FILE = `${PLAN_DIR}/000-backlog.md`
 const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
@@ -312,6 +316,33 @@ function readLastTaskCost() {
   }
 }
 
+function readTaskHistory() {
+  try {
+    return existsSync(TASK_HISTORY_PATH) ? JSON.parse(readFileSync(TASK_HISTORY_PATH, "utf-8")) : []
+  } catch {
+    return []
+  }
+}
+
+// Appends one entry per completed task — never overwrites earlier ones,
+// unlike LAST_TASK_COST_PATH. Called once per task alongside writeLastTaskCost().
+function appendTaskHistory(taskLabel, totalCostUsd, totalCostNis, callCount) {
+  try {
+    if (!existsSync(COST_DIR)) mkdirSync(COST_DIR, { recursive: true })
+    const history = readTaskHistory()
+    history.push({
+      task: taskLabel,
+      totalCostUsd,
+      totalCostNis,
+      callCount,
+      completedAt: new Date().toISOString(),
+    })
+    writeFileSync(TASK_HISTORY_PATH, JSON.stringify(history, null, 2), "utf-8")
+  } catch (e) {
+    warn(`Could not write ${TASK_HISTORY_PATH} (${e.message}) — the dashboard's task-history list may be missing this task.`)
+  }
+}
+
 function formatTextTable(rows) {
   const cols = ["Agent", "In tokens", "Out tokens", "Cache read", "Cost (USD)", "Cost (NIS)", "Duration"]
   const widths = Object.fromEntries(cols.map((c) => [c, c.length]))
@@ -420,6 +451,7 @@ function printCostTable(taskLabel) {
   // so it survives a restart and stays visible through the whole next task,
   // since nothing overwrites it again until THIS function runs once more.
   writeLastTaskCost(taskLabel)
+  appendTaskHistory(taskLabel, totalCost, totalCost * USD_TO_NIS, costLog.length)
   costLog = []
 }
 
@@ -605,8 +637,11 @@ function startDashboardServer() {
       // live status file — see writeLastTaskCost()'s comment. Read fresh on
       // every request, same reasoning as `services` above.
       const lastCost = readLastTaskCost() || { costTask: null, costLog: [], costTotalUsd: 0, costTotalNis: 0 }
+      // Most-recent-first, capped so the payload stays small on a long project
+      // — the full list is still on disk at TASK_HISTORY_PATH regardless.
+      const history = readTaskHistory().slice(-30).reverse()
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      res.end(JSON.stringify({ ...base, ...lastCost, services: BACKEND_SERVICE_KEYS }))
+      res.end(JSON.stringify({ ...base, ...lastCost, history, services: BACKEND_SERVICE_KEYS }))
       return
     }
 

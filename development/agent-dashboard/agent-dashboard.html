@@ -168,6 +168,29 @@
   #cost-table tr.total-row td { font-weight: 700; border-top: 1px solid var(--border); }
   #cost-total { margin-top: 10px; font-size: 12px; color: var(--dim); }
   #cost-total strong { color: var(--text); }
+
+  #history-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  #history-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; }
+  /* Capped height with its own scrollbar — a growing task list must never
+     eat into the live-app iframe's space below (#iframe-wrap takes whatever
+     vertical room #sidebar's siblings leave it). */
+  #history-list { max-height: 150px; overflow-y: auto; font-size: 12px; }
+  .history-row {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .history-row:last-child { border-bottom: none; }
+  .history-row .h-task { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-row .h-cost { color: var(--dim); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+  #history-empty { color: var(--dim); font-style: italic; font-size: 12px; }
   #dot {
     width: 10px; height: 10px; border-radius: 50%; background: var(--idle);
     box-shadow: 0 0 0 rgba(0,0,0,0); transition: background 0.4s, box-shadow 0.4s;
@@ -257,6 +280,11 @@
         </table>
       </div>
       <div id="cost-total"></div>
+    </div>
+
+    <div id="history-card">
+      <div class="label">📜 Task History</div>
+      <div id="history-list"></div>
     </div>
   </div>
 
@@ -700,9 +728,24 @@ async function poll() {
     // shows the last COMPLETED task's final total, not a live-growing number
     // for a task that isn't done yet.
     renderCostTable(data.costLog || [], data.costTotalUsd || 0, data.costTotalNis || 0, data.costTask);
+    renderHistory(data.history || []);
   } catch {
     dot.classList.remove("live");
   }
+}
+
+function renderHistory(history) {
+  const list = document.getElementById("history-list");
+  if (!history.length) {
+    list.innerHTML = '<div id="history-empty">No completed tasks yet</div>';
+    return;
+  }
+  list.innerHTML = history.map((h) => `
+    <div class="history-row">
+      <span class="h-task" title="${h.task}">${h.task}</span>
+      <span class="h-cost">$${h.totalCostUsd.toFixed(4)}</span>
+    </div>
+  `).join("");
 }
 
 function renderCostTable(rows, totalUsd, totalNis, task) {

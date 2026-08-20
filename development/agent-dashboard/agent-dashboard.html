@@ -158,6 +158,7 @@
     vertical-align: middle;
   }
   .progress-badge:empty { display: none; }
+  #status-task-name { text-transform: none; letter-spacing: normal; color: var(--text); font-weight: 600; }
   #cost-table-wrap { overflow-x: auto; }
   #cost-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
   #cost-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); }
@@ -238,7 +239,7 @@
 
   <div id="sidebar">
     <div id="status-card">
-      <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span></div>
+      <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span> <span id="status-task-name"></span></div>
       <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
@@ -667,14 +668,13 @@ async function poll() {
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
       : "";
 
-    // Just the "N of M" backlog position as a small badge — the task's full
-    // title used to be appended here too, but that made the label too long
-    // and the title itself is already shown as the current message/context
-    // elsewhere, so this stays a compact position indicator only.
+    // "N of M" as a small badge, plus the task name filling the rest of the
+    // line — the label's own CSS truncates it with an ellipsis if it's long.
     const progressText = data.taskProgress && data.taskProgress.current
       ? `${data.taskProgress.current}/${data.taskProgress.total}`
       : "";
     document.getElementById("status-progress").textContent = progressText;
+    document.getElementById("status-task-name").textContent = data.task || "";
 
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely

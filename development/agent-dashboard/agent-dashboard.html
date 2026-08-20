@@ -79,6 +79,14 @@
   .node.center .icon { font-size: 42px; }
   .node.center .icon-img { width: 78px; height: 78px; }
 
+  /* Backend-service satellites are deliberately smaller than the primary
+     ring — the only way the 3 of them fit around gateway at a comparable
+     relative distance without overlapping it or each other. */
+  .node.satellite { width: 64px; height: 64px; margin-left: -32px; margin-top: -32px; }
+  .node.satellite .icon { font-size: 20px; }
+  .node.satellite .icon-img { width: 37px; height: 37px; }
+  .node.satellite .name { font-size: 9px; max-width: 56px; margin-top: 2px; }
+
   .node.active {
     transform: scale(1.12);
     animation: pulse 1.4s ease-in-out infinite;
@@ -234,12 +242,20 @@
 // backend services form a small satellite cluster around api-gateway
 // instead of connecting straight to the orchestrator, since that's where
 // their requests actually route through in the real architecture.
+// Gateway sits on a diagonal (45°) rather than due-right — at the SAME
+// radius as frontend/qa/security (see PRIMARY_RADIUS_PCT below), a due-right
+// gateway leaves almost no room before the box edge for its own satellite
+// cluster. The diagonal points toward a corner instead of an edge, which is
+// ~2x further away from center in a square box — that's the only room the
+// 3 backend-service satellites actually have to exist at a comparable
+// distance from gateway to how far gateway itself sits from the orchestrator.
 const PRIMARY_AGENTS = [
   { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
-  { key: "gateway",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "api-gateway" },
+  { key: "gateway",  angle: 45,  icon: "🔧", img: "backend-agent.png", name: "api-gateway" },
   { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
   { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
 ];
+// angleOffset is relative to gateway's own angle (45°), not absolute.
 const BACKEND_SERVICES = [
   { key: "booking-service",      angleOffset: -65, icon: "🔧", img: "backend-agent.png", name: "booking-service" },
   { key: "user-service",         angleOffset: 0,   icon: "🔧", img: "backend-agent.png", name: "user-service" },
@@ -424,22 +440,26 @@ document.getElementById("enable-sound").addEventListener("click", () => {
 const ring = document.getElementById("ring");
 const beams = document.getElementById("beams");
 
-// Percent-of-ring-box distances, tuned by hand — the primary ring sits at
-// PRIMARY_RADIUS_PCT around the orchestrator; gateway itself sits a bit
-// closer in (GATEWAY_RADIUS_PCT) to leave room on the right for its own
-// small satellite cluster of backend services at SATELLITE_RADIUS_PCT.
+// Percent-of-ring-box distances, tuned by hand (and checked numerically for
+// overlap) — gateway sits at the SAME radius as the other primary agents,
+// PRIMARY_RADIUS_PCT, matching their exact distance from the orchestrator.
+// Its 3 backend-service satellites get their own smaller node size
+// (SATELLITE_NODE_PX) so they can fit around it at SATELLITE_RADIUS_PCT
+// without overlapping gateway, each other, or the box edge.
 const PRIMARY_RADIUS_PCT = 36;
-const GATEWAY_RADIUS_PCT = 22;
 const SATELLITE_RADIUS_PCT = 18;
+// Must match .node.satellite's width in the <style> above — the radius/angle
+// spread here were hand-checked against this exact node size for overlap.
+const SATELLITE_NODE_PX = 64;
 
 function pointAt(cx, cy, radiusPct, angleDeg) {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: cx + radiusPct * Math.cos(rad), y: cy + radiusPct * Math.sin(rad) };
 }
 
-function makeNode(agent, pos, isCenter) {
+function makeNode(agent, pos, isCenter, isSatellite) {
   const el = document.createElement("div");
-  el.className = "node" + (isCenter ? " center" : "");
+  el.className = "node" + (isCenter ? " center" : "") + (isSatellite ? " satellite" : "");
   el.dataset.agent = agent.key;
   el.style.left = pos.x + "%";
   el.style.top = pos.y + "%";
@@ -467,18 +487,18 @@ function makeBeam(key, from, to) {
 
 const nodePositions = {};
 PRIMARY_AGENTS.forEach((agent) => {
-  const radius = agent.key === "gateway" ? GATEWAY_RADIUS_PCT : PRIMARY_RADIUS_PCT;
-  const pos = pointAt(centerPos.x, centerPos.y, radius, agent.angle);
+  const pos = pointAt(centerPos.x, centerPos.y, PRIMARY_RADIUS_PCT, agent.angle);
   nodePositions[agent.key] = pos;
-  makeNode(agent, pos, false);
+  makeNode(agent, pos, false, false);
   makeBeam(agent.key, centerPos, pos);
 });
 
 const gatewayPos = nodePositions["gateway"];
+const gatewayAngle = PRIMARY_AGENTS.find((a) => a.key === "gateway").angle;
 BACKEND_SERVICES.forEach((agent) => {
-  const pos = pointAt(gatewayPos.x, gatewayPos.y, SATELLITE_RADIUS_PCT, agent.angleOffset);
+  const pos = pointAt(gatewayPos.x, gatewayPos.y, SATELLITE_RADIUS_PCT, gatewayAngle + agent.angleOffset);
   nodePositions[agent.key] = pos;
-  makeNode(agent, pos, false);
+  makeNode(agent, pos, false, true);
   makeBeam(agent.key, gatewayPos, pos);
 });
 

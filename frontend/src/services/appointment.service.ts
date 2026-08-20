@@ -1,9 +1,17 @@
 import axios from 'axios'
 
-import { httpService } from './http.service'
+// Namespace import on purpose, matching service.service.ts: this module now
+// reaches for two different clients, and reading a named binding at module
+// scope would make it fail to load the moment a test partially mocks
+// http.service. Every access below happens inside a function.
+import * as http from './http.service'
 import { normalizeCustomerDetails, validateCustomerDetails } from '../utils/customer.utils'
+import { isAppointmentStatus } from '../utils/appointmentStatus.utils'
+import { isDateKey } from '../utils/date.utils'
 import type {
+  AdminAppointment,
   Appointment,
+  AppointmentFilter,
   AppointmentReceipt,
   CreateAppointmentPayload,
   CustomerDetails,
@@ -92,7 +100,7 @@ async function create(
     throw new Error('Invalid customer details')
   }
 
-  return httpService.post<Appointment>(BASE_URL, toCreatePayload(serviceId, slotId, details))
+  return http.httpService.post<Appointment>(BASE_URL, toCreatePayload(serviceId, slotId, details))
 }
 
 /**
@@ -115,10 +123,94 @@ async function getReceipt(appointmentId: string): Promise<AppointmentReceipt> {
     throw new Error('Missing appointmentId')
   }
 
-  return httpService.get<AppointmentReceipt>(`${BASE_URL}/${encodeURIComponent(appointmentId)}`)
+  return http.httpService.get<AppointmentReceipt>(
+    `${BASE_URL}/${encodeURIComponent(appointmentId)}`,
+  )
+}
+
+/**
+ * Builds the query object for the Admin list, dropping anything that would only
+ * narrow the result set by accident.
+ *
+ * A malformed date or an unrecognized status is *omitted* rather than sent: the
+ * filter is a way of looking at the list, so the worst honest outcome is a
+ * wider list than asked for. Forwarding a value the server cannot parse would
+ * trade that for a 400 and an empty screen.
+ */
+export function toAdminListParams(filter: AppointmentFilter = {}): Record<string, string> {
+  const params: Record<string, string> = {}
+
+  if (filter.date && isDateKey(filter.date)) params.date = filter.date
+  if (filter.status && isAppointmentStatus(filter.status)) params.status = filter.status
+
+  return params
+}
+
+/**
+ * The Admin's list of every Appointment (PRD F9), narrowed by an optional day
+ * and status. Goes through api-gateway, never booking-service directly: the
+ * response aggregates customer name and phone across every booking in the
+ * clinic, so the JWT-verifying origin is the only one that may serve it.
+ *
+ * A non-array body is treated as an empty list rather than being handed to the
+ * page to crash on — a backend that answers with an error envelope where a list
+ * was promised is a fault worth logging, not worth rendering.
+ */
+async function getAdminList(filter: AppointmentFilter = {}): Promise<AdminAppointment[]> {
+  const appointments = await http.gatewayHttpService.get<AdminAppointment[]>(
+    BASE_URL,
+    toAdminListParams(filter),
+  )
+
+  if (!Array.isArray(appointments)) {
+    console.log('[APPOINTMENT] unexpected admin appointments payload shape')
+    return []
+  }
+
+  return appointments
+}
+
+/**
+ * Confirms a pending Appointment (PRD F10). The server applies the transition
+ * conditionally on the current status, so a booking that moved on in another
+ * tab answers 409 rather than being silently re-confirmed — only the response
+ * proves what happened (.rule/error-handling-rules.md).
+ */
+async function confirm(appointmentId: string): Promise<AdminAppointment> {
+  if (!appointmentId) {
+    console.log('[APPOINTMENT] refusing to confirm without an appointment id')
+    throw new Error('Missing appointmentId')
+  }
+
+  return http.gatewayHttpService.patch<AdminAppointment>(
+    `${BASE_URL}/${encodeURIComponent(appointmentId)}/confirm`,
+  )
+}
+
+/**
+ * Cancels a pending or confirmed Appointment (PRD F11) and, server-side,
+ * releases the TimeSlot behind it back to `open` so the time returns to the
+ * public picker.
+ *
+ * That second write is deliberately the server's job and not two calls from
+ * here: a client that cancelled the booking and then failed to release the slot
+ * would strand a time nobody can ever book (plan 013, Open Question 3).
+ */
+async function cancel(appointmentId: string): Promise<AdminAppointment> {
+  if (!appointmentId) {
+    console.log('[APPOINTMENT] refusing to cancel without an appointment id')
+    throw new Error('Missing appointmentId')
+  }
+
+  return http.gatewayHttpService.patch<AdminAppointment>(
+    `${BASE_URL}/${encodeURIComponent(appointmentId)}/cancel`,
+  )
 }
 
 export const appointmentService = {
   create,
   getReceipt,
+  getAdminList,
+  confirm,
+  cancel,
 }

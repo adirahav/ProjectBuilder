@@ -1,4 +1,8 @@
-import type { Appointment, AppointmentReceipt } from '../types/appointment.types'
+import type {
+  AdminAppointment,
+  Appointment,
+  AppointmentReceipt,
+} from '../types/appointment.types'
 import type { LoginResponse } from '../types/auth.types'
 import type { Service } from '../types/service.types'
 import type { TimeSlot } from '../types/timeSlot.types'
@@ -86,6 +90,25 @@ export function buildAppointment(overrides: Partial<Appointment> = {}): Appointm
     customerName: 'Dana Levi',
     customerPhone: '050-123-4567',
     status: 'pending',
+    ...overrides,
+  }
+}
+
+/**
+ * One row of the Admin's list (Screen 7), as `GET /api/appointments` returns it:
+ * an Appointment plus the joined Service and TimeSlot display fields.
+ *
+ * The nested parts are spread *before* the overrides so a test can replace or
+ * drop either one — `buildAdminAppointment({ timeSlot: undefined })` is how the
+ * "record no longer on file" row is expressed, and it has to actually win.
+ */
+export function buildAdminAppointment(
+  overrides: Partial<AdminAppointment> = {},
+): AdminAppointment {
+  return {
+    ...buildAppointment(),
+    service: { name: 'Full groom', durationMinutes: 90, price: 220 },
+    timeSlot: { date: '2026-08-18', startTime: '09:00', endTime: '10:30' },
     ...overrides,
   }
 }

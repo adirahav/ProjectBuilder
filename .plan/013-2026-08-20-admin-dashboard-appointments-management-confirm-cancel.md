@@ -1,6 +1,6 @@
 # Plan 013 — Admin Dashboard: Appointments management (confirm/cancel)
 
-- Status: draft
+- Status: active
 - Owner: orchestrator
 - Last updated: 2026-08-20
 - Scope-Agents: frontend, booking-service, api-gateway, qa, security

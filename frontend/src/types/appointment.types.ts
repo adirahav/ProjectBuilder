@@ -57,6 +57,48 @@ export interface AppointmentReceipt extends Appointment {
 }
 
 /**
+ * One row of the Admin's Appointments list (PRD F9, Screen 7). It is an
+ * `Appointment` plus the same two nested display objects a receipt carries —
+ * the Admin is reading a list of *bookings*, and "Full groom, Tuesday 09:00" is
+ * the only form of that a person can scan; a pair of raw ids is not.
+ *
+ * Both nested parts are optional for the same reason they are on
+ * `AppointmentReceipt`: a Service or TimeSlot that was hard-removed underneath a
+ * booking leaves a row that still has to render. Omitting a fact is honest where
+ * inventing one would not be.
+ *
+ * Unlike the public receipt, this shape is only ever fetched through
+ * api-gateway behind the Admin JWT — it aggregates customer name and phone
+ * across every booking, which is precisely why it has no unauthenticated route.
+ */
+export interface AdminAppointment extends Appointment {
+  service?: ReceiptService
+  timeSlot?: ReceiptTimeSlot
+}
+
+/**
+ * The Admin list filter. Both fields are optional and independent: absent means
+ * "do not narrow by this", never "match empty". Sent as query parameters, so an
+ * absent field is simply not serialized rather than sent as `''` — an empty
+ * string is a value, and a server reading it as one would return nothing.
+ */
+export interface AppointmentFilter {
+  /** A single calendar day, `YYYY-MM-DD`, matched against the slot's date. */
+  date?: string
+  status?: AppointmentStatus
+}
+
+/**
+ * The outcome of an Admin confirm/cancel. Modelled as a value rather than an
+ * exception for the same reason `CreateAppointmentOutcome` is: a `conflict`
+ * (the booking already moved on, in another tab or another session) and a
+ * `not-found` (it was removed under the loaded list) are both ordinary results
+ * of acting on a list that was fetched a moment ago, and each deserves its own
+ * message rather than a generic "try again" that could never succeed.
+ */
+export type AppointmentActionOutcome = 'updated' | 'conflict' | 'not-found' | 'error'
+
+/**
  * What the Customer types into the form, before validation and trimming. Every
  * field is a plain string — an untouched optional email is `''` here, and only
  * the service decides whether that becomes an omitted wire field.

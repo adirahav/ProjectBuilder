@@ -81,25 +81,26 @@ export function AdminDashboardPage() {
           </span>
         </Link>
 
-        <div
+        <Link
+          to="/admin/appointments"
           className={cn(
-            'flex flex-col gap-3 rounded-2xl border border-dashed border-neutral-900/15',
-            'bg-white p-6 text-start',
+            'flex flex-col gap-3 rounded-2xl border border-neutral-900/10 bg-white p-6 text-start',
+            'transition-colors hover:border-primary/40 hover:bg-primary-light',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
           )}
         >
-          <span className="flex size-11 items-center justify-center rounded-xl bg-neutral-900/5 text-neutral-900/60">
+          <span className="flex size-11 items-center justify-center rounded-xl bg-primary-light text-primary">
             <CalendarClock className="size-5" aria-hidden="true" />
           </span>
           <h2 className="text-lg font-semibold text-neutral-900">
             {t('admin.dashboard.appointments.title')}
           </h2>
           <p className="text-sm text-neutral-900/70">{t('admin.dashboard.appointments.body')}</p>
-          {/* A word, not a greyed-out link: nothing here is clickable yet, and
-              pretending otherwise only costs a wasted press. */}
-          <span className="mt-auto pt-2 text-sm font-semibold text-neutral-900/60">
-            {t('admin.dashboard.appointments.soon')}
+          <span className="mt-auto inline-flex items-center gap-2 pt-2 text-sm font-semibold text-primary">
+            {t('admin.dashboard.appointments.action')}
+            <ArrowRight className="size-4 shrink-0 rtl:rotate-180" aria-hidden="true" />
           </span>
-        </div>
+        </Link>
       </div>
     </main>
   )

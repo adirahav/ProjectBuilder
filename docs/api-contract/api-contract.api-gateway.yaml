@@ -9,10 +9,9 @@ info:
     the request to the service that owns the data.
 
     Scope of this revision: PRD F5 (`POST /api/auth/login`, proxied through to
-    user-service) plus the Admin Service management routes F6-F8, proxied
-    through to booking-service and gated by the gateway's JWT verification
-    (AC-7). The Admin Appointment routes (F9-F11) are defined by their own
-    ticket and are deliberately absent here.
+    user-service), the Admin Service management routes F6-F8, and the Admin
+    Appointment routes F9-F11 — all proxied through to booking-service and
+    gated by the gateway's JWT verification (AC-7).
 
     The public booking routes (F1-F4b) are NOT part of this contract: they are
     unauthenticated by design and the frontend calls booking-service directly.
@@ -36,6 +35,22 @@ tags:
       path (`/api/services/all`) rather than a flag on the public one, so a
       deactivated Service is never one misread query parameter away from the
       customer-facing screen.
+  - name: Admin Appointments
+    description: >
+      Admin-only management of `Appointment` records (PRD F9-F11, Screen 7).
+      Every route here requires a valid Admin JWT and is forwarded to
+      booking-service.
+
+      This is the most sensitive surface in the gateway: `GET /api/appointments`
+      aggregates customer names, phone numbers and email addresses across every
+      booking in the clinic in a single response, where the public receipt route
+      exposes one booking to whoever already holds its id. It must have no
+      unauthenticated path whatsoever.
+
+      The public `POST /api/appointments` and `GET /api/appointments/{id}`
+      (PRD F4/F4b) are deliberately NOT part of this contract and are not
+      mounted here: the frontend calls booking-service directly for them. The
+      mount below therefore does not shadow them.
 
 components:
   responses:
@@ -65,6 +80,37 @@ components:
             $ref: '#/components/schemas/Error'
           example:
             error: Service not found
+
+    AppointmentNotFound:
+      description: >
+        No Appointment with that id exists — typically because the list was
+        loaded before the record was removed. The frontend treats this as its
+        own case: it says the booking is gone and reloads the list, rather than
+        offering a retry that could never succeed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Appointment not found
+
+    AppointmentConflict:
+      description: >
+        The Appointment is not in a status this transition is allowed from —
+        confirming something already `confirmed` or `cancelled`, or cancelling
+        something already `cancelled`.
+
+        This is the answer to a race, not to bad input: the transition is applied
+        as a single conditional update matching on the current status, so of two
+        near-simultaneous requests for the same transition exactly one succeeds
+        and the other lands here. The frontend reloads the list and says the
+        booking had already changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Appointment is not pending
 
     BookingServiceUnavailable:
       description: >
@@ -249,6 +295,85 @@ components:
         An empty object must be rejected as 400 — it is a request that cannot
         accomplish anything.
       additionalProperties: false
+
+    AdminAppointment:
+      type: object
+      description: >
+        One booking as the Admin sees it (PRD F9). It is the stored Appointment
+        plus the two joined display objects the list is actually read by — a
+        person scans "Full groom, Tuesday 09:00", not a pair of ids.
+
+        Both joins are optional, and the frontend renders a row without either
+        one: a Service or TimeSlot removed underneath an existing booking must
+        still leave a readable row. Omitting a fact is honest; inventing one is
+        not. They must be omitted entirely rather than sent as null.
+
+        This shape carries customer PII and has no unauthenticated route.
+      required: [id, serviceId, timeSlotId, customerName, customerPhone, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        serviceId:
+          type: string
+          format: uuid
+        timeSlotId:
+          type: string
+          format: uuid
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+          description: >
+            Free-form as the Customer typed it, not normalized to E.164 — the
+            Admin dials it, and the frontend renders it as a `tel:` link.
+        customerEmail:
+          type: string
+          format: email
+          description: Optional at booking time; absent, never an empty string.
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled]
+        service:
+          type: object
+          description: Joined from `serviceId` for display.
+          properties:
+            name:
+              type: string
+            durationMinutes:
+              type: integer
+            price:
+              type: number
+        timeSlot:
+          type: object
+          description: Joined from `timeSlotId` for display.
+          properties:
+            date:
+              type: string
+              format: date
+              description: The calendar day, `YYYY-MM-DD`.
+            startTime:
+              type: string
+              pattern: '^[0-2][0-9]:[0-5][0-9]$'
+              description: Local wall-clock time, `HH:mm`.
+            endTime:
+              type: string
+              pattern: '^[0-2][0-9]:[0-5][0-9]$'
+      example:
+        id: 7c1f9a2e-4d3b-4a51-9f6c-2b8e0d5a7c31
+        serviceId: 1b2c3d4e-5f60-4718-9a2b-3c4d5e6f7a8b
+        timeSlotId: 9e8d7c6b-5a49-4382-b1c0-d9e8f7a6b5c4
+        customerName: Dana Levi
+        customerPhone: 050-123-4567
+        status: pending
+        service:
+          name: Full groom
+          durationMinutes: 90
+          price: 220
+        timeSlot:
+          date: '2026-08-18'
+          startTime: '09:00'
+          endTime: '10:30'
 
     Error:
       type: object
@@ -500,5 +625,168 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/ServiceNotFound'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'
+
+  /api/appointments:
+    get:
+      tags: [Admin Appointments]
+      operationId: listAppointments
+      summary: Every Appointment on record, optionally narrowed
+      description: >
+        PRD F9. Returns all Appointments — every status, including `cancelled` —
+        joined with their Service and TimeSlot for display.
+
+        The two filters are independent and both optional: absent means "do not
+        narrow by this", never "match empty". An absent filter must not be read
+        as an empty-string match. The frontend omits a malformed value entirely
+        rather than forwarding it, so a value that does arrive is well-formed.
+
+        Ordering is not relied upon: the frontend sorts by the slot's date and
+        start time itself, soonest first.
+
+        This response aggregates customer PII across the whole clinic. It must be
+        unreachable without a valid Admin JWT — that gate is the single reason
+        this route exists at the gateway rather than being called directly.
+      security:
+        - adminJwt: []
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >
+            A single calendar day, `YYYY-MM-DD`, matched against the linked
+            TimeSlot's date. Past days are valid — the Admin genuinely needs to
+            look back at yesterday.
+          example: '2026-08-18'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, confirmed, cancelled]
+          description: Narrows to one status. An unrecognized value is a 400.
+      responses:
+        '200':
+          description: >
+            The matching Appointments. An empty array is a valid, successful
+            answer — an empty diary and a filter that matched nothing are both
+            200, and the frontend tells them apart by whether a filter is set.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminAppointment'
+        '400':
+          description: A filter value is present but unparseable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: status must be one of pending, confirmed, cancelled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'
+
+  /api/appointments/{id}/confirm:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Admin Appointments]
+      operationId: confirmAppointment
+      summary: Confirm a pending Appointment
+      description: >
+        PRD F10. Transitions `pending` -> `confirmed` and nothing else. No
+        request body.
+
+        Applied as a single conditional update matching on the current status,
+        so a booking that moved on in another tab answers 409 rather than being
+        silently re-confirmed. It must not touch the linked TimeSlot: the slot is
+        already `booked`, and confirming is the Admin agreeing to honour it.
+
+        Reversible by the cancel route below, which is why the frontend asks for
+        no extra confirmation before calling this.
+      security:
+        - adminJwt: []
+      responses:
+        '200':
+          description: >
+            The updated Appointment, now `confirmed`. The joined `service` and
+            `timeSlot` are welcome but not required here — the frontend merges
+            this response into the row it already holds rather than replacing it,
+            so a bare Appointment cannot blank out the row's service name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAppointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/AppointmentNotFound'
+        '409':
+          $ref: '#/components/responses/AppointmentConflict'
+        '502':
+          $ref: '#/components/responses/BookingServiceUnavailable'
+
+  /api/appointments/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Admin Appointments]
+      operationId: cancelAppointment
+      summary: Cancel an Appointment and release its TimeSlot
+      description: >
+        PRD F11. Transitions `pending` or `confirmed` -> `cancelled`, and
+        releases the linked TimeSlot back to `open` so the time returns to the
+        public picker. No request body.
+
+        Both source statuses are allowed, exactly as F11 states: a pending
+        booking the Admin does not want to honour must be cancellable without
+        first confirming it.
+
+        The slot release is the server's job and is not a second call from the
+        client — a client that cancelled the booking and then failed its second
+        request would strand a time nobody can ever book. Order the two writes so
+        the Appointment's conditional transition is the precondition, and treat a
+        slot that is missing or already `open` as a no-op success rather than a
+        failure that blocks the cancel: the Appointment's own status is the more
+        important source of truth for the Admin's action.
+
+        Two near-simultaneous cancels of the same Appointment must produce
+        exactly one `cancelled` transition and one 409 — never a double release
+        of the same TimeSlot.
+
+        There is no un-cancel route; the PRD specifies confirm and cancel only.
+      security:
+        - adminJwt: []
+      responses:
+        '200':
+          description: The updated Appointment, now `cancelled`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAppointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/AppointmentNotFound'
+        '409':
+          $ref: '#/components/responses/AppointmentConflict'
         '502':
           $ref: '#/components/responses/BookingServiceUnavailable'

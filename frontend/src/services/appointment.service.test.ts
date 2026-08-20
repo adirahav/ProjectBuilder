@@ -5,17 +5,31 @@ import {
   appointmentService,
   isAppointmentConflictError,
   isAppointmentNotFoundError,
+  toAdminListParams,
   toCreatePayload,
 } from './appointment.service'
-import { httpService } from './http.service'
-import { buildAppointment, buildAppointmentReceipt } from '../test/factories'
+import { gatewayHttpService, httpService } from './http.service'
+import {
+  buildAdminAppointment,
+  buildAppointment,
+  buildAppointmentReceipt,
+} from '../test/factories'
 import type { CustomerDetails } from '../types/appointment.types'
 
 vi.mock('./http.service', () => ({
   httpService: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  gatewayHttpService: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
 }))
 
 const mockedPost = vi.mocked(httpService.post)
+const mockedGatewayGet = vi.mocked(gatewayHttpService.get)
+const mockedGatewayPatch = vi.mocked(gatewayHttpService.patch)
 
 const details: CustomerDetails = {
   customerName: 'Dana Levi',
@@ -174,5 +188,185 @@ describe('toCreatePayload', () => {
       slotId: 'slot-9',
       serviceId: 'service-1',
     })
+  })
+})
+
+describe('toAdminListParams', () => {
+  it('sends nothing at all when the Admin has not narrowed the list', () => {
+    expect(toAdminListParams({})).toEqual({})
+    expect(toAdminListParams()).toEqual({})
+  })
+
+  it('forwards a well-formed date and status', () => {
+    expect(toAdminListParams({ date: '2026-08-18', status: 'pending' })).toEqual({
+      date: '2026-08-18',
+      status: 'pending',
+    })
+  })
+
+  it('omits a malformed date rather than sending one the server cannot parse', () => {
+    // A wider list than asked for is the honest failure here; a 400 and a blank
+    // screen is not.
+    expect(toAdminListParams({ date: '18/08/2026' })).toEqual({})
+  })
+
+  it('omits a status that is not one the API recognizes', () => {
+    expect(toAdminListParams({ status: 'archived' as never })).toEqual({})
+  })
+
+  it('keeps the valid half of a half-valid filter', () => {
+    expect(toAdminListParams({ date: 'nonsense', status: 'confirmed' })).toEqual({
+      status: 'confirmed',
+    })
+  })
+})
+
+describe('appointmentService.getAdminList', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('asks api-gateway, never booking-service directly', async () => {
+    mockedGatewayGet.mockResolvedValue([])
+
+    await appointmentService.getAdminList()
+
+    // The list aggregates customer names and phone numbers across the whole
+    // clinic; only the JWT-verifying origin may serve it.
+    expect(mockedGatewayGet).toHaveBeenCalledWith('/api/appointments', {})
+    expect(httpService.get).not.toHaveBeenCalled()
+  })
+
+  it('passes the filter through as query parameters', async () => {
+    mockedGatewayGet.mockResolvedValue([])
+
+    await appointmentService.getAdminList({ date: '2026-08-18', status: 'pending' })
+
+    expect(mockedGatewayGet).toHaveBeenCalledWith('/api/appointments', {
+      date: '2026-08-18',
+      status: 'pending',
+    })
+  })
+
+  it('returns the appointments the API sends back', async () => {
+    const appointments = [buildAdminAppointment(), buildAdminAppointment()]
+    mockedGatewayGet.mockResolvedValue(appointments)
+
+    expect(await appointmentService.getAdminList()).toEqual(appointments)
+  })
+
+  it('treats an empty diary as an empty list, not a failure', async () => {
+    mockedGatewayGet.mockResolvedValue([])
+
+    expect(await appointmentService.getAdminList()).toEqual([])
+  })
+
+  it('degrades to an empty list when the body is not a list at all', async () => {
+    // An error envelope where an array was promised is a backend fault worth
+    // logging — but it must not hand the page something it will crash on.
+    mockedGatewayGet.mockResolvedValue({ error: 'Unauthorized' } as never)
+
+    expect(await appointmentService.getAdminList()).toEqual([])
+  })
+
+  it('lets a transport failure reach the caller', async () => {
+    mockedGatewayGet.mockRejectedValue(buildErrorWithStatus(500))
+
+    await expect(appointmentService.getAdminList()).rejects.toThrow()
+  })
+})
+
+describe('appointmentService.confirm', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('patches the confirm route for that appointment through the gateway', async () => {
+    const appointment = buildAdminAppointment({ status: 'confirmed' })
+    mockedGatewayPatch.mockResolvedValue(appointment)
+
+    await appointmentService.confirm('appointment-7')
+
+    expect(mockedGatewayPatch).toHaveBeenCalledWith('/api/appointments/appointment-7/confirm')
+  })
+
+  it('returns the server record rather than a locally-guessed status', async () => {
+    const appointment = buildAdminAppointment({ status: 'confirmed' })
+    mockedGatewayPatch.mockResolvedValue(appointment)
+
+    expect(await appointmentService.confirm('appointment-7')).toEqual(appointment)
+  })
+
+  it('escapes an id that would otherwise change which route is called', async () => {
+    mockedGatewayPatch.mockResolvedValue(buildAdminAppointment())
+
+    await appointmentService.confirm('a/../b')
+
+    expect(mockedGatewayPatch).toHaveBeenCalledWith('/api/appointments/a%2F..%2Fb/confirm')
+  })
+
+  it('refuses to send a request with no appointment id', async () => {
+    await expect(appointmentService.confirm('')).rejects.toThrow('Missing appointmentId')
+    expect(mockedGatewayPatch).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a 409 as a conflict the caller can recognize', async () => {
+    const conflict = buildErrorWithStatus(409)
+    mockedGatewayPatch.mockRejectedValue(conflict)
+
+    await expect(appointmentService.confirm('appointment-7')).rejects.toBe(conflict)
+    expect(isAppointmentConflictError(conflict)).toBe(true)
+  })
+
+  it('surfaces a 404 as a missing record the caller can recognize', async () => {
+    const missing = buildErrorWithStatus(404)
+    mockedGatewayPatch.mockRejectedValue(missing)
+
+    await expect(appointmentService.confirm('appointment-7')).rejects.toBe(missing)
+    expect(isAppointmentNotFoundError(missing)).toBe(true)
+  })
+})
+
+describe('appointmentService.cancel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('patches the cancel route for that appointment through the gateway', async () => {
+    mockedGatewayPatch.mockResolvedValue(buildAdminAppointment({ status: 'cancelled' }))
+
+    await appointmentService.cancel('appointment-7')
+
+    expect(mockedGatewayPatch).toHaveBeenCalledWith('/api/appointments/appointment-7/cancel')
+  })
+
+  it('makes exactly one request, leaving the TimeSlot release to the server', async () => {
+    mockedGatewayPatch.mockResolvedValue(buildAdminAppointment({ status: 'cancelled' }))
+
+    await appointmentService.cancel('appointment-7')
+
+    // A client that cancelled the booking and then failed its second call would
+    // strand a time nobody can ever book (plan 013, Open Question 3).
+    expect(mockedGatewayPatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the cancelled record the server sends back', async () => {
+    const cancelled = buildAdminAppointment({ status: 'cancelled' })
+    mockedGatewayPatch.mockResolvedValue(cancelled)
+
+    expect(await appointmentService.cancel('appointment-7')).toEqual(cancelled)
+  })
+
+  it('refuses to send a request with no appointment id', async () => {
+    await expect(appointmentService.cancel('')).rejects.toThrow('Missing appointmentId')
+    expect(mockedGatewayPatch).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a 409 when the booking had already moved on', async () => {
+    const conflict = buildErrorWithStatus(409)
+    mockedGatewayPatch.mockRejectedValue(conflict)
+
+    await expect(appointmentService.cancel('appointment-7')).rejects.toBe(conflict)
+    expect(isAppointmentConflictError(conflict)).toBe(true)
   })
 })

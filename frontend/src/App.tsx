@@ -12,6 +12,7 @@ import { BookingConfirmationPage } from './pages/BookingConfirmationPage'
 import { AdminLoginPage } from './pages/AdminLoginPage'
 import { AdminDashboardPage } from './pages/AdminDashboardPage'
 import { AdminServicesPage } from './pages/AdminServicesPage'
+import { AdminAppointmentsPage } from './pages/AdminAppointmentsPage'
 import { useDocumentDirection } from './hooks/useI18n'
 import { useStore } from './store/store'
 import { directionFor } from './store/slices/app.slice'
@@ -21,10 +22,11 @@ import { setUnauthorizedHandler } from './services/http.service'
  * Routes plus the shared shell. Exported separately from `App` so tests can
  * mount it inside a MemoryRouter without a second router in the tree.
  *
- * The booking routes are public by design (a Customer has no account). `/admin`
- * and `/admin/services` sit behind ProtectedRoute; `/admin/login` stays public,
- * since it is how the token is obtained in the first place. The Appointments
- * view lands with its own ticket, underneath the same guard.
+ * The booking routes are public by design (a Customer has no account). `/admin`,
+ * `/admin/services` and `/admin/appointments` sit behind ProtectedRoute;
+ * `/admin/login` stays public, since it is how the token is obtained in the
+ * first place. That guard is a convenience, not the security boundary — every
+ * Admin request is verified again at api-gateway.
  */
 export function AppRoutes() {
   const locale = useStore((state) => state.locale)
@@ -70,6 +72,7 @@ export function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route path="/admin" element={<AdminDashboardPage />} />
           <Route path="/admin/services" element={<AdminServicesPage />} />
+          <Route path="/admin/appointments" element={<AdminAppointmentsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

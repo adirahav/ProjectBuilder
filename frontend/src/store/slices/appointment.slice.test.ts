@@ -14,7 +14,15 @@ vi.mock('../../services/appointment.service', async () => {
       '../../services/appointment.service',
     )
 
-  return { ...actual, appointmentService: { create: vi.fn() } }
+  return {
+    ...actual,
+    appointmentService: {
+      create: vi.fn(),
+      getAdminList: vi.fn(),
+      confirm: vi.fn(),
+      cancel: vi.fn(),
+    },
+  }
 })
 
 const mockedCreate = vi.mocked(appointmentService.create)

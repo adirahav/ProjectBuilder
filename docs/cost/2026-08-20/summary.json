@@ -1,0 +1,41 @@
+{
+  "tasks": [
+    {
+      "role": "booking-service",
+      "label": "Backend Agent — booking-service",
+      "inputTokens": 16,
+      "outputTokens": 2659,
+      "cacheReadTokens": 363861,
+      "costUsd": 0.29574680000000003,
+      "durationMs": 73108
+    },
+    {
+      "role": "api-gateway",
+      "label": "Backend Agent — api-gateway",
+      "inputTokens": 7166,
+      "outputTokens": 5337,
+      "cacheReadTokens": 513510,
+      "costUsd": 0.39671525,
+      "durationMs": 128950
+    },
+    {
+      "role": "qa",
+      "label": "QA Agent",
+      "inputTokens": 6,
+      "outputTokens": 3520,
+      "cacheReadTokens": 140892,
+      "costUsd": 0.9668545,
+      "durationMs": 40195
+    },
+    {
+      "role": "security",
+      "label": "Security Agent",
+      "inputTokens": 92,
+      "outputTokens": 28566,
+      "cacheReadTokens": 3495130,
+      "costUsd": 1.8037827500000005,
+      "durationMs": 540019
+    }
+  ],
+  "totalCostUsd": 3.4630993000000005
+}

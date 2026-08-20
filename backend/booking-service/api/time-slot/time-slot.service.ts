@@ -149,3 +149,43 @@ export async function holdTimeSlot(slotUuid: string): Promise<HoldResult> {
   const exists = await TimeSlot.exists({ uuid: slotUuid })
   return exists ? { outcome: 'conflict' } : { outcome: 'not-found' }
 }
+
+/**
+ * Release a slot back to `open` — the `booked` -> `open` (and `held` -> `open`)
+ * transition an Admin cancellation triggers (PRD F11).
+ *
+ * This lives here, in the module that owns `TimeSlot`, rather than in
+ * `appointment.service.ts`, precisely because it is a status write: every write
+ * to this field goes through exactly one module, so the transition table in
+ * `seat-concurrency-layer` has a single source of truth. `appointment.service`
+ * calls this; it never reaches into `TimeSlot` with an ad hoc update.
+ *
+ * The write is a condition-checked atomic update, not a read-then-write: the
+ * precondition (`status` is currently `held` or `booked`) lives inside the
+ * filter, so two concurrent cancels of the same appointment cannot both "see"
+ * a booked slot and both release it. `heldAt` is cleared in the same operation,
+ * so a released slot never carries stale hold bookkeeping into its next hold.
+ *
+ * Idempotent by design (plan 013, Open Question 3): a slot that is already
+ * `open`, or a uuid that resolves to nothing, is a no-op SUCCESS, not an error.
+ * The Appointment's own status is the authoritative record of the Admin's
+ * action — a slot that is already free must never block a cancellation, and
+ * "already open" is exactly the state we were trying to reach anyway.
+ *
+ * Returns `true` when this call is what flipped the slot, `false` when there
+ * was nothing to flip. Callers use it for logging/assertions only; neither
+ * value is a failure.
+ */
+export async function releaseTimeSlot(slotUuid: string): Promise<boolean> {
+  const released = await TimeSlot.findOneAndUpdate(
+    // Only a slot that is actually claimed is released. Matching on the current
+    // status is what makes a double-release a no-op instead of a second write.
+    { uuid: slotUuid, status: { $in: ['held', 'booked'] } },
+    { $set: { status: 'open', heldAt: null } },
+    { new: true },
+  )
+    .select('uuid')
+    .lean()
+
+  return released !== null
+}

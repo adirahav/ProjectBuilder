@@ -1,7 +1,15 @@
 import type { Request, Response } from 'express'
 
 import { isDbConnected } from '../lib/db.ts'
-import { createAppointment, getAppointmentReceipt } from './appointment.service.ts'
+import { APPOINTMENT_STATUSES, type AppointmentStatus } from '../models/appointment.model.ts'
+import {
+  cancelAppointment,
+  confirmAppointment,
+  createAppointment,
+  getAppointmentReceipt,
+  listAppointments,
+  type AppointmentTransitionResult,
+} from './appointment.service.ts'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // Deliberately conservative rather than RFC-complete: a local part, one @, a
@@ -9,6 +17,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // and the cost of rejecting an exotic-but-valid address is far lower here than
 // the cost of storing junk in the one field used to contact a Customer.
 const EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/
+
+// A literal calendar day. Pattern-checked AND range-checked below — `9999-99-99`
+// matches the shape but is not a real day, and a client must never be able to
+// put an arbitrary string into a database filter.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const NAME_MAX = 60
 const PHONE_MIN = 9
@@ -22,6 +35,22 @@ const EMAIL_MAX = 254
  */
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value)
+}
+
+/**
+ * A real calendar day, not just the right shape: `2026-02-31` matches the
+ * pattern but is not a day, so the parsed date is round-tripped back to a string
+ * and compared. Mirrors `isCalendarDate` in time-slot.controller.ts.
+ */
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
+/** One of the three known statuses — matched against the enum, never trusted raw. */
+function isAppointmentStatus(value: unknown): value is AppointmentStatus {
+  return typeof value === 'string' && (APPOINTMENT_STATUSES as readonly string[]).includes(value)
 }
 
 /**
@@ -190,6 +219,133 @@ export async function getAppointment(req: Request, res: Response): Promise<void>
   } catch (err) {
     // Never leak a stack trace or a raw Mongoose error to the client.
     console.error('booking-service: GET /api/appointments/:id failed:', (err as Error).message)
+    res.status(500).json({ error: 'Internal Server Error' })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin Appointment management (PRD F9-F11).
+//
+// No auth middleware guards these handlers, and that is deliberate, not an
+// oversight: api-gateway verifies the Admin JWT and only then forwards, exactly
+// the trust boundary the Admin Service writes (F6-F8) already established. The
+// consequence is that this service's port must NOT be publicly exposed — the
+// list handler below returns every Customer's name, phone and email in one
+// response, so an exposed port is a bulk PII leak, not just an open endpoint.
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/appointments?date=&status= — the Admin list (PRD F9).
+ *
+ * Both filters are optional; each is validated against a fixed shape before it
+ * reaches the service layer, and an unrecognised value is a 400 rather than
+ * being silently ignored — quietly dropping a bad `status` would show the Admin
+ * the FULL list while their UI claims it is filtered, which is worse than an
+ * error. Any other query parameter is ignored outright and never merged into
+ * the database filter.
+ */
+export async function getAppointments(req: Request, res: Response): Promise<void> {
+  if (!isDbConnected()) {
+    res.status(503).json({ error: 'Service Unavailable' })
+    return
+  }
+
+  const { date, status } = req.query
+
+  // Express parses `?date[$ne]=x` into an object — hence the type checks inside
+  // the validators, not just a pattern test on an assumed string.
+  if (date !== undefined && !isCalendarDate(date)) {
+    res.status(400).json({ error: 'Query parameter "date" must be a YYYY-MM-DD calendar day' })
+    return
+  }
+  if (status !== undefined && !isAppointmentStatus(status)) {
+    res.status(400).json({
+      error: `Query parameter "status" must be one of: ${APPOINTMENT_STATUSES.join(', ')}`,
+    })
+    return
+  }
+
+  try {
+    const appointments = await listAppointments({
+      ...(date !== undefined ? { date } : {}),
+      ...(status !== undefined ? { status } : {}),
+    })
+
+    // An empty array is a valid, expected result — an Admin with nothing booked
+    // that day is not an error.
+    res.status(200).json(appointments)
+  } catch (err) {
+    console.error('booking-service: GET /api/appointments failed:', (err as Error).message)
+    res.status(500).json({ error: 'Internal Server Error' })
+  }
+}
+
+/**
+ * PATCH /api/appointments/:id/confirm — `pending` -> `confirmed` (PRD F10).
+ *
+ * The request has no body, and none is read: the endpoint that was called
+ * determines the resulting status. A client can never name the status it wants.
+ */
+export async function patchConfirmAppointment(req: Request, res: Response): Promise<void> {
+  await handleTransition(req, res, 'confirm', confirmAppointment)
+}
+
+/**
+ * PATCH /api/appointments/:id/cancel — `pending`|`confirmed` -> `cancelled`
+ * (PRD F11), which also releases the linked TimeSlot back to `open`.
+ *
+ * Bodyless for the same reason as confirm.
+ */
+export async function patchCancelAppointment(req: Request, res: Response): Promise<void> {
+  await handleTransition(req, res, 'cancel', cancelAppointment)
+}
+
+/**
+ * The shared request/response handling behind both Admin transitions — validate
+ * the id, map the service's discriminated outcome to a status code, never leak
+ * an internal error.
+ *
+ * 409 (not 404) for a wrong-status transition is meaningful to the Admin UI: it
+ * means "someone already acted on this", so the row is stale and should be
+ * refetched — distinct from "that appointment is gone".
+ */
+async function handleTransition(
+  req: Request,
+  res: Response,
+  action: 'confirm' | 'cancel',
+  transition: (id: string) => Promise<AppointmentTransitionResult>,
+): Promise<void> {
+  if (!isDbConnected()) {
+    res.status(503).json({ error: 'Service Unavailable' })
+    return
+  }
+
+  const { id } = req.params
+  // Validated before it can reach a query filter, so a crafted path segment can
+  // never become an operator object.
+  if (!isUuid(id)) {
+    res.status(400).json({ error: 'Not Found' })
+    return
+  }
+
+  try {
+    const result = await transition(id)
+
+    if (result.outcome === 'not-found') {
+      res.status(404).json({ error: 'Not Found' })
+      return
+    }
+    if (result.outcome === 'conflict') {
+      res.status(409).json({ error: `Appointment cannot be ${action}ed from its current status` })
+      return
+    }
+
+    res.status(200).json(result.appointment)
+  } catch (err) {
+    console.error(
+      `booking-service: PATCH /api/appointments/:id/${action} failed:`,
+      (err as Error).message,
+    )
     res.status(500).json({ error: 'Internal Server Error' })
   }
 }

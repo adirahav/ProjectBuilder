@@ -47,14 +47,14 @@ export function createApp(): Express {
   // (PRD F2/F3/F3b, TIMESLOT-APT).
   app.use('/api/time-slots', timeSlotRouter)
 
-  // Public, unauthenticated Appointment creation — the second half of the
-  // hold -> book lifecycle (PRD F4/F4b, CUSTOMER-APT).
+  // Public, unauthenticated Appointment creation and receipt — the second half
+  // of the hold -> book lifecycle (PRD F4/F4b, CUSTOMER-APT) — plus the Admin
+  // Appointment management routes (PRD F9-F11, ADMINDAS-BOOK). As with
+  // /api/services, the Admin routes carry no auth check in this service:
+  // api-gateway verifies the Admin JWT and only then forwards, so this port
+  // must not be publicly exposed.
   app.use('/api/appointments', appointmentRouter)
 
-  // NOTE: the Admin Appointment management routes (F9-F11) are intentionally
-  // NOT part of this ticket — they land in their own. So an Appointment can
-  // only ever be created `pending` here; nothing yet moves it to `confirmed`
-  // or `cancelled`.
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })
   })

@@ -1,7 +1,8 @@
 import { Appointment } from '../models/appointment.model.ts'
 import { TimeSlot } from '../models/time-slot.model.ts'
 import { sendAppointmentConfirmation } from '../lib/notification-client.ts'
-import { holdExpiryCutoff } from '../time-slot/time-slot.service.ts'
+import { holdExpiryCutoff, releaseTimeSlot } from '../time-slot/time-slot.service.ts'
+import type { AppointmentStatus } from '../models/appointment.model.ts'
 
 // Exactly the fields the contract's Appointment schema allows
 // (additionalProperties: false) — nothing else is ever serialized. This record
@@ -181,6 +182,29 @@ export async function getAppointmentReceipt(id: string): Promise<AppointmentRece
   // fields, so it is treated as "not found" rather than serialized incomplete.
   if (!service || !timeSlot) return null
 
+  return toEnrichedAppointment(appointment, service, timeSlot)
+}
+
+/**
+ * Maps an Appointment plus its populated Service and TimeSlot to exactly the
+ * fields the contract's AppointmentReceipt schema allows
+ * (additionalProperties: false).
+ *
+ * Explicit rather than spread-from-the-document because `.lean()` bypasses the
+ * model's toJSON transform: nothing may leak by omission here — no `_id`, no
+ * `__v`, no `createdAt`/`deletedAt`, no `heldAt`, no `isActive`.
+ */
+function toEnrichedAppointment(
+  appointment: {
+    uuid: string
+    customerName: string
+    customerPhone: string
+    customerEmail?: string | null
+    status: AppointmentStatus
+  },
+  service: { uuid: string; name: string; durationMinutes: number; price: number },
+  timeSlot: { uuid: string; date: string; startTime: string; endTime: string },
+): AppointmentReceipt {
   return {
     id: appointment.uuid,
     serviceId: service.uuid,
@@ -200,5 +224,198 @@ export async function getAppointmentReceipt(id: string): Promise<AppointmentRece
       startTime: timeSlot.startTime,
       endTime: timeSlot.endTime,
     },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin Appointment management (PRD F9-F11).
+//
+// These carry no auth check in this service: api-gateway verifies the Admin JWT
+// and only then forwards, exactly the trust boundary the Admin Service writes
+// (F6-F8) already use. This port must not be publicly exposed.
+// ---------------------------------------------------------------------------
+
+/** Already validated by the controller — no raw query object reaches here. */
+export interface ListAppointmentsFilter {
+  /** A plain YYYY-MM-DD calendar day, matched against the TimeSlot's own `date`. */
+  date?: string
+  status?: AppointmentStatus
+}
+
+/**
+ * Every Appointment, for the Admin list (PRD F9), enriched with the Service and
+ * TimeSlot facts the table displays.
+ *
+ * Unlike the customer-facing routes this deliberately returns EVERY status,
+ * including `cancelled` — the Admin's list is a record of what happened, not a
+ * board of what is actionable, and hiding cancellations would make an accidental
+ * cancel invisible and unauditable. Soft-deleted rows are still excluded; that
+ * is the schema hook's job and is not an Admin-visible state.
+ *
+ * Both filters are optional and are applied as exact matches on values the
+ * controller has already validated against a fixed shape — `status` against
+ * `APPOINTMENT_STATUSES`, `date` against a literal YYYY-MM-DD pattern. Nothing
+ * raw from the query string reaches the database filter, which rules out
+ * NoSQL-injection via `?status[$ne]=`.
+ *
+ * The `date` filter is a two-step lookup rather than a join: `date` lives on
+ * TimeSlot, so the matching slots are resolved to _ids first and the Appointment
+ * query filters on `timeSlotId: { $in: ... }`. An empty slot set short-circuits
+ * to `[]` — no day's slots means no day's appointments.
+ */
+export async function listAppointments(
+  filter: ListAppointmentsFilter = {},
+): Promise<AppointmentReceipt[]> {
+  const query: Record<string, unknown> = {}
+
+  if (filter.status !== undefined) query.status = filter.status
+
+  if (filter.date !== undefined) {
+    const slots = await TimeSlot.find({ date: filter.date }).select('_id').lean()
+    // No slot on that day means no appointment on that day. Returning early
+    // also avoids issuing an `$in: []` query whose result is trivially empty.
+    if (slots.length === 0) return []
+    query.timeSlotId = { $in: slots.map((slot) => slot._id) }
+  }
+
+  const docs = await Appointment.find(query)
+    .populate<{ serviceId: { uuid: string; name: string; durationMinutes: number; price: number } }>(
+      'serviceId',
+      'uuid name durationMinutes price',
+    )
+    .populate<{
+      timeSlotId: { uuid: string; date: string; startTime: string; endTime: string }
+    }>('timeSlotId', 'uuid date startTime endTime')
+    .sort({ createdAt: -1 })
+    .lean()
+
+  return (
+    docs
+      // A dangling ref means inconsistent data, not a caller error — but a
+      // half-built row would violate the contract's required fields, so it is
+      // dropped rather than serialized incomplete (same rule as the receipt).
+      .filter((doc) => doc.serviceId && doc.timeSlotId)
+      .map((doc) => toEnrichedAppointment(doc, doc.serviceId, doc.timeSlotId))
+  )
+}
+
+export type AppointmentTransitionResult =
+  | { outcome: 'updated'; appointment: AppointmentReceipt }
+  | { outcome: 'not-found' }
+  | { outcome: 'conflict' }
+
+/**
+ * Confirm an Appointment: `pending` -> `confirmed` (PRD F10).
+ *
+ * A SINGLE atomic conditional update — the precondition (`status: 'pending'`)
+ * lives inside the filter, so MongoDB decides who wins a double-submit rather
+ * than application code. A read-then-write here would let two Admin sessions,
+ * or one double-clicked button, both observe `pending` and both "succeed".
+ *
+ * `deletedAt: null` is repeated explicitly: the schema's soft-delete hook covers
+ * find/findOne/countDocuments only, NOT findOneAndUpdate.
+ *
+ * The resulting status is determined by which function was called; it is never
+ * read from a request body.
+ */
+export async function confirmAppointment(id: string): Promise<AppointmentTransitionResult> {
+  return transitionAppointment(id, { status: 'pending' }, 'confirmed')
+}
+
+/**
+ * Cancel an Appointment: `pending` | `confirmed` -> `cancelled` (PRD F11), and
+ * release its TimeSlot back to `open`.
+ *
+ * Both source states are allowed exactly as F11 states: a pending appointment
+ * the Admin does not want to honour must be cancellable without first being
+ * confirmed (plan 013, Open Question 2).
+ *
+ * This is the only Admin action that mutates two collections, so the ordering
+ * below is load-bearing (plan 013, Open Question 3 and Risks):
+ *
+ * 1. The Appointment transition goes FIRST and is the atomic precondition. Only
+ *    the caller that wins that single conditional update proceeds — so two
+ *    concurrent cancels yield exactly one `cancelled` and one 409, and the slot
+ *    is released exactly once. Releasing first would let the loser of the race
+ *    free a slot it never cancelled.
+ * 2. The slot release runs only for the winner, and is idempotent: an already
+ *    `open` or missing slot is a no-op success (see `releaseTimeSlot`). The
+ *    Appointment's own status is the authoritative record of the Admin's action,
+ *    so a slot that is already free must never fail the cancel.
+ *
+ * The residual risk is deliberate and recorded: if the process dies between the
+ * two writes, the Appointment is `cancelled` while its slot stays `booked` —
+ * a stranded slot. That direction is the safe one (nothing is double-booked,
+ * and re-running the cancel is not needed since the slot can be reopened), and
+ * closing it fully needs a transaction across both collections, which is out of
+ * scope for this ticket.
+ */
+export async function cancelAppointment(id: string): Promise<AppointmentTransitionResult> {
+  const result = await transitionAppointment(
+    id,
+    // Both source states, per F11. `$in` on a hardcoded literal — never a value
+    // derived from the request.
+    { status: { $in: ['pending', 'confirmed'] } },
+    'cancelled',
+  )
+
+  if (result.outcome !== 'updated') return result
+
+  // Only the winner of the atomic transition above reaches here, so the slot is
+  // released exactly once even under concurrent cancels. Idempotent and
+  // non-fatal by contract — its return value is informational only.
+  await releaseTimeSlot(result.appointment.timeSlotId)
+
+  return result
+}
+
+/**
+ * The shared atomic status transition behind confirm and cancel.
+ *
+ * `precondition` is always a hardcoded literal supplied by the caller above,
+ * never anything derived from a request; `id` is uuid-validated by the
+ * controller before it reaches this filter.
+ *
+ * Distinguishing 404 from 409 is done AFTER the write, off the write path,
+ * where the extra read can no longer widen the race — the same pattern
+ * `holdTimeSlot` uses.
+ */
+async function transitionAppointment(
+  id: string,
+  precondition: Record<string, unknown>,
+  next: AppointmentStatus,
+): Promise<AppointmentTransitionResult> {
+  const updated = await Appointment.findOneAndUpdate(
+    // `deletedAt: null` is explicit — the soft-delete hook does not cover
+    // findOneAndUpdate.
+    { uuid: id, deletedAt: null, ...precondition },
+    { $set: { status: next } },
+    { new: true, runValidators: true },
+  )
+    .populate<{ serviceId: { uuid: string; name: string; durationMinutes: number; price: number } }>(
+      'serviceId',
+      'uuid name durationMinutes price',
+    )
+    .populate<{
+      timeSlotId: { uuid: string; date: string; startTime: string; endTime: string }
+    }>('timeSlotId', 'uuid date startTime endTime')
+    .lean()
+
+  if (!updated) {
+    // The conditional update matched nothing. Only now do we look up why: the
+    // Appointment does not exist (404), or it exists in a status this
+    // transition does not allow (409).
+    const exists = await Appointment.exists({ uuid: id, deletedAt: null })
+    return exists ? { outcome: 'conflict' } : { outcome: 'not-found' }
+  }
+
+  // A dangling ref would produce a response missing contract-required fields.
+  // Treated as not-found rather than serialized incomplete — consistent with
+  // the receipt route. The status transition itself has already committed.
+  if (!updated.serviceId || !updated.timeSlotId) return { outcome: 'not-found' }
+
+  return {
+    outcome: 'updated',
+    appointment: toEnrichedAppointment(updated, updated.serviceId, updated.timeSlotId),
   }
 }

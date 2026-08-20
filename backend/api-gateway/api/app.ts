@@ -1,6 +1,7 @@
 import express, { type Express } from 'express'
 import cors from 'cors'
 
+import { appointmentProxyRouter } from './appointment-proxy/appointment-proxy.routes.ts'
 import { authProxyRouter } from './auth-proxy/auth-proxy.routes.ts'
 import { config } from './lib/config.ts'
 import { verifyJwt } from './routing/routing.middleware.ts'
@@ -38,9 +39,25 @@ export function createApp(): Express {
   // public list, and the public list is unaffected because it never comes here.
   app.use('/api/services', verifyJwt, serviceProxyRouter)
 
-  // NOTE: the Admin Appointment routes (F9-F11) land with Screen 7 and must
-  // likewise be mounted behind `verifyJwt`. The reverse-proxy routes to
-  // notification-service are still out of scope.
+  // PRD F9-F11 (ADMINDAS-APIG), Screen 7. The Admin Appointment routes, gated
+  // at the MOUNT POINT for the same reason as above.
+  //
+  // This is the most sensitive surface in the gateway: GET /api/appointments
+  // aggregates customer names, phone numbers and email addresses across every
+  // booking in the clinic in one response, where the public receipt route
+  // exposes a single booking to whoever already holds its id. There is
+  // deliberately no unauthenticated path to it.
+  //
+  // The public POST /api/appointments and GET /api/appointments/:id (F4/F4b)
+  // are NOT served here — the frontend calls booking-service directly for them,
+  // so this mount does not shadow them. As with /api/services, an
+  // unauthenticated call to either against the GATEWAY answers 401 rather than
+  // 404. That is intentional (fail closed) and leaves the public flow
+  // unaffected, since it never comes here.
+  app.use('/api/appointments', verifyJwt, appointmentProxyRouter)
+
+  // NOTE: the reverse-proxy routes to notification-service are still out of
+  // scope.
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })

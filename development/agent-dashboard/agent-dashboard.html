@@ -73,6 +73,15 @@
   .node.center .icon { font-size: 42px; }
   .node.center .icon-img { width: 78px; height: 78px; }
 
+  /* Backend-service satellites are plain text badges (no portrait) — smaller
+     than the primary ring so 4 of them fit around the backend hub without
+     overlapping it, each other, or the box edge. */
+  .node.satellite { width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 4px; }
+  .node.satellite .name {
+    font-size: 7.5px; line-height: 1.15; font-weight: 600; color: var(--text);
+    max-width: 44px; white-space: normal; margin-top: 0; overflow: hidden;
+  }
+
   .node.active {
     transform: scale(1.12);
     animation: pulse 1.4s ease-in-out infinite;
@@ -89,7 +98,8 @@
   .node[data-agent="qa"].active           { border-color: var(--qa);           box-shadow: 0 0 24px var(--qa); }
   .node[data-agent="security"].active     { border-color: var(--security);     box-shadow: 0 0 24px var(--security); }
   .node[data-agent$="-service"].active,
-  .node[data-agent="gateway"].active      { border-color: var(--backend);      box-shadow: 0 0 24px var(--backend); }
+  .node[data-agent="gateway"].active,
+  .node[data-agent="backend"].active      { border-color: var(--backend);      box-shadow: 0 0 24px var(--backend); }
 
   @keyframes pulse {
     0%, 100% { filter: brightness(1); }
@@ -224,15 +234,24 @@
 </div>
 
 <script>
-const AGENTS = [
-  { key: "frontend",             icon: "🎨", img: "fronend-agent.png",  name: "frontend" },
-  { key: "gateway",              icon: "🔧", img: "backend-agent.png",  name: "api-gateway" },
-  { key: "booking-service",      icon: "🔧", img: "backend-agent.png",  name: "booking-service" },
-  { key: "user-service",         icon: "🔧", img: "backend-agent.png",  name: "user-service" },
-  { key: "notification-service", icon: "🔧", img: "backend-agent.png",  name: "notification-service" },
-  { key: "qa",                   icon: "🐛", img: "qa-agent.png",       name: "qa" },
-  { key: "security",             icon: "🛡️", img: "system-agent.png",  name: "security" },
+// Primary ring: one portrait node per category, "backend" standing in for
+// all backend work generically (matching frontend/qa/security). The 4 real
+// backend services are plain text badges branching off "backend" — no
+// portrait needed for those, since the hub node already carries the identity.
+const PRIMARY_AGENTS = [
+  { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
+  { key: "backend",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "backend" },
+  { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
+  { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
 ];
+// angleOffset is relative to the backend hub's own angle (0°).
+const BACKEND_SERVICES = [
+  { key: "gateway",              angleOffset: -67.5, name: "api-gateway" },
+  { key: "booking-service",      angleOffset: -22.5, name: "booking-service" },
+  { key: "user-service",         angleOffset: 22.5,  name: "user-service" },
+  { key: "notification-service", angleOffset: 67.5,  name: "notification-service" },
+];
+const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
 
 // "Thinking..."-style ambient words shown under the current action while an
@@ -410,44 +429,73 @@ document.getElementById("enable-sound").addEventListener("click", () => {
 
 const ring = document.getElementById("ring");
 const beams = document.getElementById("beams");
-const R = 220; // px radius for the outer ring, positions computed relative to ring center (50%,50%)
 
-function polar(index, total, radius) {
-  const angle = (index / total) * Math.PI * 2 - Math.PI / 2;
-  return { x: 50 + (radius / 5.6) * Math.cos(angle), y: 50 + (radius / 5.6) * Math.sin(angle) };
+// Percent-of-ring-box distances, hand-tuned and checked numerically for
+// overlap. The primary ring (frontend/backend/qa/security) sits at
+// PRIMARY_RADIUS_PCT around the orchestrator; the 4 backend-service badges
+// fan out from the backend hub at SATELLITE_RADIUS_PCT.
+const PRIMARY_RADIUS_PCT = 36;
+// The backend hub sits closer in than the other 3 primary nodes — pulling it
+// in is the only way its 4-badge satellite cluster has room to exist without
+// running off the box edge (verified numerically, not just eyeballed).
+const HUB_RADIUS_PCT = 22;
+const SATELLITE_RADIUS_PCT = 20;
+// Must match .node.satellite's width in the <style> above.
+const SATELLITE_NODE_PX = 52;
+
+function pointAt(cx, cy, radiusPct, angleDeg) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + radiusPct * Math.cos(rad), y: cy + radiusPct * Math.sin(rad) };
 }
 
-function makeNode(agent, pos, isCenter) {
+function makeNode(agent, pos, isCenter, isSatellite) {
   const el = document.createElement("div");
-  el.className = "node" + (isCenter ? " center" : "");
+  el.className = "node" + (isCenter ? " center" : "") + (isSatellite ? " satellite" : "");
   el.dataset.agent = agent.key;
   el.style.left = pos.x + "%";
   el.style.top = pos.y + "%";
-  const iconHtml = agent.img
-    ? `<img class="icon-img" src="/assets/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
-    : `<div class="icon">${agent.icon}</div>`;
+  // Satellites are plain text badges — no portrait, no icon; the backend
+  // hub's own portrait already carries the "this is backend work" identity.
+  const iconHtml = isSatellite
+    ? ""
+    : agent.img
+      ? `<img class="icon-img" src="/assets/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
+      : `<div class="icon">${agent.icon}</div>`;
   el.innerHTML = `${iconHtml}<div class="name">${agent.name}</div>`;
   ring.appendChild(el);
   return el;
 }
 
 const centerPos = { x: 50, y: 50 };
-makeNode(CENTER, centerPos, true);
+makeNode(CENTER, centerPos, true, false);
 
-const nodePositions = {};
-AGENTS.forEach((agent, i) => {
-  const pos = polar(i, AGENTS.length, R);
-  nodePositions[agent.key] = pos;
-  makeNode(agent, pos, false);
-
+function makeBeam(key, from, to) {
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("class", "beam");
-  line.setAttribute("id", "beam-" + agent.key);
-  line.setAttribute("x1", centerPos.x + "%");
-  line.setAttribute("y1", centerPos.y + "%");
-  line.setAttribute("x2", pos.x + "%");
-  line.setAttribute("y2", pos.y + "%");
+  line.setAttribute("id", "beam-" + key);
+  line.setAttribute("x1", from.x + "%");
+  line.setAttribute("y1", from.y + "%");
+  line.setAttribute("x2", to.x + "%");
+  line.setAttribute("y2", to.y + "%");
   beams.appendChild(line);
+}
+
+const nodePositions = {};
+PRIMARY_AGENTS.forEach((agent) => {
+  const radius = agent.key === "backend" ? HUB_RADIUS_PCT : PRIMARY_RADIUS_PCT;
+  const pos = pointAt(centerPos.x, centerPos.y, radius, agent.angle);
+  nodePositions[agent.key] = pos;
+  makeNode(agent, pos, false, false);
+  makeBeam(agent.key, centerPos, pos);
+});
+
+const hubPos = nodePositions["backend"];
+const hubAngle = PRIMARY_AGENTS.find((a) => a.key === "backend").angle;
+BACKEND_SERVICES.forEach((agent) => {
+  const pos = pointAt(hubPos.x, hubPos.y, SATELLITE_RADIUS_PCT, hubAngle + agent.angleOffset);
+  nodePositions[agent.key] = pos;
+  makeNode(agent, pos, false, true);
+  makeBeam(agent.key, hubPos, pos);
 });
 
 const ALL_KEYS = ["orchestrator", ...AGENTS.map(a => a.key)];
@@ -462,6 +510,10 @@ const BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map(a => [a.key, a]));
 function setActiveCategory(category, keys) {
   currentThinkingCategory = category || "orchestrator";
   const activeKeys = new Set(keys && keys.length ? keys : (CATEGORY_TO_KEYS[category] || []));
+  // The hub is a pure category node (not a real running service) — light it
+  // up in step with whichever specific backend service is actually active,
+  // so the orchestrator→backend beam and hub glow track real work too.
+  if (BACKEND_SERVICES.some((s) => activeKeys.has(s.key))) activeKeys.add("backend");
   ALL_KEYS.forEach((key) => {
     const isActive = activeKeys.has(key);
     const node = document.querySelector('.node[data-agent="' + key + '"]');

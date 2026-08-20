@@ -55,6 +55,12 @@
     animation: dash 1s linear infinite;
   }
   @keyframes dash { to { stroke-dashoffset: -20; } }
+  /* Every backend service beam routes through api-gateway in reality — this
+     gives the gateway node/segment a static, non-pulsing tint whenever a
+     service behind it is active but the gateway itself isn't the one named
+     in scope, without claiming the gateway is doing its own work. */
+  .beam.through { stroke: var(--backend); opacity: 0.55; stroke-width: 2.5; }
+  .node.through { border-color: var(--backend); box-shadow: 0 0 10px rgba(59, 130, 246, 0.35); }
 
   .node {
     position: absolute;
@@ -224,15 +230,22 @@
 </div>
 
 <script>
-const AGENTS = [
-  { key: "frontend",             icon: "🎨", img: "fronend-agent.png",  name: "frontend" },
-  { key: "gateway",              icon: "🔧", img: "backend-agent.png",  name: "api-gateway" },
-  { key: "booking-service",      icon: "🔧", img: "backend-agent.png",  name: "booking-service" },
-  { key: "user-service",         icon: "🔧", img: "backend-agent.png",  name: "user-service" },
-  { key: "notification-service", icon: "🔧", img: "backend-agent.png",  name: "notification-service" },
-  { key: "qa",                   icon: "🐛", img: "qa-agent.png",       name: "qa" },
-  { key: "security",             icon: "🛡️", img: "system-agent.png",  name: "security" },
+// Two tiers: the primary ring sits around the orchestrator; the three
+// backend services form a small satellite cluster around api-gateway
+// instead of connecting straight to the orchestrator, since that's where
+// their requests actually route through in the real architecture.
+const PRIMARY_AGENTS = [
+  { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
+  { key: "gateway",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "api-gateway" },
+  { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
+  { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
 ];
+const BACKEND_SERVICES = [
+  { key: "booking-service",      angleOffset: -45, icon: "🔧", img: "backend-agent.png", name: "booking-service" },
+  { key: "user-service",         angleOffset: 0,   icon: "🔧", img: "backend-agent.png", name: "user-service" },
+  { key: "notification-service", angleOffset: 45,  icon: "🔧", img: "backend-agent.png", name: "notification-service" },
+];
+const AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
 
 // "Thinking..."-style ambient words shown under the current action while an
@@ -410,11 +423,18 @@ document.getElementById("enable-sound").addEventListener("click", () => {
 
 const ring = document.getElementById("ring");
 const beams = document.getElementById("beams");
-const R = 220; // px radius for the outer ring, positions computed relative to ring center (50%,50%)
 
-function polar(index, total, radius) {
-  const angle = (index / total) * Math.PI * 2 - Math.PI / 2;
-  return { x: 50 + (radius / 5.6) * Math.cos(angle), y: 50 + (radius / 5.6) * Math.sin(angle) };
+// Percent-of-ring-box distances, tuned by hand — the primary ring sits at
+// PRIMARY_RADIUS_PCT around the orchestrator; gateway itself sits a bit
+// closer in (GATEWAY_RADIUS_PCT) to leave room on the right for its own
+// small satellite cluster of backend services at SATELLITE_RADIUS_PCT.
+const PRIMARY_RADIUS_PCT = 36;
+const GATEWAY_RADIUS_PCT = 24;
+const SATELLITE_RADIUS_PCT = 17;
+
+function pointAt(cx, cy, radiusPct, angleDeg) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + radiusPct * Math.cos(rad), y: cy + radiusPct * Math.sin(rad) };
 }
 
 function makeNode(agent, pos, isCenter) {
@@ -434,20 +454,32 @@ function makeNode(agent, pos, isCenter) {
 const centerPos = { x: 50, y: 50 };
 makeNode(CENTER, centerPos, true);
 
-const nodePositions = {};
-AGENTS.forEach((agent, i) => {
-  const pos = polar(i, AGENTS.length, R);
-  nodePositions[agent.key] = pos;
-  makeNode(agent, pos, false);
-
+function makeBeam(key, from, to) {
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("class", "beam");
-  line.setAttribute("id", "beam-" + agent.key);
-  line.setAttribute("x1", centerPos.x + "%");
-  line.setAttribute("y1", centerPos.y + "%");
-  line.setAttribute("x2", pos.x + "%");
-  line.setAttribute("y2", pos.y + "%");
+  line.setAttribute("id", "beam-" + key);
+  line.setAttribute("x1", from.x + "%");
+  line.setAttribute("y1", from.y + "%");
+  line.setAttribute("x2", to.x + "%");
+  line.setAttribute("y2", to.y + "%");
   beams.appendChild(line);
+}
+
+const nodePositions = {};
+PRIMARY_AGENTS.forEach((agent) => {
+  const radius = agent.key === "gateway" ? GATEWAY_RADIUS_PCT : PRIMARY_RADIUS_PCT;
+  const pos = pointAt(centerPos.x, centerPos.y, radius, agent.angle);
+  nodePositions[agent.key] = pos;
+  makeNode(agent, pos, false);
+  makeBeam(agent.key, centerPos, pos);
+});
+
+const gatewayPos = nodePositions["gateway"];
+BACKEND_SERVICES.forEach((agent) => {
+  const pos = pointAt(gatewayPos.x, gatewayPos.y, SATELLITE_RADIUS_PCT, agent.angleOffset);
+  nodePositions[agent.key] = pos;
+  makeNode(agent, pos, false);
+  makeBeam(agent.key, gatewayPos, pos);
 });
 
 const ALL_KEYS = ["orchestrator", ...AGENTS.map(a => a.key)];
@@ -469,6 +501,16 @@ function setActiveCategory(category, keys) {
     const beam = document.getElementById("beam-" + key);
     if (beam) beam.classList.toggle("active", isActive);
   });
+
+  // A routed-through service is active but the gateway itself isn't named in
+  // `keys` — tint the gateway node and its orchestrator-beam so the ring
+  // still reads as "this went through the gateway", without pulsing it as
+  // if the gateway is doing its own work.
+  const throughGateway = BACKEND_SERVICES.some((s) => activeKeys.has(s.key)) && !activeKeys.has("gateway");
+  const gatewayNode = document.querySelector('.node[data-agent="gateway"]');
+  if (gatewayNode) gatewayNode.classList.toggle("through", throughGateway);
+  const gatewayBeam = document.getElementById("beam-gateway");
+  if (gatewayBeam) gatewayBeam.classList.toggle("through", throughGateway);
 
   // Label shows the first actually-active node's identity — accurate even
   // for "backend", where that's now whichever specific service(s) are

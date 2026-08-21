@@ -1,6 +1,6 @@
 # Plan 021 — In Login page, Add link in Signup page
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-21
 - Scope-Agents: none

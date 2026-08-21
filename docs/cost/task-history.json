@@ -110,5 +110,12 @@
     "totalCostNis": 2.0485800632,
     "callCount": 8,
     "completedAt": "2026-08-21T11:08:19.696Z"
+  },
+  {
+    "task": "In Login page, Add link in Signup page",
+    "totalCostUsd": 0.26084889999999994,
+    "totalCostNis": 0.7804599087999998,
+    "callCount": 2,
+    "completedAt": "2026-08-21T11:13:58.212Z"
   }
 ]

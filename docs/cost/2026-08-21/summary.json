@@ -3,75 +3,21 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 5,
-      "outputTokens": 4022,
-      "cacheReadTokens": 69952,
-      "costUsd": 0.12779535,
-      "durationMs": 36811
+      "inputTokens": 1940,
+      "outputTokens": 4278,
+      "cacheReadTokens": 130635,
+      "costUsd": 0.17011924999999997,
+      "durationMs": 50823
     },
     {
       "role": "frontend",
       "label": "Frontend Agent",
-      "inputTokens": 1917,
-      "outputTokens": 1527,
-      "cacheReadTokens": 63386,
-      "costUsd": 0.08439105,
-      "durationMs": 24863
-    },
-    {
-      "role": "api-gateway",
-      "label": "Backend Agent — api-gateway",
-      "inputTokens": 4,
-      "outputTokens": 915,
-      "cacheReadTokens": 39001,
-      "costUsd": 0.06077505,
-      "durationMs": 17706
-    },
-    {
-      "role": "booking-service",
-      "label": "Backend Agent — booking-service",
-      "inputTokens": 4,
-      "outputTokens": 904,
-      "cacheReadTokens": 39000,
-      "costUsd": 0.060605000000000006,
-      "durationMs": 18961
-    },
-    {
-      "role": "user-service",
-      "label": "Backend Agent — user-service",
-      "inputTokens": 6,
-      "outputTokens": 1155,
-      "cacheReadTokens": 66280,
-      "costUsd": 0.0735565,
-      "durationMs": 26797
-    },
-    {
-      "role": "notification-service",
-      "label": "Backend Agent — notification-service",
-      "inputTokens": 6,
-      "outputTokens": 1223,
-      "cacheReadTokens": 66288,
-      "costUsd": 0.0745884,
-      "durationMs": 29095
-    },
-    {
-      "role": "qa",
-      "label": "QA Agent",
       "inputTokens": 10,
-      "outputTokens": 2209,
-      "cacheReadTokens": 111091,
-      "costUsd": 0.0993378,
-      "durationMs": 34298
-    },
-    {
-      "role": "security",
-      "label": "Security Agent",
-      "inputTokens": 10,
-      "outputTokens": 2652,
-      "cacheReadTokens": 111629,
-      "costUsd": 0.1036367,
-      "durationMs": 34688
+      "outputTokens": 1138,
+      "cacheReadTokens": 119128,
+      "costUsd": 0.09072965,
+      "durationMs": 244716
     }
   ],
-  "totalCostUsd": 0.68468585
+  "totalCostUsd": 0.26084889999999994
 }

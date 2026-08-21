@@ -17,10 +17,40 @@ npm run dev
 | Variable | Purpose |
 |---|---|
 | `VITE_BOOKING_SERVICE_URL` | Base URL of `booking-service` (default dev value `http://localhost:4001`). The public booking routes are unauthenticated by design and are called directly rather than through `api-gateway`. |
+| `VITE_API_GATEWAY_URL` | Base URL of `api-gateway` (default dev value `http://localhost:4000`). Every Admin route goes through it, because that is where the JWT is verified. |
 
-There is no hardcoded fallback: if the variable is unset, requests fall back to a
-relative path and a `[HTTP]` log warns about it, so a misconfiguration fails
-visibly instead of silently hitting the wrong origin.
+There is no hardcoded fallback: if a variable is unset, requests fall back to a
+relative same-origin path. In a **dev** build a `[HTTP]` log warns about it, so a
+misconfiguration fails visibly instead of silently hitting the wrong origin. In a
+**production** build that relative path is the intended single-origin setup, so
+no warning is logged — see below.
+
+## Single-origin production deploy
+
+In production the app is served as one origin: `backend/api-gateway` serves this
+package's built `dist/` as static files and reverse-proxies `/api/...` to the
+backend services. Only the gateway's port is exposed.
+
+```bash
+npm --prefix frontend run build   # produces frontend/dist (index.html + assets/)
+npm --prefix backend/api-gateway start
+```
+
+Two things make that work from this side:
+
+- `vite.config.ts` pins `build.outDir` to `dist` — the gateway reads from that
+  exact path, so it is a cross-package contract rather than a Vite default.
+- `http.service.ts` treats an unset base URL as "same origin". Leave both
+  `VITE_*_URL` vars out of the production build and every request becomes a
+  relative `/api/...` path answered by the gateway that served the page. No CORS
+  is involved, and no build-time host needs to be baked into the bundle.
+
+The gateway-side pieces (static mount ordering, SPA fallback, `SERVE_FRONTEND`
+flag) live in `backend/api-gateway` and are owned by the backend agent.
+
+> The **Capacitor native build is the exception**: it is served from a
+> `capacitor://` origin with no gateway behind it, so both `VITE_*_URL` vars must
+> be set to absolute reachable hosts before `npm run cap:sync`.
 
 ## Scripts
 

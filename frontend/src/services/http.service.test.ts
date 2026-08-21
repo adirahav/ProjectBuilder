@@ -121,6 +121,37 @@ describe('the two origins', () => {
   it('builds one axios client per origin rather than sharing a base URL', () => {
     expect(mocks.createdBaseUrls).toHaveLength(2)
   })
+
+  // The single-origin production deploy: api-gateway serves the built bundle
+  // and proxies /api/..., so no base URL is configured and every request must
+  // resolve to a relative same-origin path rather than a baked-in host.
+  it('falls back to a relative same-origin base URL when no host is configured', () => {
+    expect(mocks.createdBaseUrls).toEqual(['', ''])
+  })
+
+  it('keeps endpoints relative so the origin is decided only in http.service', async () => {
+    mocks.instance.get.mockResolvedValue({ data: [] })
+
+    await httpService.get('/api/services')
+
+    expect(mocks.instance.get).toHaveBeenCalledWith('/api/services', { params: undefined })
+  })
+})
+
+describe('base URL normalisation', () => {
+  it('strips a trailing slash so endpoints never produce a doubled slash', async () => {
+    vi.resetModules()
+    vi.stubEnv('VITE_BOOKING_SERVICE_URL', 'http://localhost:4001/')
+    vi.stubEnv('VITE_API_GATEWAY_URL', 'http://localhost:4000//')
+    mocks.createdBaseUrls.length = 0
+
+    await import('./http.service')
+
+    expect(mocks.createdBaseUrls).toEqual(['http://localhost:4001', 'http://localhost:4000'])
+
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
 })
 
 describe('token storage', () => {

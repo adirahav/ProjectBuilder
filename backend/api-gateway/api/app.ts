@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import express, { type Express } from 'express'
 import cors from 'cors'
 
@@ -9,7 +11,17 @@ import { serviceProxyRouter } from './service-proxy/service-proxy.routes.ts'
 
 // Builds the Express app without binding a port, so tests can drive it
 // with Supertest and the entrypoint can own the actual listen() call.
-export function createApp(): Express {
+export type CreateAppOptions = {
+  // Single-origin deploy toggles. Defaulted from config; overridable so tests
+  // can point at a fixture dist without mutating process env.
+  serveFrontend?: boolean
+  frontendDistPath?: string
+}
+
+export function createApp(options: CreateAppOptions = {}): Express {
+  const serveFrontend = options.serveFrontend ?? config.serveFrontend
+  const frontendDistPath = options.frontendDistPath ?? config.frontendDistPath
+
   const app = express()
 
   // Liveness probe — mounted FIRST, before CORS, auth, or any proxy route.
@@ -58,6 +70,29 @@ export function createApp(): Express {
 
   // NOTE: the reverse-proxy routes to notification-service are still out of
   // scope.
+
+  // DEPLOYSE-APIG. Single-origin deploy: serve the frontend's production build
+  // from this same process/port, so the SPA and the API share one origin.
+  //
+  // Mounted LAST, after every /api mount and after /health, and never for a
+  // path under /api or /health — so it can never shadow the fail-closed 401 on
+  // the JWT-gated admin mounts, nor the JSON 404 for an unmatched /api route.
+  // Only GET/HEAD get the SPA fallback: a stray POST must not answer with HTML.
+  if (serveFrontend) {
+    const isAppPath = (url: string) => !url.startsWith('/api') && !url.startsWith('/health')
+
+    app.use((req, res, next) => {
+      if (!isAppPath(req.path)) return next()
+      express.static(frontendDistPath)(req, res, next)
+    })
+
+    app.get('*', (req, res, next) => {
+      if (!isAppPath(req.path)) return next()
+      res.sendFile(path.join(frontendDistPath, 'index.html'), (err) => {
+        if (err) next()
+      })
+    })
+  }
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not Found' })

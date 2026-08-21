@@ -21,4 +21,4 @@ Current queue:
 - [x] Add Login/Logout link in Header
 - [x] Add Login link in Signup page, and Signup link in Login page
 - [x] Create  Signup page
-- [ ] In Login page, Add link in Signup page | scope: frontend
+- [x] In Login page, Add link in Signup page | scope: frontend

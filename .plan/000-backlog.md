@@ -18,4 +18,5 @@ Current queue:
 - [x] Hebrew/English i18n + RTL/LTR direction toggle | scope: frontend,qa
 - [x] Native (Capacitor) Android/iOS wrap-up and back-button navigation | scope: frontend,qa
 - [x] Deploy setup: api-gateway serves built frontend and reverse-proxies | scope: api-gateway,frontend
-- [ ] Add Login/Logout link in Header
+- [x] Add Login/Logout link in Header
+- [ ] Add Login link in Signup page, and Signup link in Login page

@@ -9,6 +9,12 @@ import type { Locale } from '../types/i18n.types'
 const en = {
   'brand.name': 'Dog Grooming Studio',
 
+  'header.authAria': 'Account',
+  'header.login': 'Log in',
+  'header.logout': 'Log out',
+  'header.signedInAs': 'Signed in as {email}',
+  'header.logout.toast': 'You are signed out.',
+
   'common.retry': 'Try again',
   'common.skipToContent': 'Skip to content',
 
@@ -309,6 +315,12 @@ type Dictionary = Record<StringKey, string>
 
 const he: Dictionary = {
   'brand.name': 'מספרה לכלבים',
+
+  'header.authAria': 'חשבון',
+  'header.login': 'התחברות',
+  'header.logout': 'התנתקות',
+  'header.signedInAs': 'מחוברים כ־{email}',
+  'header.logout.toast': 'התנתקתם מהמערכת.',
 
   'common.retry': 'נסו שוב',
   'common.skipToContent': 'דילוג לתוכן הראשי',

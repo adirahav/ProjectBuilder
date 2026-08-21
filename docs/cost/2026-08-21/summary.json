@@ -3,30 +3,30 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 2,
-      "outputTokens": 81,
-      "cacheReadTokens": 49378,
-      "costUsd": 0.32268335,
-      "durationMs": 3504
+      "inputTokens": 2326,
+      "outputTokens": 10260,
+      "cacheReadTokens": 397588,
+      "costUsd": 0.43570965,
+      "durationMs": 139207
     },
     {
       "role": "frontend",
       "label": "Frontend Agent",
-      "inputTokens": 1465,
-      "outputTokens": 30702,
-      "cacheReadTokens": 4032480,
-      "costUsd": 1.9660635000000002,
-      "durationMs": 677668
+      "inputTokens": 1048,
+      "outputTokens": 7270,
+      "cacheReadTokens": 464270,
+      "costUsd": 0.35809975000000005,
+      "durationMs": 351184
     },
     {
-      "role": "qa",
-      "label": "QA Agent",
-      "inputTokens": 26,
-      "outputTokens": 3284,
-      "cacheReadTokens": 390317,
-      "costUsd": 0.23774335,
-      "durationMs": 219696
+      "role": "api-gateway",
+      "label": "Backend Agent — api-gateway",
+      "inputTokens": 15643,
+      "outputTokens": 8092,
+      "cacheReadTokens": 720148,
+      "costUsd": 0.51457165,
+      "durationMs": 184782
     }
   ],
-  "totalCostUsd": 2.5264902000000005
+  "totalCostUsd": 1.30838105
 }

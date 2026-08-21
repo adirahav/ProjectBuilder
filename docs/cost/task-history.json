@@ -82,5 +82,12 @@
     "totalCostNis": 7.559258678400002,
     "callCount": 3,
     "completedAt": "2026-08-21T06:27:44.198Z"
+  },
+  {
+    "task": "Deploy setup: api-gateway serves built frontend and reverse-proxies",
+    "totalCostUsd": 1.30838105,
+    "totalCostNis": 3.9146761016,
+    "callCount": 3,
+    "completedAt": "2026-08-21T06:46:24.819Z"
   }
 ]

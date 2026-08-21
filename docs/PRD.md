@@ -45,6 +45,12 @@ A self-service appointment-booking system for a small, single-groomer dog-groomi
 - Status is shown with both a label and an icon/shape (not color alone) — see `accessibility-layer`.
 - Per-appointment actions: confirm (`pending` → `confirmed`) and cancel (`confirmed`/`pending` → `cancelled`, releases the `TimeSlot` back to `open`).
 
+### Screen 8 — Admin Dashboard: Staff Accounts (authenticated, Admin)
+- Lets an already-logged-in Admin create an additional Admin/staff account (name, email/username, password).
+- **Not a public route** — there is no self-service Signup surface anywhere in the app; this screen only exists inside the authenticated Admin dashboard, reachable from Screen 6/7's navigation. Creating this route as an unauthenticated/public page is a security regression (open self-registration into an Admin-privileged account) and must be rejected in review.
+- New accounts created here have the same Admin privileges as the seeded account — no separate roles/permission tiers in v1.
+- No self-signup, no "forgot password"/invite-link flow in v1 — an existing Admin creates the account directly and shares the credentials out of band.
+
 ---
 
 ## Functional Requirements
@@ -64,6 +70,7 @@ A self-service appointment-booking system for a small, single-groomer dog-groomi
 | F9 | Admin can list all appointments | `GET /api/appointments` (`booking-service`, via `api-gateway`) |
 | F10 | Admin can confirm a pending appointment | `PATCH /api/appointments/:id/confirm` (`booking-service`, via `api-gateway`) |
 | F11 | Admin can cancel an appointment | `PATCH /api/appointments/:id/cancel` (`booking-service`, via `api-gateway`) |
+| F12 | An authenticated Admin can create a new Admin/staff account | `POST /api/auth/register` (`user-service`, via `api-gateway`) — **must itself require a valid Admin JWT**, same as any other Admin route |
 
 ---
 
@@ -89,6 +96,7 @@ A self-service appointment-booking system for a small, single-groomer dog-groomi
 - **AC-7:** The Admin dashboard is unreachable without a valid JWT — an unauthenticated request to any Admin route returns a 401 and the frontend redirects to Admin Login. (F5, F6-F11)
 - **AC-8:** The full booking flow and Admin dashboard render correctly in both Hebrew (RTL) and English (LTR), with no mirrored-icon or broken-layout regressions.
 - **AC-9:** The native (Capacitor) build renders the same booking flow and Admin dashboard functionally identically to web, including correct back-button behavior on each screen.
+- **AC-10:** An authenticated Admin can create a new Admin/staff account from Screen 8, and can immediately log in with it. The account-creation route rejects any request without a valid Admin JWT (401), and no unauthenticated Signup page exists anywhere in the app. (F12, Screen 8)
 
 ---
 
@@ -105,5 +113,5 @@ See `glossary.md` for domain terminology and `database-rules.md` for full field 
 - Multi-location support.
 - Online payment at booking time.
 - Automated SMS reminders beyond a basic booking confirmation (email/SMS provider TBD).
-- Customer accounts / booking history / login.
+- Customer accounts / booking history / self-registration — customers never create an account or log in. (This does not apply to Screen 8's Admin/staff account creation, which is an authenticated-Admin-only action, not customer self-signup.)
 - Recurring/repeat appointments.

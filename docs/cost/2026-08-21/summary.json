@@ -1,6 +1,5 @@
 {
-  "costTask": "Hebrew/English i18n + RTL/LTR direction toggle",
-  "costLog": [
+  "tasks": [
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
@@ -8,8 +7,7 @@
       "outputTokens": 10585,
       "cacheReadTokens": 53802,
       "costUsd": 0.30984809999999996,
-      "costNis": 0.9270655151999999,
-      "durationS": 98.08
+      "durationMs": 98080
     },
     {
       "role": "frontend",
@@ -18,8 +16,7 @@
       "outputTokens": 15753,
       "cacheReadTokens": 3198767,
       "costUsd": 1.6093180999999999,
-      "costNis": 4.815079755199999,
-      "durationS": 519.901
+      "durationMs": 519901
     },
     {
       "role": "qa",
@@ -28,10 +25,8 @@
       "outputTokens": 6359,
       "cacheReadTokens": 1076677,
       "costUsd": 0.51556385,
-      "costNis": 1.5425670392000002,
-      "durationS": 274.246
+      "durationMs": 274246
     }
   ],
-  "costTotalUsd": 2.4347300499999998,
-  "costTotalNis": 7.2847123096
+  "totalCostUsd": 2.4347300499999998
 }

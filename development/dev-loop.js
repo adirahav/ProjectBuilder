@@ -1101,6 +1101,15 @@ async function main() {
     openBrowserForTask(task)
     await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     printCostTable(task.title)
+    // printCostTable() just wrote cost files to disk — at this point we're
+    // already back on BASE_BRANCH (pushAndMergeTaskBranch left us there),
+    // so these writes are UNCOMMITTED changes sitting on that branch. Left
+    // as-is, the very next task's `git checkout -b <new-branch>` reliably
+    // fails ("local changes would be overwritten" / untracked-file
+    // conflicts) the moment it tries to switch away from BASE_BRANCH with
+    // this dirty state present. Committing immediately closes that window
+    // for good, regardless of exactly when/where a future cost write happens.
+    commitCostArtifacts(task, BASE_BRANCH)
     log(`Task complete: ${task.title}`)
     emitEvent("task-done", null, task.title)
   }
@@ -2065,6 +2074,27 @@ function commitTaskChanges(task, branch) {
     log(`Committed locally on branch '${branch}'.`)
   } catch (e) {
     warn(`Auto-commit failed (${e.message}). Your changes for '${task.title}' are still sitting uncommitted on branch '${branch}' — commit them manually before letting the loop continue.`)
+  }
+}
+
+// Sweeps up any cost-tracking files (docs/cost/**) written after the task's
+// own commit — currently just printCostTable()'s output, but this stays
+// correct even if something else starts writing there later, since it just
+// commits whatever's actually dirty rather than naming specific files.
+// Directly on `baseBranch` (not a task branch — there's no PR/approval step
+// for this, it's pure bookkeeping), so the working tree is guaranteed clean
+// before the loop's next iteration tries to check out a new task branch.
+function commitCostArtifacts(task, baseBranch) {
+  try {
+    const status = execSync("git status --porcelain", { encoding: "utf-8" })
+    if (!status.trim()) return
+    execSync("git add -A -- docs/cost", { stdio: "inherit" })
+    const stillDirty = execSync("git status --porcelain", { encoding: "utf-8" })
+    if (!stillDirty.trim()) return // nothing under docs/cost/ was actually dirty
+    execSync(`git commit -m "Cost tracking for: ${task.title.replace(/"/g, '\\"')}"`, { stdio: "inherit" })
+    log(`Committed cost-tracking files on '${baseBranch}'.`)
+  } catch (e) {
+    warn(`Could not auto-commit cost-tracking files (${e.message}) — the next task's branch checkout may fail until this is committed or discarded manually.`)
   }
 }
 

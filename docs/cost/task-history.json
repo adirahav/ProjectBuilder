@@ -68,5 +68,12 @@
     "totalCostNis": 12.81347,
     "callCount": null,
     "completedAt": "2026-08-20T22:22:56.811Z"
+  },
+  {
+    "task": "Admin Dashboard: Appointments management (confirm/cancel)",
+    "totalCostUsd": 0.47638079999999994,
+    "totalCostNis": 1.4253313535999999,
+    "callCount": 1,
+    "completedAt": "2026-08-21T05:42:22.366Z"
   }
 ]

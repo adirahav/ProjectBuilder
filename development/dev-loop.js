@@ -678,17 +678,20 @@ function startDashboardServer() {
     }
 
     if (req.url && req.url.startsWith("/assets/")) {
-      const assetName = req.url.slice("/assets/".length).split("?")[0]
-      const assetPath = `${assetsDir}/${assetName}`
-      // Only ever serve a bare filename out of assetsDir — reject anything
-      // with a path separator so this can't be tricked into serving an
-      // arbitrary file elsewhere on disk (e.g. `/assets/../../secret`).
-      if (assetName.includes("/") || assetName.includes("\\") || !existsSync(assetPath)) {
+      // Now nested (assets/images/*, assets/audio/*) — resolved and checked
+      // the same way as the /docs/** route above (must land inside
+      // assetsDir), not a flat-filename-only substring check, since that
+      // would reject every legitimate subdirectory path along with real
+      // traversal attempts.
+      const assetName = decodeURIComponent(req.url.slice("/assets/".length).split("?")[0])
+      const assetsRoot = resolve(assetsDir)
+      const assetPath = resolve(assetsDir, assetName)
+      if (!assetPath.startsWith(assetsRoot + sep) || !existsSync(assetPath) || !statSync(assetPath).isFile()) {
         res.writeHead(404, { "Content-Type": "text/plain" })
         res.end("Not found")
         return
       }
-      const ext = assetName.split(".").pop().toLowerCase()
+      const ext = assetPath.split(".").pop().toLowerCase()
       const CONTENT_TYPES = { mp3: "audio/mpeg", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", svg: "image/svg+xml", webp: "image/webp", gif: "image/gif" }
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
       res.end(readFileSync(assetPath))

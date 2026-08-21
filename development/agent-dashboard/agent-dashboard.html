@@ -284,7 +284,7 @@ const PRIMARY_AGENTS = [
   { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
   { key: "backend",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "backend" },
   { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
-  { key: "security", angle: 180, icon: "🛡️", img: "system-agent.png", name: "security" },
+  { key: "security", angle: 180, icon: "🛡️", img: "security-agent.png", name: "security" },
 ];
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
 
@@ -478,7 +478,7 @@ soundToggleBtn.addEventListener("click", () => {
     // is tied to a real user-gesture call stack, not just a boolean flag.
     // Only needs doing once per page load, not on every re-enable.
     audioUnlocked = true;
-    const unlock = new Audio(`/assets/${AUDIO_MAP["orchestrator-start"]}`);
+    const unlock = new Audio(`/assets/audio/${AUDIO_MAP["orchestrator-start"]}`);
     unlock.volume = 0;
     unlock.play().catch(() => {});
   }

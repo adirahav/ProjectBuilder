@@ -392,7 +392,7 @@ let currentThinkingCategory = "orchestrator";
 // needs attention). The rotating terms would be misleading there, so they're
 // suppressed until a real agent-start/agent-back moment resumes them.
 let thinkingPaused = false;
-const PAUSE_ON_EVENTS = new Set(["waiting-approval", "session-limit", "attention-needed"]);
+const PAUSE_ON_EVENTS = new Set(["waiting-approval", "session-limit", "attention-needed", "task-done"]);
 
 function tickThinking() {
   const dot = document.getElementById("dot");

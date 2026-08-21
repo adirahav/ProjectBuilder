@@ -1,87 +1,87 @@
 {
-  "costTask": "Add Login/Logout link in Header",
+  "costTask": "Add Login link in Signup page, and Signup link in Login page",
   "costLog": [
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 13,
-      "outputTokens": 9016,
-      "cacheReadTokens": 212851,
-      "costUsd": 0.29126304999999997,
-      "costNis": 0.8714590455999999,
-      "durationS": 93.734
+      "inputTokens": 3113,
+      "outputTokens": 6706,
+      "cacheReadTokens": 175453,
+      "costUsd": 0.24360215,
+      "costNis": 0.7288576327999999,
+      "durationS": 76.008
     },
     {
       "role": "frontend",
       "label": "Frontend Agent",
-      "inputTokens": 1988,
-      "outputTokens": 7710,
-      "cacheReadTokens": 805607,
-      "costUsd": 0.4802366,
-      "costNis": 1.4368679072000001,
-      "durationS": 198.967
-    },
-    {
-      "role": "notification-service",
-      "label": "Backend Agent — notification-service",
-      "inputTokens": 3249,
-      "outputTokens": 1351,
-      "cacheReadTokens": 122653,
-      "costUsd": 0.11233064999999999,
-      "costNis": 0.3360933048,
-      "durationS": 58.607
+      "inputTokens": 1894,
+      "outputTokens": 2208,
+      "cacheReadTokens": 74468,
+      "costUsd": 0.17311189999999999,
+      "costNis": 0.5179508048,
+      "durationS": 36.955
     },
     {
       "role": "api-gateway",
       "label": "Backend Agent — api-gateway",
-      "inputTokens": 3249,
-      "outputTokens": 2734,
-      "cacheReadTokens": 145362,
-      "costUsd": 0.18665085,
-      "costNis": 0.5584593432,
-      "durationS": 61.603
-    },
-    {
-      "role": "user-service",
-      "label": "Backend Agent — user-service",
-      "inputTokens": 97,
-      "outputTokens": 2107,
-      "cacheReadTokens": 156000,
-      "costUsd": 0.12695425000000002,
-      "costNis": 0.37984711600000004,
-      "durationS": 98.456
+      "inputTokens": 1935,
+      "outputTokens": 925,
+      "cacheReadTokens": 39022,
+      "costUsd": 0.059852100000000005,
+      "costNis": 0.17907748320000003,
+      "durationS": 17.98
     },
     {
       "role": "booking-service",
       "label": "Backend Agent — booking-service",
-      "inputTokens": 12,
-      "outputTokens": 1635,
-      "cacheReadTokens": 179407,
-      "costUsd": 0.17354234999999998,
-      "costNis": 0.5192387112,
-      "durationS": 127.02
+      "inputTokens": 4,
+      "outputTokens": 991,
+      "cacheReadTokens": 39035,
+      "costUsd": 0.06223700000000001,
+      "costNis": 0.18621310400000002,
+      "durationS": 19.207
+    },
+    {
+      "role": "notification-service",
+      "label": "Backend Agent — notification-service",
+      "inputTokens": 4,
+      "outputTokens": 969,
+      "cacheReadTokens": 39035,
+      "costUsd": 0.061903,
+      "costNis": 0.185213776,
+      "durationS": 19.063
+    },
+    {
+      "role": "user-service",
+      "label": "Backend Agent — user-service",
+      "inputTokens": 79,
+      "outputTokens": 1550,
+      "cacheReadTokens": 94130,
+      "costUsd": 0.0897595,
+      "costNis": 0.268560424,
+      "durationS": 33.978
     },
     {
       "role": "qa",
       "label": "QA Agent",
-      "inputTokens": 1806,
-      "outputTokens": 3020,
-      "cacheReadTokens": 272178,
-      "costUsd": 0.2125239,
-      "costNis": 0.6358715088,
-      "durationS": 238.091
+      "inputTokens": 8,
+      "outputTokens": 1540,
+      "cacheReadTokens": 86205,
+      "costUsd": 0.07582275,
+      "costNis": 0.226861668,
+      "durationS": 24.416
     },
     {
       "role": "security",
       "label": "Security Agent",
-      "inputTokens": 50,
-      "outputTokens": 14758,
-      "cacheReadTokens": 987879,
-      "costUsd": 0.73388745,
-      "costNis": 2.1957912504,
-      "durationS": 399.957
+      "inputTokens": 12,
+      "outputTokens": 2944,
+      "cacheReadTokens": 135685,
+      "costUsd": 0.11684125,
+      "costNis": 0.34958902,
+      "durationS": 38.518
     }
   ],
-  "costTotalUsd": 2.3173891,
-  "costTotalNis": 6.9336281872
+  "costTotalUsd": 0.8831296500000001,
+  "costTotalNis": 2.6423239128
 }

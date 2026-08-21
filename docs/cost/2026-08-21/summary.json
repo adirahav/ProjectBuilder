@@ -3,75 +3,75 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 13,
-      "outputTokens": 9016,
-      "cacheReadTokens": 212851,
-      "costUsd": 0.29126304999999997,
-      "durationMs": 93734
+      "inputTokens": 3113,
+      "outputTokens": 6706,
+      "cacheReadTokens": 175453,
+      "costUsd": 0.24360215,
+      "durationMs": 76008
     },
     {
       "role": "frontend",
       "label": "Frontend Agent",
-      "inputTokens": 1988,
-      "outputTokens": 7710,
-      "cacheReadTokens": 805607,
-      "costUsd": 0.4802366,
-      "durationMs": 198967
-    },
-    {
-      "role": "notification-service",
-      "label": "Backend Agent — notification-service",
-      "inputTokens": 3249,
-      "outputTokens": 1351,
-      "cacheReadTokens": 122653,
-      "costUsd": 0.11233064999999999,
-      "durationMs": 58607
+      "inputTokens": 1894,
+      "outputTokens": 2208,
+      "cacheReadTokens": 74468,
+      "costUsd": 0.17311189999999999,
+      "durationMs": 36955
     },
     {
       "role": "api-gateway",
       "label": "Backend Agent — api-gateway",
-      "inputTokens": 3249,
-      "outputTokens": 2734,
-      "cacheReadTokens": 145362,
-      "costUsd": 0.18665085,
-      "durationMs": 61603
-    },
-    {
-      "role": "user-service",
-      "label": "Backend Agent — user-service",
-      "inputTokens": 97,
-      "outputTokens": 2107,
-      "cacheReadTokens": 156000,
-      "costUsd": 0.12695425000000002,
-      "durationMs": 98456
+      "inputTokens": 1935,
+      "outputTokens": 925,
+      "cacheReadTokens": 39022,
+      "costUsd": 0.059852100000000005,
+      "durationMs": 17980
     },
     {
       "role": "booking-service",
       "label": "Backend Agent — booking-service",
-      "inputTokens": 12,
-      "outputTokens": 1635,
-      "cacheReadTokens": 179407,
-      "costUsd": 0.17354234999999998,
-      "durationMs": 127020
+      "inputTokens": 4,
+      "outputTokens": 991,
+      "cacheReadTokens": 39035,
+      "costUsd": 0.06223700000000001,
+      "durationMs": 19207
+    },
+    {
+      "role": "notification-service",
+      "label": "Backend Agent — notification-service",
+      "inputTokens": 4,
+      "outputTokens": 969,
+      "cacheReadTokens": 39035,
+      "costUsd": 0.061903,
+      "durationMs": 19063
+    },
+    {
+      "role": "user-service",
+      "label": "Backend Agent — user-service",
+      "inputTokens": 79,
+      "outputTokens": 1550,
+      "cacheReadTokens": 94130,
+      "costUsd": 0.0897595,
+      "durationMs": 33978
     },
     {
       "role": "qa",
       "label": "QA Agent",
-      "inputTokens": 1806,
-      "outputTokens": 3020,
-      "cacheReadTokens": 272178,
-      "costUsd": 0.2125239,
-      "durationMs": 238091
+      "inputTokens": 8,
+      "outputTokens": 1540,
+      "cacheReadTokens": 86205,
+      "costUsd": 0.07582275,
+      "durationMs": 24416
     },
     {
       "role": "security",
       "label": "Security Agent",
-      "inputTokens": 50,
-      "outputTokens": 14758,
-      "cacheReadTokens": 987879,
-      "costUsd": 0.73388745,
-      "durationMs": 399957
+      "inputTokens": 12,
+      "outputTokens": 2944,
+      "cacheReadTokens": 135685,
+      "costUsd": 0.11684125,
+      "durationMs": 38518
     }
   ],
-  "totalCostUsd": 2.3173891
+  "totalCostUsd": 0.8831296500000001
 }

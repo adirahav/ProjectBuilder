@@ -1,6 +1,6 @@
 # Plan 022 — Admin Dashboard: Staff Accounts (authenticated Admin creates Admin/staff account)
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-21
 - Scope-Agents: frontend, user-service, api-gateway, qa, security

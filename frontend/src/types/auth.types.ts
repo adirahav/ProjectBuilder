@@ -29,3 +29,42 @@ export interface LoginResponse {
  * value rather than as a thrown error.
  */
 export type LoginOutcome = 'success' | 'invalidCredentials' | 'error'
+
+/**
+ * What an already-signed-in Admin types to create another Admin/staff account
+ * (PRD F12, Screen 8). There is no public sign-up: this shape only ever leaves
+ * the app from inside the authenticated dashboard, on a route api-gateway
+ * verifies the caller's JWT for.
+ *
+ * Note the asymmetry with AdminCredentials: logging in accepts an email *or* a
+ * username on one field, but creating an account collects a real email, since
+ * that is the identifier the new account will be given.
+ */
+export interface StaffAccountDraft {
+  name: string
+  email: string
+  password: string
+}
+
+/**
+ * The created account as user-service returns it. Deliberately the same shape
+ * the login response carries, plus the name — and deliberately without the
+ * password or its hash, which must never travel back to the client.
+ */
+export interface StaffAccount {
+  id: string
+  name: string
+  email: string
+}
+
+/** Body of a successful `POST /api/auth/register`. */
+export interface RegisterAdminResponse {
+  admin: StaffAccount
+}
+
+/**
+ * Result of a create-account attempt. A duplicate email is an ordinary outcome
+ * of this form — the Admin cannot know what is already on record before asking
+ * — so it is its own value rather than a generic failure.
+ */
+export type CreateStaffAccountOutcome = 'success' | 'duplicateEmail' | 'error'

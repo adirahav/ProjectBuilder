@@ -13,6 +13,7 @@ import { AdminLoginPage } from './pages/AdminLoginPage'
 import { AdminDashboardPage } from './pages/AdminDashboardPage'
 import { AdminServicesPage } from './pages/AdminServicesPage'
 import { AdminAppointmentsPage } from './pages/AdminAppointmentsPage'
+import { AdminStaffAccountsPage } from './pages/AdminStaffAccountsPage'
 import { useDocumentDirection } from './hooks/useI18n'
 import { useNativeBackButton } from './native/useNativeBackButton'
 import { useStore } from './store/store'
@@ -25,10 +26,12 @@ import { setUnauthorizedHandler } from './services/http.service'
  * mount it inside a MemoryRouter without a second router in the tree.
  *
  * The booking routes are public by design (a Customer has no account). `/admin`,
- * `/admin/services` and `/admin/appointments` sit behind ProtectedRoute;
- * `/admin/login` stays public, since it is how the token is obtained in the
- * first place. That guard is a convenience, not the security boundary — every
- * Admin request is verified again at api-gateway.
+ * `/admin/services`, `/admin/appointments` and `/admin/staff` sit behind
+ * ProtectedRoute; `/admin/login` stays public, since it is how the token is
+ * obtained in the first place — and it is the *only* public auth route. Account
+ * creation is not one: it lives at `/admin/staff`, inside the guard. That guard
+ * is a convenience, not the security boundary — every Admin request is verified
+ * again at api-gateway.
  */
 export function AppRoutes() {
   const locale = useStore((state) => state.locale)
@@ -105,6 +108,13 @@ export function AppRoutes() {
           <Route path="/admin" element={<AdminDashboardPage />} />
           <Route path="/admin/services" element={<AdminServicesPage />} />
           <Route path="/admin/appointments" element={<AdminAppointmentsPage />} />
+          {/* Creating an Admin account is an authenticated action, never a
+              public sign-up. It lives under /admin/* and inside ProtectedRoute
+              on purpose: there is deliberately no /signup or /register route in
+              this app, and adding one would be a security regression the PRD
+              calls out by name (F12). api-gateway enforces the same thing
+              server-side, which is where it actually counts. */}
+          <Route path="/admin/staff" element={<AdminStaffAccountsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

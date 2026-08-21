@@ -22,4 +22,4 @@ Current queue:
 - [x] Add Login link in Signup page, and Signup link in Login page
 - [x] Create  Signup page
 - [x] In Login page, Add link in Signup page | scope: frontend
-- [ ] Admin Dashboard: Staff Accounts — authenticated Admin can create a new Admin/staff account (Screen 8, PRD F12/AC-10). No public Signup page — this is an authenticated-only action inside the Admin dashboard. | scope: frontend,user-service,api-gateway,qa,security | url: /admin/staff
+- [x] Admin Dashboard: Staff Accounts — authenticated Admin can create a new Admin/staff account (Screen 8, PRD F12/AC-10). No public Signup page — this is an authenticated-only action inside the Admin dashboard. | scope: frontend,user-service,api-gateway,qa,security | url: /admin/staff

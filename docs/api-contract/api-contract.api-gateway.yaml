@@ -9,9 +9,21 @@ info:
     the request to the service that owns the data.
 
     Scope of this revision: PRD F5 (`POST /api/auth/login`, proxied through to
-    user-service), the Admin Service management routes F6-F8, and the Admin
-    Appointment routes F9-F11 — all proxied through to booking-service and
-    gated by the gateway's JWT verification (AC-7).
+    user-service), PRD F12 (`POST /api/auth/register`, also proxied through to
+    user-service but — unlike login — gated by JWT verification), the Admin
+    Service management routes F6-F8, and the Admin Appointment routes F9-F11 —
+    the latter two proxied through to booking-service and gated by the gateway's
+    JWT verification (AC-7).
+
+    Read the two `/api/auth/*` routes together, because the difference between
+    them is the whole security story of F12. `login` is the single deliberately
+    public route on this gateway; `register` must NOT be. There is no
+    self-service sign-up in this product — an existing Admin creates the next
+    Admin's account from inside the dashboard. Mounting `verifyJwt` on the
+    `/api/auth` prefix as a whole would lock login out; omitting it from
+    `register` would let anyone on the internet mint a full Admin account. Gate
+    the `register` route specifically, and leave a comment at the mount saying
+    why the split exists.
 
     The public booking routes (F1-F4b) are NOT part of this contract: they are
     unauthenticated by design and the frontend calls booking-service directly.
@@ -23,7 +35,14 @@ servers:
 
 tags:
   - name: Auth
-    description: Admin authentication. There is exactly one Admin account in v1.
+    description: >
+      Admin authentication and Admin account creation, both forwarded to
+      user-service.
+
+      v1 seeds exactly one Admin account and lets a signed-in Admin create more
+      (PRD F12). Every account created this way is a full Admin: there are no
+      roles or permission tiers in v1, which is an accepted tradeoff rather than
+      an oversight. Neither route may ever return a password or a password hash.
   - name: Admin Services
     description: >
       Admin-only management of the `Service` catalogue (PRD F6-F8). Every route
@@ -180,6 +199,86 @@ components:
           format: email
           example: admin@example.com
       additionalProperties: false
+
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 60
+          description: >
+            The new Admin's display name. Collected because F12 asks for it and
+            because with more than one account on record, an email address alone
+            is a poor way to tell colleagues apart.
+          example: Dana Levi
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: >
+            The identifier the new account will sign in with. Must be unique.
+            The frontend lower-cases and trims it before sending, so that
+            "Dana@Example.com" and "dana@example.com" cannot become two
+            accounts; the server must normalise independently rather than trust
+            that, and should store and compare it case-insensitively.
+
+            Note this field is a real email, unlike LoginRequest.identifier,
+            which also accepts a username: login has to accept whatever the
+            seeded account was given, but this route is what defines a new
+            account, so it can insist on an address that can actually be
+            checked for typos.
+          example: dana@example.com
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          format: password
+          description: >
+            Sent as typed, with no client-side trimming: leading and trailing
+            spaces are legitimate password characters. Hashed with bcrypt before
+            storage. Must never be logged, echoed back in a response, or
+            included in an error message.
+
+            The 72-byte ceiling is bcrypt's: it silently ignores anything past
+            it, so a longer password would quietly not be the password the Admin
+            thinks they set.
+          example: correct-horse-battery-staple
+      additionalProperties: false
+
+    StaffAccount:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The account's client-facing id. Mongo's `_id` must never be exposed.
+          example: 9f8e7d6c-5b4a-4321-8765-0a1b2c3d4e5f
+        name:
+          type: string
+          example: Dana Levi
+        email:
+          type: string
+          format: email
+          example: dana@example.com
+      additionalProperties: false
+
+    RegisterResponse:
+      type: object
+      required: [admin]
+      properties:
+        admin:
+          $ref: '#/components/schemas/StaffAccount'
+      additionalProperties: false
+      description: >
+        The created account's public fields, and nothing else. No password, no
+        password hash, and deliberately no token: creating an account for
+        somebody else must not issue a session, and must not disturb the session
+        of the Admin who created it. The new account signs in for itself through
+        `POST /api/auth/login`, immediately — v1 has no activation or invite
+        step.
 
     LoginResponse:
       type: object
@@ -447,6 +546,91 @@ paths:
             The gateway could not reach user-service. Surfaced to the Admin as a
             generic "we could not sign you in" failure, never as a credential
             problem.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Authentication service unavailable
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerAdmin
+      summary: Create an additional Admin/staff account
+      description: >
+        PRD F12, Screen 8 (AC-10). An already-signed-in Admin creates another
+        Admin account. Proxied by api-gateway through to user-service, which
+        checks the email is not already taken, hashes the password with bcrypt,
+        and inserts an account identical in shape to the seeded one.
+
+        THIS ROUTE MUST BE BEHIND `verifyJwt`. It is the mirror image of
+        `POST /api/auth/login` above, which is public: this one is not, and the
+        PRD names an open version of it as a security regression to be rejected
+        in review. There is no `/signup`, no public `/register`, and no
+        unauthenticated path to account creation anywhere in this system. A
+        request without a valid Admin JWT must be answered 401 before it reaches
+        user-service.
+
+        The same trust boundary as every other route applies downstream:
+        user-service performs no JWT check of its own and trusts that the
+        gateway already did, so user-service must not be reachable directly from
+        outside the internal network.
+
+        The created account is a full Admin and can sign in immediately. v1 has
+        no roles, no invite link and no activation step — the creating Admin
+        shares the password out of band.
+      security:
+        - adminJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: >
+            The account was created. The response carries only its public
+            fields — never the password or its hash, and never a token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: >
+            A field is missing or malformed: no name, no email, an email that is
+            not an address, or a password below the minimum length. Distinct
+            from 409: nothing about the existing accounts was consulted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Name, email and password are required
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: >
+            An account already exists for that email. The frontend treats this
+            as an expected outcome of the form rather than a fault: it renders
+            an inline message beside the form asking for a different address,
+            and leaves what was typed in place.
+
+            The message names the field and stops there — it must not reveal who
+            owns the existing account, whether it is active, or when it was
+            created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: An account with that email already exists
+        '502':
+          description: >
+            The gateway could not reach user-service. Surfaced to the Admin as a
+            generic "we could not create the account" toast, never as a problem
+            with what they typed.
           content:
             application/json:
               schema:

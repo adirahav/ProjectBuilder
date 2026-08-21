@@ -35,8 +35,15 @@ export function createApp(options: CreateAppOptions = {}): Express {
   app.use(cors({ origin: config.frontendOrigin, credentials: true }))
   app.use(express.json())
 
-  // PRD F5 (ADMINLOG-GW). The login proxy is mounted WITHOUT verifyJwt — it is
-  // how a token is obtained in the first place.
+  // PRD F5 + F12. This is the ONE mount without a mount-point guard, because
+  // its two routes need opposite treatment: POST /api/auth/login is public (it
+  // is how a token is obtained), while POST /api/auth/register is gated by
+  // verifyJwt (PRD F12 — only a signed-in Admin may create another Admin; an
+  // open registration route is a security regression the PRD rejects).
+  //
+  // The guard therefore lives PER-ROUTE inside auth-proxy.routes.ts. Do not
+  // "tidy" it up to this mount point: verifyJwt here would lock login out, and
+  // no guard at all here plus none there would open registration to the world.
   app.use('/api/auth', authProxyRouter)
 
   // PRD F6-F8 (ADMINDAS-GW), Screen 6. The Admin Service management routes,

@@ -1,4 +1,4 @@
-import { ArrowRight, CalendarClock, LogOut, Scissors } from 'lucide-react'
+import { ArrowRight, CalendarClock, LogOut, Scissors, UserPlus } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
@@ -11,9 +11,11 @@ import { ADMIN_LOGIN_ROUTE } from '../components/ProtectedRoute'
 
 /**
  * The Admin dashboard: a shell that hands off to the screens that do the real
- * work. Services (F6-F8) is live; Appointments (F9-F11) is a separate ticket and
- * is shown as an unreachable, plainly-labelled card rather than a link that
- * would only dead-end.
+ * work — Services (F6-F8), Appointments (F9-F11) and Staff Accounts (F12).
+ *
+ * It is also the only entry point to Staff Accounts. Account creation is an
+ * authenticated action in this product, not a public sign-up, so the link to it
+ * exists here and nowhere a signed-out visitor can reach.
  *
  * It carries one piece of behaviour of its own: sign-out. Logout is purely
  * client-side in v1 — the stored token is dropped, but there is no server-side
@@ -98,6 +100,31 @@ export function AdminDashboardPage() {
           <p className="text-sm text-neutral-900/70">{t('admin.dashboard.appointments.body')}</p>
           <span className="mt-auto inline-flex items-center gap-2 pt-2 text-sm font-semibold text-primary">
             {t('admin.dashboard.appointments.action')}
+            <ArrowRight className="size-4 shrink-0 rtl:rotate-180" aria-hidden="true" />
+          </span>
+        </Link>
+
+        {/* Screen 8 (F12). This card is the only way into account creation, and
+            that is deliberate: it exists solely inside the authenticated
+            dashboard and must never be linked from a public page, because there
+            is no public sign-up in this product. */}
+        <Link
+          to="/admin/staff"
+          className={cn(
+            'flex flex-col gap-3 rounded-2xl border border-neutral-900/10 bg-white p-6 text-start',
+            'transition-colors hover:border-primary/40 hover:bg-primary-light',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+          )}
+        >
+          <span className="flex size-11 items-center justify-center rounded-xl bg-primary-light text-primary">
+            <UserPlus className="size-5" aria-hidden="true" />
+          </span>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            {t('admin.dashboard.staff.title')}
+          </h2>
+          <p className="text-sm text-neutral-900/70">{t('admin.dashboard.staff.body')}</p>
+          <span className="mt-auto inline-flex items-center gap-2 pt-2 text-sm font-semibold text-primary">
+            {t('admin.dashboard.staff.action')}
             <ArrowRight className="size-4 shrink-0 rtl:rotate-180" aria-hidden="true" />
           </span>
         </Link>

@@ -1,8 +1,19 @@
 import type { StateCreator } from 'zustand'
 
-import { authService, isInvalidCredentialsError } from '../../services/auth.service'
+import {
+  authService,
+  isDuplicateEmailError,
+  isInvalidCredentialsError,
+} from '../../services/auth.service'
 import { utilService } from '../../services/util.service'
-import type { AdminCredentials, AdminIdentity, LoginOutcome } from '../../types/auth.types'
+import type {
+  AdminCredentials,
+  AdminIdentity,
+  CreateStaffAccountOutcome,
+  LoginOutcome,
+  StaffAccount,
+  StaffAccountDraft,
+} from '../../types/auth.types'
 import type { RootState } from '../store'
 
 /** Where the Admin's identity is cached. The token itself lives under
@@ -24,6 +35,17 @@ export interface AuthSlice {
    */
   isHydratingAuth: boolean
 
+  /** True while a staff account is being created — blocks a double submit that
+   * would otherwise try to create the same account twice. */
+  isCreatingStaffAccount: boolean
+  /**
+   * The most recently created staff account, or null. Kept so Screen 8 can name
+   * the account it just made in its confirmation. It is not a list: v1 has no
+   * "list all Admins" endpoint, and inventing a local one here would show a
+   * roster that is only ever as complete as this browser tab's history.
+   */
+  createdStaffAccount: StaffAccount | null
+
   /**
    * Exchanges credentials for a JWT and stores it. Resolves to an outcome
    * instead of throwing, because wrong credentials are an ordinary result of a
@@ -34,6 +56,18 @@ export interface AuthSlice {
   logout: () => Promise<void>
   /** Restores a persisted session on boot. */
   hydrateAuth: () => Promise<void>
+  /**
+   * Creates another Admin/staff account (PRD F12). Resolves to an outcome
+   * instead of throwing, because "that email is already taken" is an ordinary
+   * result of this form, not a failure of the system.
+   *
+   * It never touches `token`/`admin`: creating an account for someone else must
+   * not sign the current Admin out of, or into, anything.
+   */
+  createStaffAccount: (draft: StaffAccountDraft) => Promise<CreateStaffAccountOutcome>
+  /** Clears the confirmation, so re-opening Screen 8 does not greet the Admin
+   * with a success message about an account they created some time ago. */
+  clearCreatedStaffAccount: () => void
   /**
    * Drops the in-memory session without touching storage. Called by
    * http.service's 401 handler, which has already cleared the stored token.
@@ -46,6 +80,8 @@ export const createAuthSlice: StateCreator<RootState, [], [], AuthSlice> = (set,
   admin: null,
   isLoggingIn: false,
   isHydratingAuth: true,
+  isCreatingStaffAccount: false,
+  createdStaffAccount: null,
 
   login: async (credentials) => {
     if (get().isLoggingIn) return 'error'
@@ -82,7 +118,9 @@ export const createAuthSlice: StateCreator<RootState, [], [], AuthSlice> = (set,
   },
 
   logout: async () => {
-    set({ token: null, admin: null })
+    // The confirmation goes with the session: it names another person's account
+    // and has no business surviving into whoever signs in next.
+    set({ token: null, admin: null, createdStaffAccount: null })
 
     try {
       await authService.clearToken()
@@ -106,10 +144,45 @@ export const createAuthSlice: StateCreator<RootState, [], [], AuthSlice> = (set,
     }
   },
 
+  createStaffAccount: async (draft) => {
+    if (get().isCreatingStaffAccount) return 'error'
+
+    // The previous confirmation goes now rather than on success: leaving it up
+    // while the next request is in flight would show a stale "created" message
+    // beside a form that is busy creating something else.
+    set({ isCreatingStaffAccount: true, createdStaffAccount: null })
+
+    try {
+      const { admin } = await authService.registerAdmin(draft)
+
+      // Only the account's public fields ever reach the store. The password was
+      // never lifted out of the form, and the server does not send it back.
+      set({ createdStaffAccount: admin })
+      console.log('[AUTH] a staff account was created')
+      return 'success'
+    } catch (err) {
+      const isDuplicate = isDuplicateEmailError(err)
+      console.log(
+        isDuplicate
+          ? '[AUTH] staff account rejected: that email already has an account'
+          : '[AUTH] creating the staff account failed',
+      )
+
+      return isDuplicate ? 'duplicateEmail' : 'error'
+    } finally {
+      set({ isCreatingStaffAccount: false })
+    }
+  },
+
+  clearCreatedStaffAccount: () => {
+    if (!get().createdStaffAccount) return
+    set({ createdStaffAccount: null })
+  },
+
   clearSession: () => {
     if (!get().token && !get().admin) return
 
     console.log('[AUTH] session ended')
-    set({ token: null, admin: null })
+    set({ token: null, admin: null, createdStaffAccount: null })
   },
 })

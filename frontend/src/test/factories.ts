@@ -3,7 +3,7 @@ import type {
   Appointment,
   AppointmentReceipt,
 } from '../types/appointment.types'
-import type { LoginResponse } from '../types/auth.types'
+import type { LoginResponse, RegisterAdminResponse } from '../types/auth.types'
 import type { Service } from '../types/service.types'
 import type { TimeSlot } from '../types/timeSlot.types'
 
@@ -16,6 +16,20 @@ export function buildLoginResponse(overrides: Partial<LoginResponse> = {}): Logi
   return {
     token: 'test-token',
     admin: { id: 'admin-1', email: 'admin@example.com' },
+    ...overrides,
+  }
+}
+
+/**
+ * A successful `POST /api/auth/register` body (PRD F12). Carries the created
+ * account's public fields and nothing else — no password, no hash, and no
+ * token, since creating an account for someone else must not issue a session.
+ */
+export function buildRegisterResponse(
+  overrides: Partial<RegisterAdminResponse> = {},
+): RegisterAdminResponse {
+  return {
+    admin: { id: 'admin-2', name: 'Dana Levi', email: 'dana@example.com' },
     ...overrides,
   }
 }

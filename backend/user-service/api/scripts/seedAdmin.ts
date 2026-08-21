@@ -25,6 +25,9 @@ const BCRYPT_ROUNDS = 12
 async function seedAdmin(): Promise<void> {
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase()
   const password = process.env.ADMIN_PASSWORD
+  // `name` became a required field when F12 added Admin-created staff accounts.
+  // Optional here so existing seed invocations keep working unchanged.
+  const name = process.env.ADMIN_NAME?.trim() || 'Administrator'
 
   if (!email || !password) {
     throw new Error(
@@ -38,7 +41,7 @@ async function seedAdmin(): Promise<void> {
 
   await Admin.updateOne(
     { email },
-    { $set: { passwordHash }, $setOnInsert: { email, createdAt: new Date() } },
+    { $set: { passwordHash }, $setOnInsert: { email, name, createdAt: new Date() } },
     { upsert: true },
   )
 

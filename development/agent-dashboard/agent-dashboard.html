@@ -139,15 +139,6 @@
   #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; margin-bottom:2.0em }
   #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
 
-  #cost-card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    margin-bottom: 16px;
-    overflow: hidden;
-  }
-  #cost-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .progress-badge {
     display: inline-block;
     font-size: 10px; font-weight: 700; letter-spacing: normal; text-transform: none;
@@ -159,15 +150,6 @@
   }
   .progress-badge:empty { display: none; }
   #status-task-name { text-transform: none; letter-spacing: normal; color: var(--text); font-weight: 600; }
-  #cost-table-wrap { overflow-x: auto; }
-  #cost-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
-  #cost-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); }
-  #cost-task-col, #cost-task-cell { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
-  #cost-table tr:last-child td { border-bottom: none; }
-  #cost-table tr.total-row td { font-weight: 700; border-top: 1px solid var(--border); }
-  #cost-total { margin-top: 10px; font-size: 12px; color: var(--dim); }
-  #cost-total strong { color: var(--text); }
 
   #history-card {
     background: var(--panel);
@@ -265,19 +247,6 @@
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
-    </div>
-
-    <div id="cost-card">
-      <div class="label" id="cost-label">💰 Cost — last completed task</div>
-      <div id="cost-table-wrap">
-        <table id="cost-table">
-          <thead>
-            <tr><th id="cost-task-col">Agent</th><th>In</th><th>Out</th><th>Cache</th><th>USD</th><th>NIS</th><th>Sec</th></tr>
-          </thead>
-          <tbody id="cost-tbody"></tbody>
-        </table>
-      </div>
-      <div id="cost-total"></div>
     </div>
 
     <div id="history-card">
@@ -730,16 +699,12 @@ async function poll() {
     dot.classList.remove("live");
   }
 
-  // Cost data is fetched straight from its own files under docs/cost/ (a
-  // generic static route in dev-loop.js, not a shaped /status.json field) —
-  // so changing what's shown here, or the file's own shape, never needs a
+  // Task-history data is fetched straight from its own file under docs/cost/
+  // (a generic static route in dev-loop.js, not a shaped /status.json field)
+  // — so changing what's shown here, or the file's own shape, never needs a
   // dev-loop.js restart again; only this page needs to reload. Kept in its
   // own try/catch so a hiccup here never breaks the live-status half above.
   try {
-    const lastTaskRes = await fetch("/docs/cost/last-task.json", { cache: "no-store" });
-    const lastTask = lastTaskRes.ok ? await lastTaskRes.json() : { costTask: null, costLog: [], costTotalUsd: 0, costTotalNis: 0 };
-    renderCostTable(lastTask.costLog || [], lastTask.costTotalUsd || 0, lastTask.costTotalNis || 0, lastTask.costTask);
-
     const historyRes = await fetch("/docs/cost/task-history.json", { cache: "no-store" });
     const history = historyRes.ok ? await historyRes.json() : [];
     renderHistory(Array.isArray(history) ? history.slice(-30).reverse() : []);
@@ -761,31 +726,6 @@ function renderHistory(history) {
       <td>${h.totalCostUsd.toFixed(4)}</td>
     </tr>
   `).join("");
-}
-
-function renderCostTable(rows, totalUsd, totalNis, task) {
-  const tbody = document.getElementById("cost-tbody");
-  const totalEl = document.getElementById("cost-total");
-  const taskCol = document.getElementById("cost-task-col");
-  taskCol.textContent = "Task";
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="color: var(--dim); font-style: italic;">No agent calls yet</td></tr>';
-    totalEl.textContent = "";
-    return;
-  }
-  const sum = (key) => rows.reduce((acc, r) => acc + (r[key] || 0), 0);
-  tbody.innerHTML = `
-    <tr class="total-row">
-      <td id="cost-task-cell" title="${task || ""}">${task || "TOTAL"}</td>
-      <td>${sum("inputTokens")}</td>
-      <td>${sum("outputTokens")}</td>
-      <td>${sum("cacheReadTokens")}</td>
-      <td>$${totalUsd.toFixed(4)}</td>
-      <td>₪${totalNis.toFixed(4)}</td>
-      <td>${sum("durationS").toFixed(1)}</td>
-    </tr>
-  `;
-  totalEl.innerHTML = `<strong>${rows.length}</strong> call(s) — <strong>$${totalUsd.toFixed(4)}</strong> / <strong>₪${totalNis.toFixed(4)}</strong>`;
 }
 
 setActiveCategory("orchestrator");

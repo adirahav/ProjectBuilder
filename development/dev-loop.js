@@ -26,9 +26,9 @@
 
 import { execSync, spawn } from "child_process"
 import dotenv from "dotenv"
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs"
 import http from "http"
-import { dirname, join } from "path"
+import { dirname, join, resolve, sep } from "path"
 import { createInterface } from "readline"
 import { fileURLToPath } from "url"
 
@@ -305,14 +305,6 @@ function writeLastTaskCost(taskLabel) {
     writeFileSync(LAST_TASK_COST_PATH, JSON.stringify(record, null, 2), "utf-8")
   } catch (e) {
     warn(`Could not write ${LAST_TASK_COST_PATH} (${e.message}) — the dashboard's cost card may not reflect this task's final total.`)
-  }
-}
-
-function readLastTaskCost() {
-  try {
-    return existsSync(LAST_TASK_COST_PATH) ? JSON.parse(readFileSync(LAST_TASK_COST_PATH, "utf-8")) : null
-  } catch {
-    return null
   }
 }
 
@@ -633,15 +625,12 @@ function startDashboardServer() {
       const base = existsSync(AGENT_STATUS_PATH)
         ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
         : { message: "", category: null, keys: [], task: "", taskProgress: null, updatedAt: null, lastEvent: null }
-      // Cost fields come from the persistent last-task-cost file, not the
-      // live status file — see writeLastTaskCost()'s comment. Read fresh on
-      // every request, same reasoning as `services` above.
-      const lastCost = readLastTaskCost() || { costTask: null, costLog: [], costTotalUsd: 0, costTotalNis: 0 }
-      // Most-recent-first, capped so the payload stays small on a long project
-      // — the full list is still on disk at TASK_HISTORY_PATH regardless.
-      const history = readTaskHistory().slice(-30).reverse()
+      // Cost/history data is NOT embedded here — the dashboard fetches
+      // docs/cost/last-task.json and docs/cost/task-history.json directly via
+      // the generic /docs/** static route below, so their shape can change
+      // without ever touching this route's code again.
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      res.end(JSON.stringify({ ...base, ...lastCost, history, services: BACKEND_SERVICE_KEYS }))
+      res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
       return
     }
 
@@ -656,6 +645,35 @@ function startDashboardServer() {
           res.writeHead(204)
           res.end()
         })
+      return
+    }
+
+    // Generic static passthrough for docs/** (cost history, agent reports,
+    // API contracts, ...) — reads straight from disk on every request, no
+    // server-side route logic involved at all. Unlike /status.json (which
+    // computes/shapes data and therefore needs a dev-loop.js restart to pick
+    // up any change to that logic), this route's own code never needs to
+    // change again just because the SHAPE of some file under docs/ changes —
+    // the dashboard can just fetch whatever JSON it wants directly.
+    if (req.url && req.url.startsWith("/docs/")) {
+      const requestedPath = decodeURIComponent(req.url.slice(1).split("?")[0])
+      const docsRoot = resolve("docs")
+      const fullPath = resolve(requestedPath)
+      // Must resolve to somewhere inside docs/ — blocks ../ escaping out.
+      if (!fullPath.startsWith(docsRoot + sep) && fullPath !== docsRoot) {
+        res.writeHead(403, { "Content-Type": "text/plain" })
+        res.end("Forbidden")
+        return
+      }
+      if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
+        res.writeHead(404, { "Content-Type": "text/plain" })
+        res.end("Not found")
+        return
+      }
+      const ext = fullPath.split(".").pop().toLowerCase()
+      const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8" }
+      res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
+      res.end(readFileSync(fullPath))
       return
     }
 

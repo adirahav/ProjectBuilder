@@ -726,14 +726,26 @@ async function poll() {
       }
     }
 
-    // costTask (which task these numbers belong to) is deliberately separate
-    // from data.task (whichever task is running right now) — the cost card
-    // shows the last COMPLETED task's final total, not a live-growing number
-    // for a task that isn't done yet.
-    renderCostTable(data.costLog || [], data.costTotalUsd || 0, data.costTotalNis || 0, data.costTask);
-    renderHistory(data.history || []);
   } catch {
     dot.classList.remove("live");
+  }
+
+  // Cost data is fetched straight from its own files under docs/cost/ (a
+  // generic static route in dev-loop.js, not a shaped /status.json field) —
+  // so changing what's shown here, or the file's own shape, never needs a
+  // dev-loop.js restart again; only this page needs to reload. Kept in its
+  // own try/catch so a hiccup here never breaks the live-status half above.
+  try {
+    const lastTaskRes = await fetch("/docs/cost/last-task.json", { cache: "no-store" });
+    const lastTask = lastTaskRes.ok ? await lastTaskRes.json() : { costTask: null, costLog: [], costTotalUsd: 0, costTotalNis: 0 };
+    renderCostTable(lastTask.costLog || [], lastTask.costTotalUsd || 0, lastTask.costTotalNis || 0, lastTask.costTask);
+
+    const historyRes = await fetch("/docs/cost/task-history.json", { cache: "no-store" });
+    const history = historyRes.ok ? await historyRes.json() : [];
+    renderHistory(Array.isArray(history) ? history.slice(-30).reverse() : []);
+  } catch {
+    // Files not written yet (nothing completed this run) — leave whatever
+    // was last rendered (or the initial empty state) as-is.
   }
 }
 

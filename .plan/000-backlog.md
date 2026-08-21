@@ -19,4 +19,4 @@ Current queue:
 - [x] Native (Capacitor) Android/iOS wrap-up and back-button navigation | scope: frontend,qa
 - [x] Deploy setup: api-gateway serves built frontend and reverse-proxies | scope: api-gateway,frontend
 - [x] Add Login/Logout link in Header
-- [ ] Add Login link in Signup page, and Signup link in Login page
+- [x] Add Login link in Signup page, and Signup link in Login page

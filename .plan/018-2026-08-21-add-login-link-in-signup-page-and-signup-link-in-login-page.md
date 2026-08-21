@@ -1,6 +1,6 @@
 # Plan 018 — Add Login link in Signup page, and Signup link in Login page
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-21
 - Scope-Agents: none

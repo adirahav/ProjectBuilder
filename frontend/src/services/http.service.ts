@@ -7,19 +7,40 @@ import { utilService } from './util.service'
 // (F5-F11) goes "via api-gateway", which is where the JWT is verified.
 // Domain services still only ever see relative endpoints — which origin a call
 // leaves by is decided here and nowhere else.
-const BOOKING_SERVICE_URL = import.meta.env.VITE_BOOKING_SERVICE_URL ?? ''
-const API_GATEWAY_URL = import.meta.env.VITE_API_GATEWAY_URL ?? ''
+//
+// Single-origin deploy: in production the built bundle is served by
+// api-gateway itself, which also reverse-proxies `/api/...`. There is then no
+// second origin to name, so an *unset* base URL is the correct configuration —
+// requests fall back to a relative path and hit the same origin the app was
+// served from. That is why the "not set" notice below is dev-only: in a
+// production build it is the expected state, not a misconfiguration.
+//
+// The env vars stay supported (and stay required for the Capacitor native
+// build, which is served from a `capacitor://` / `file://` origin and so has
+// no gateway to fall back to) — they simply become optional on the web build.
+function resolveBaseUrl(value: string | undefined, varName: string): string {
+  const baseUrl = (value ?? '').trim()
 
-if (!BOOKING_SERVICE_URL) {
-  // Deliberately not defaulted to a hardcoded host: an unset base URL is a
-  // configuration error, and failing visibly beats silently calling the wrong
-  // origin. Copy frontend/.env.example to frontend/.env to fix it.
-  console.log('[HTTP] VITE_BOOKING_SERVICE_URL is not set — API requests will use a relative path')
+  if (!baseUrl && import.meta.env.DEV) {
+    // Deliberately not defaulted to a hardcoded host: in dev there is no
+    // gateway serving the bundle, so a relative path is almost certainly a
+    // mistake. Copy frontend/.env.example to frontend/.env to fix it.
+    console.log(`[HTTP] ${varName} is not set — requests will use a relative same-origin path`)
+  }
+
+  // Trailing slashes are stripped here so callers can always pass endpoints
+  // that start with `/api/...` without producing a doubled slash.
+  return baseUrl.replace(/\/+$/, '')
 }
 
-if (!API_GATEWAY_URL) {
-  console.log('[HTTP] VITE_API_GATEWAY_URL is not set — Admin requests will use a relative path')
-}
+const BOOKING_SERVICE_URL = resolveBaseUrl(
+  import.meta.env.VITE_BOOKING_SERVICE_URL,
+  'VITE_BOOKING_SERVICE_URL',
+)
+const API_GATEWAY_URL = resolveBaseUrl(
+  import.meta.env.VITE_API_GATEWAY_URL,
+  'VITE_API_GATEWAY_URL',
+)
 
 export const AUTH_TOKEN_KEY = 'authToken'
 
@@ -68,7 +89,9 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
  * session-expiry logic (.rule/error-handling-rules.md).
  */
 function createClient(baseURL: string): AxiosInstance {
-  const instance = axios.create({ baseURL: baseURL.replace(/\/+$/, '') })
+  // baseURL is already normalised by resolveBaseUrl; an empty string means
+  // "same origin", which is exactly what axios does with a relative path.
+  const instance = axios.create({ baseURL })
 
   instance.interceptors.request.use(async (config) => {
     const token = await getToken()

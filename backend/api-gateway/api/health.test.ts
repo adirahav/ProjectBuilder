@@ -23,7 +23,9 @@ describe('GET /health', () => {
   })
 
   it('returns 404 for an unknown route', async () => {
-    const app = createApp()
+    // API-only mode (no built frontend being served). The single-origin
+    // static/SPA-fallback behaviour has its own coverage in static.test.ts.
+    const app = createApp({ serveFrontend: false })
 
     const res = await request(app).get('/does-not-exist')
 

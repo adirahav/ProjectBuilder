@@ -17,5 +17,5 @@ Current queue:
 - [x] Admin Dashboard: Appointments management (confirm/cancel) | scope: frontend,booking-service,api-gateway,qa,security | url: /admin/appointments
 - [x] Hebrew/English i18n + RTL/LTR direction toggle | scope: frontend,qa
 - [x] Native (Capacitor) Android/iOS wrap-up and back-button navigation | scope: frontend,qa
-- [ ] Deploy setup: api-gateway serves built frontend and reverse-proxies | scope: api-gateway,frontend
+- [x] Deploy setup: api-gateway serves built frontend and reverse-proxies | scope: api-gateway,frontend
 - [ ] Add Login/Logout link in Header

@@ -1,6 +1,6 @@
 # Plan 016 — Deploy setup: api-gateway serves built frontend and reverse-proxies
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-21
 - Scope-Agents: api-gateway, qa, security

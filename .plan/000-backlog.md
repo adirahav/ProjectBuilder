@@ -14,7 +14,7 @@ Current queue:
 - [x] Booking Confirmation page | scope: frontend,booking-service,qa | url: /confirmation/example-appointment-id
 - [x] Admin Login page and auth flow | scope: frontend,user-service,api-gateway,qa,security | url: /admin/login
 - [x] Admin Dashboard: Services management (create/edit/deactivate) | scope: frontend,booking-service,api-gateway,qa,security | url: /admin
-- [ ] Admin Dashboard: Appointments management (confirm/cancel) | scope: frontend,booking-service,api-gateway,qa,security | url: /admin/appointments
+- [x] Admin Dashboard: Appointments management (confirm/cancel) | scope: frontend,booking-service,api-gateway,qa,security | url: /admin/appointments
 - [ ] Hebrew/English i18n + RTL/LTR direction toggle | scope: frontend,qa
 - [ ] Native (Capacitor) Android/iOS wrap-up and back-button navigation | scope: frontend,qa
 - [ ] Deploy setup: api-gateway serves built frontend and reverse-proxies | scope: api-gateway,frontend

@@ -1,6 +1,6 @@
 # Plan 014 — Hebrew/English i18n + RTL/LTR direction toggle
 
-- Status: draft
+- Status: done
 - Owner: orchestrator
 - Last updated: 2026-08-21
 - Scope-Agents: frontend, qa

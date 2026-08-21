@@ -180,6 +180,23 @@ describe('language toggle', () => {
     expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('shows nothing at all until the persisted language has been read', async () => {
+    // A returning English user must never be shown the Hebrew default first:
+    // between mount and the storage read landing, the shell stays blank rather
+    // than painting copy in a language that is about to be replaced.
+    localStorage.setItem('locale', '"en"')
+    useStore.setState({ isHydratingLocale: true })
+
+    renderApp()
+
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    expect(screen.queryByText('השירותים שלנו')).not.toBeInTheDocument()
+
+    // …and once it lands, the first copy ever painted is already English.
+    expect(await screen.findByRole('heading', { level: 1, name: 'Our services' })).toBeInTheDocument()
+    await waitFor(() => expect(document.documentElement.dir).toBe('ltr'))
+  })
+
   it('persists the chosen language across a reload', async () => {
     const user = userEvent.setup()
     const { unmount } = renderApp()

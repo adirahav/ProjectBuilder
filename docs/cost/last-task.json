@@ -1,47 +1,17 @@
 {
-  "costTask": "Admin Dashboard: Services management (create/edit/deactivate)",
+  "costTask": "Admin Dashboard: Appointments management (confirm/cancel)",
   "costLog": [
-    {
-      "role": "booking-service",
-      "label": "Backend Agent — booking-service",
-      "inputTokens": 16,
-      "outputTokens": 2659,
-      "cacheReadTokens": 363861,
-      "costUsd": 0.29574680000000003,
-      "costNis": 1.0942631600000001,
-      "durationS": 73.108
-    },
-    {
-      "role": "api-gateway",
-      "label": "Backend Agent — api-gateway",
-      "inputTokens": 7166,
-      "outputTokens": 5337,
-      "cacheReadTokens": 513510,
-      "costUsd": 0.39671525,
-      "costNis": 1.467846425,
-      "durationS": 128.95
-    },
     {
       "role": "qa",
       "label": "QA Agent",
-      "inputTokens": 6,
-      "outputTokens": 3520,
-      "cacheReadTokens": 140892,
-      "costUsd": 0.9668545,
-      "costNis": 3.57736165,
-      "durationS": 40.195
-    },
-    {
-      "role": "security",
-      "label": "Security Agent",
-      "inputTokens": 92,
-      "outputTokens": 28566,
-      "cacheReadTokens": 3495130,
-      "costUsd": 1.8037827500000005,
-      "costNis": 6.673996175000003,
-      "durationS": 540.019
+      "inputTokens": 38,
+      "outputTokens": 5997,
+      "cacheReadTokens": 762596,
+      "costUsd": 0.47638079999999994,
+      "costNis": 1.4253313535999999,
+      "durationS": 227.974
     }
   ],
-  "costTotalUsd": 3.4630993000000005,
-  "costTotalNis": 12.813467410000003
+  "costTotalUsd": 0.47638079999999994,
+  "costTotalNis": 1.4253313535999999
 }

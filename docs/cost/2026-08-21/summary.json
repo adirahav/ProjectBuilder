@@ -1,0 +1,14 @@
+{
+  "tasks": [
+    {
+      "role": "qa",
+      "label": "QA Agent",
+      "inputTokens": 38,
+      "outputTokens": 5997,
+      "cacheReadTokens": 762596,
+      "costUsd": 0.47638079999999994,
+      "durationMs": 227974
+    }
+  ],
+  "totalCostUsd": 0.47638079999999994
+}

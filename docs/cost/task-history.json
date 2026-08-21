@@ -75,5 +75,12 @@
     "totalCostNis": 1.4253313535999999,
     "callCount": 1,
     "completedAt": "2026-08-21T05:42:22.366Z"
+  },
+  {
+    "task": "Native (Capacitor) Android/iOS wrap-up and back-button navigation",
+    "totalCostUsd": 2.5264902000000005,
+    "totalCostNis": 7.559258678400002,
+    "callCount": 3,
+    "completedAt": "2026-08-21T06:27:44.198Z"
   }
 ]

@@ -158,6 +158,19 @@ describe('the Admin Appointments list', () => {
     expect(within(row).getByText('בוטל')).toBeInTheDocument()
   })
 
+  it('keeps the wall-clock time range reading left-to-right in the Hebrew table', async () => {
+    mockedGetAdminList.mockResolvedValue([buildAdminAppointment({ customerName: 'Dana Levi' })])
+
+    await renderLoadedPage()
+
+    const row = await screen.findByRole('row', { name: /Dana Levi/ })
+    // Without the isolation the bidi algorithm swaps the two sides in an RTL
+    // row, turning 09:00–10:30 into an appointment that ends before it starts.
+    // Matched loosely around the dash: the query normalizes the thin spaces
+    // formatTimeRange puts either side of it down to ordinary whitespace.
+    expect(within(row).getByText(/09:00\s*–\s*10:30/)).toHaveAttribute('dir', 'ltr')
+  })
+
   it('offers a way to call the customer', async () => {
     mockedGetAdminList.mockResolvedValue([
       buildAdminAppointment({ customerName: 'Dana Levi', customerPhone: '050-123-4567' }),

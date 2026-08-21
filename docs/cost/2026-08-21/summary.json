@@ -1,32 +1,14 @@
 {
   "tasks": [
     {
-      "role": "orchestrator",
-      "label": "Orchestrator (planning)",
-      "inputTokens": 5,
-      "outputTokens": 10585,
-      "cacheReadTokens": 53802,
-      "costUsd": 0.30984809999999996,
-      "durationMs": 98080
-    },
-    {
-      "role": "frontend",
-      "label": "Frontend Agent",
-      "inputTokens": 8319,
-      "outputTokens": 15753,
-      "cacheReadTokens": 3198767,
-      "costUsd": 1.6093180999999999,
-      "durationMs": 519901
-    },
-    {
       "role": "qa",
       "label": "QA Agent",
-      "inputTokens": 66,
-      "outputTokens": 6359,
-      "cacheReadTokens": 1076677,
-      "costUsd": 0.51556385,
-      "durationMs": 274246
+      "inputTokens": 38,
+      "outputTokens": 5997,
+      "cacheReadTokens": 762596,
+      "costUsd": 0.47638079999999994,
+      "durationMs": 227974
     }
   ],
-  "totalCostUsd": 2.4347300499999998
+  "totalCostUsd": 0.47638079999999994
 }

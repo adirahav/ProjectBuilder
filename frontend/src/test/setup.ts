@@ -42,6 +42,13 @@ beforeEach(async () => {
   initialStoreState ??= useStore.getState()
   useStore.setState(initialStoreState, true)
 
+  // AppRoutes withholds the whole shell until the persisted language has been
+  // read from storage, so that a returning English user never sees the Hebrew
+  // default flash first. Page tests are about what renders *after* that read,
+  // so they start on the far side of it; the gate itself is covered explicitly
+  // in ServiceListPage.test.tsx, which opts back in.
+  useStore.setState({ isHydratingLocale: false })
+
   localStorage.clear()
   document.documentElement.dir = ''
   document.documentElement.lang = ''

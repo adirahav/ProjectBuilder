@@ -30,6 +30,7 @@ import { setUnauthorizedHandler } from './services/http.service'
  */
 export function AppRoutes() {
   const locale = useStore((state) => state.locale)
+  const isHydratingLocale = useStore((state) => state.isHydratingLocale)
   const hydrateLocale = useStore((state) => state.hydrateLocale)
   const hydrateAuth = useStore((state) => state.hydrateAuth)
   const clearSession = useStore((state) => state.clearSession)
@@ -48,6 +49,22 @@ export function AppRoutes() {
     setUnauthorizedHandler(clearSession)
     return () => setUnauthorizedHandler(null)
   }, [clearSession])
+
+  // The persisted language is read from storage asynchronously (it is the
+  // Capacitor Preferences API on the native build, not a synchronous
+  // localStorage hit). Rendering copy before that read lands would paint the
+  // Hebrew default and then visibly flip the whole page to English for anyone
+  // who chose English last visit — direction, layout and every string at once.
+  // An empty shell for one tick is a far smaller lie than the wrong language.
+  if (isHydratingLocale) {
+    return (
+      <div
+        className="relative min-h-screen w-full bg-neutral-50"
+        aria-busy="true"
+        aria-hidden="true"
+      />
+    )
+  }
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden bg-neutral-50 text-neutral-900">

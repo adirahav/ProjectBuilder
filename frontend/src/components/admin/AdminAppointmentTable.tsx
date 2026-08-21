@@ -91,9 +91,19 @@ export function AdminAppointmentTable({
               >
                 <th scope="row" className="px-4 py-4 text-start font-semibold text-neutral-900">
                   {timeSlot ? (
-                    <span className="flex flex-col gap-0.5">
+                    /* `items-start` keeps the LTR-isolated time below sized to
+                       its own content, so forcing its direction cannot drag it
+                       away from the date it sits under. */
+                    <span className="flex flex-col items-start gap-0.5">
                       <span>{formatDateLabel(timeSlot.date, locale)}</span>
-                      <span className="text-sm font-medium text-neutral-900/70">
+                      {/* Wall-clock range stays LTR in both languages: without
+                          the isolation the two sides of `09:00 – 09:45` swap
+                          visually inside the RTL row, which reads as a
+                          different appointment entirely. */}
+                      <span
+                        dir="ltr"
+                        className="text-sm font-medium tabular-nums text-neutral-900/70"
+                      >
                         {formatTimeRange(timeSlot.startTime, timeSlot.endTime)}
                       </span>
                     </span>

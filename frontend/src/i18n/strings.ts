@@ -297,6 +297,10 @@ const en = {
   'adminAppointments.cancelDialog.submitting': 'Cancelling…',
   'adminAppointments.cancelDialog.keep': 'Keep the appointment',
   'adminAppointments.cancelDialog.close': 'Close this question',
+
+  // Native (Capacitor) build only — a browser never reaches these.
+  'nativeBack.pressAgainToExit': 'Press back again to exit',
+  'nativeBack.modalBusy': 'Just a moment — we are still saving.',
 } as const
 
 export type StringKey = keyof typeof en
@@ -592,6 +596,9 @@ const he: Dictionary = {
   'adminAppointments.cancelDialog.submitting': 'מבטלים…',
   'adminAppointments.cancelDialog.keep': 'להשאיר את התור',
   'adminAppointments.cancelDialog.close': 'סגירת השאלה',
+
+  'nativeBack.pressAgainToExit': 'לחץ שוב על חזרה כדי לצאת',
+  'nativeBack.modalBusy': 'רגע אחד — אנחנו עדיין שומרים.',
 }
 
 export const dictionaries: Record<Locale, Dictionary> = { he, en }

@@ -14,7 +14,9 @@ import { AdminDashboardPage } from './pages/AdminDashboardPage'
 import { AdminServicesPage } from './pages/AdminServicesPage'
 import { AdminAppointmentsPage } from './pages/AdminAppointmentsPage'
 import { useDocumentDirection } from './hooks/useI18n'
+import { useNativeBackButton } from './native/useNativeBackButton'
 import { useStore } from './store/store'
+import { cn } from './lib/utils'
 import { directionFor } from './store/slices/app.slice'
 import { setUnauthorizedHandler } from './services/http.service'
 
@@ -37,6 +39,11 @@ export function AppRoutes() {
 
   // Reflect the active language on <html> so logical properties resolve.
   useDocumentDirection(locale)
+
+  // The single app-wide native back-button listener. A no-op on web, and mounted
+  // here because this is the one component that is both inside the router and
+  // rendered exactly once (native-navigation-layer).
+  useNativeBackButton()
 
   useEffect(() => {
     void hydrateLocale()
@@ -67,7 +74,15 @@ export function AppRoutes() {
   }
 
   return (
-    <div className="relative min-h-screen w-full overflow-x-hidden bg-neutral-50 text-neutral-900">
+    /* The bottom inset clears the iOS home indicator / Android gesture bar on
+       the native build. On web env() resolves to 0, so the padding costs
+       nothing there. The top inset is AppHeader's job. */
+    <div
+      className={cn(
+        'relative min-h-screen w-full overflow-x-hidden bg-neutral-50 text-neutral-900',
+        'pb-[env(safe-area-inset-bottom)]',
+      )}
+    >
       <SkipLink />
       <AppHeader />
 

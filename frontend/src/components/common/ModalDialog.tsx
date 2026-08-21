@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 
 import { cn } from '../../lib/utils'
+import { useStore } from '../../store/store'
 
 interface ModalDialogProps {
   isOpen: boolean
@@ -63,10 +64,33 @@ export function ModalDialog({
   const titleId = useId()
   const descriptionId = `${titleId}-description`
 
+  const registerModal = useStore((state) => state.registerModal)
+  const unregisterModal = useStore((state) => state.unregisterModal)
+
   const requestClose = useCallback(() => {
-    if (isDismissDisabled) return
+    if (isDismissDisabled) return false
     onClose()
+    return true
   }, [isDismissDisabled, onClose])
+
+  // The registry below must always call the *current* requestClose, but must
+  // not re-register every time that callback's identity changes — a churning
+  // registration could drop the entry for the instant a back press lands on it.
+  const requestCloseRef = useRef(requestClose)
+  useEffect(() => {
+    requestCloseRef.current = requestClose
+  }, [requestClose])
+
+  // Announce this dialog to the app-level modal registry while it is open, so
+  // the native back button closes it instead of navigating the page behind it
+  // (native-navigation-layer §2). Registering here — in the shared primitive —
+  // is what makes every dialog built on it covered without its own wiring.
+  useEffect(() => {
+    if (!isOpen) return
+
+    registerModal({ id: titleId, close: () => requestCloseRef.current() })
+    return () => unregisterModal(titleId)
+  }, [isOpen, titleId, registerModal, unregisterModal])
 
   // Remember who opened the dialog, so focus has somewhere sensible to return.
   useEffect(() => {

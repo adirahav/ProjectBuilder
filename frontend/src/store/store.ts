@@ -5,10 +5,16 @@ import { createAppointmentSlice, type AppointmentSlice } from './slices/appointm
 import { createAuthSlice, type AuthSlice } from './slices/auth.slice'
 import { createServiceSlice, type ServiceSlice } from './slices/service.slice'
 import { createTimeSlotSlice, type TimeSlotSlice } from './slices/timeSlot.slice'
+import { createUiSlice, type UiSlice } from './slices/ui.slice'
 
 // One combined store, assembled from feature slices. Add one member to
 // RootState and one spread below per new slice.
-export type RootState = AppSlice & ServiceSlice & TimeSlotSlice & AppointmentSlice & AuthSlice
+export type RootState = AppSlice &
+  ServiceSlice &
+  TimeSlotSlice &
+  AppointmentSlice &
+  AuthSlice &
+  UiSlice
 
 export const useStore = create<RootState>((...a) => ({
   ...createAppSlice(...a),
@@ -16,4 +22,5 @@ export const useStore = create<RootState>((...a) => ({
   ...createTimeSlotSlice(...a),
   ...createAppointmentSlice(...a),
   ...createAuthSlice(...a),
+  ...createUiSlice(...a),
 }))

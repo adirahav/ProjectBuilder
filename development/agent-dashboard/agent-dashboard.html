@@ -163,7 +163,7 @@
   /* Capped height with its own scrollbar — a growing task list must never
      eat into the live-app iframe's space below (#iframe-wrap takes whatever
      vertical room #sidebar's siblings leave it). */
-  #history-list { max-height: 150px; overflow-y: auto; font-size: 12px; }
+  #history-list { max-height: 100px; overflow-y: auto; font-size: 12px; }
   #history-table { width: 100%; border-collapse: collapse; }
   #history-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
   #history-table th:last-child, #history-table td:last-child { text-align: right; }
@@ -243,7 +243,7 @@
   <div id="sidebar">
     <div id="status-card">
       <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span> <span id="status-task-name"></span></div>
-      <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
+      <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/images/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
@@ -460,7 +460,7 @@ function playCue(fileName) {
     currentAudio.pause();
     currentAudio.currentTime = 0;
   }
-  if (!audioCache[fileName]) audioCache[fileName] = new Audio(`/assets/${fileName}`);
+  if (!audioCache[fileName]) audioCache[fileName] = new Audio(`/assets/audio/${fileName}`);
   const audio = audioCache[fileName];
   audio.currentTime = 0;
   currentAudio = audio;
@@ -538,7 +538,7 @@ function makeNode(agent, pos, isCenter, isSatellite) {
   const iconHtml = isSatellite
     ? ""
     : agent.img
-      ? `<img class="icon-img" src="/assets/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
+      ? `<img class="icon-img" src="/assets/images/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
       : `<div class="icon">${agent.icon}</div>`;
   el.innerHTML = `${iconHtml}<div class="name">${agent.ringLabel || agent.name}</div>`;
   ring.appendChild(el);
@@ -645,7 +645,7 @@ function setActiveCategory(category, keys) {
   const repKey = activeKeys.size ? [...activeKeys][0] : category;
   const info = BY_KEY[repKey] || { icon: "🤖", img: null, name: category || "idle" };
   const iconImg = document.getElementById("active-icon-img");
-  if (info.img) iconImg.src = `/assets/${info.img}`;
+  if (info.img) iconImg.src = `/assets/images/${info.img}`;
   document.getElementById("active-name").textContent = activeKeys.size > 1 ? `${info.name} +${activeKeys.size - 1}` : info.name;
 }
 

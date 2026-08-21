@@ -20,3 +20,5 @@ Current queue:
 - [x] Deploy setup: api-gateway serves built frontend and reverse-proxies | scope: api-gateway,frontend
 - [x] Add Login/Logout link in Header
 - [x] Add Login link in Signup page, and Signup link in Login page
+- [x] Create  Signup page
+- [ ] In Login page, Add link in Signup page | scope: frontend

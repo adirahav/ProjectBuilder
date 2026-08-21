@@ -3,30 +3,75 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 2326,
-      "outputTokens": 10260,
-      "cacheReadTokens": 397588,
-      "costUsd": 0.43570965,
-      "durationMs": 139207
+      "inputTokens": 13,
+      "outputTokens": 9016,
+      "cacheReadTokens": 212851,
+      "costUsd": 0.29126304999999997,
+      "durationMs": 93734
     },
     {
       "role": "frontend",
       "label": "Frontend Agent",
-      "inputTokens": 1048,
-      "outputTokens": 7270,
-      "cacheReadTokens": 464270,
-      "costUsd": 0.35809975000000005,
-      "durationMs": 351184
+      "inputTokens": 1988,
+      "outputTokens": 7710,
+      "cacheReadTokens": 805607,
+      "costUsd": 0.4802366,
+      "durationMs": 198967
+    },
+    {
+      "role": "notification-service",
+      "label": "Backend Agent — notification-service",
+      "inputTokens": 3249,
+      "outputTokens": 1351,
+      "cacheReadTokens": 122653,
+      "costUsd": 0.11233064999999999,
+      "durationMs": 58607
     },
     {
       "role": "api-gateway",
       "label": "Backend Agent — api-gateway",
-      "inputTokens": 15643,
-      "outputTokens": 8092,
-      "cacheReadTokens": 720148,
-      "costUsd": 0.51457165,
-      "durationMs": 184782
+      "inputTokens": 3249,
+      "outputTokens": 2734,
+      "cacheReadTokens": 145362,
+      "costUsd": 0.18665085,
+      "durationMs": 61603
+    },
+    {
+      "role": "user-service",
+      "label": "Backend Agent — user-service",
+      "inputTokens": 97,
+      "outputTokens": 2107,
+      "cacheReadTokens": 156000,
+      "costUsd": 0.12695425000000002,
+      "durationMs": 98456
+    },
+    {
+      "role": "booking-service",
+      "label": "Backend Agent — booking-service",
+      "inputTokens": 12,
+      "outputTokens": 1635,
+      "cacheReadTokens": 179407,
+      "costUsd": 0.17354234999999998,
+      "durationMs": 127020
+    },
+    {
+      "role": "qa",
+      "label": "QA Agent",
+      "inputTokens": 1806,
+      "outputTokens": 3020,
+      "cacheReadTokens": 272178,
+      "costUsd": 0.2125239,
+      "durationMs": 238091
+    },
+    {
+      "role": "security",
+      "label": "Security Agent",
+      "inputTokens": 50,
+      "outputTokens": 14758,
+      "cacheReadTokens": 987879,
+      "costUsd": 0.73388745,
+      "durationMs": 399957
     }
   ],
-  "totalCostUsd": 1.30838105
+  "totalCostUsd": 2.3173891
 }

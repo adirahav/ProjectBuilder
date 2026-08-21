@@ -89,5 +89,12 @@
     "totalCostNis": 3.9146761016,
     "callCount": 3,
     "completedAt": "2026-08-21T06:46:24.819Z"
+  },
+  {
+    "task": "Add Login/Logout link in Header",
+    "totalCostUsd": 2.3173891,
+    "totalCostNis": 6.933628187200001,
+    "callCount": 8,
+    "completedAt": "2026-08-21T10:54:40.816Z"
   }
 ]

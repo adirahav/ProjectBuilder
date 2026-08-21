@@ -73,19 +73,21 @@
   .node.center .icon { font-size: 42px; }
   .node.center .icon-img { width: 124px; height: 124px; }
 
-  /* Backend-service satellites are plain text badges (no portrait) — smaller
-     than the primary ring so 4 of them fit around the backend hub without
-     overlapping it, each other, or the box edge. */
+  /* Backend-service satellites — smaller than the primary ring so 4 of them
+     fit around the backend hub without overlapping it, each other, or the
+     box edge. Small shared portrait + 2-line label, both scaled down to
+     still fit the tight 52px circle. */
   .node.satellite {
-    width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 4px;
+    width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 3px;
     background: radial-gradient(circle at 32% 30%, rgba(59, 130, 246, 0.24), var(--panel) 72%);
   }
+  .node.satellite .icon-img { width: 20px; height: 20px; margin-bottom: 1px; }
   /* Extra attribute selector to out-specificity the generic idle-border rule
      below (.node[data-agent]) — satellites keep their own static tint even
      while idle, instead of falling back to the plain gray border. */
   .node.satellite[data-agent] { border-color: rgba(59, 130, 246, 0.45); }
   .node.satellite .name {
-    font-size: 8.5px; line-height: 1.25; font-weight: 700; letter-spacing: 0.01em;
+    font-size: 7.5px; line-height: 1.15; font-weight: 700; letter-spacing: 0.01em;
     color: #eaf2ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     /* Overriding the base .node .name rule's nowrap/ellipsis — satellites
        need real 2-line wrapping (via the explicit <br> in ringLabel above),
@@ -533,13 +535,11 @@ function makeNode(agent, pos, isCenter, isSatellite) {
   el.dataset.agent = agent.key;
   el.style.left = pos.x + "%";
   el.style.top = pos.y + "%";
-  // Satellites are plain text badges — no portrait, no icon; the backend
-  // hub's own portrait already carries the "this is backend work" identity.
-  const iconHtml = isSatellite
-    ? ""
-    : agent.img
-      ? `<img class="icon-img" src="/assets/images/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
-      : `<div class="icon">${agent.icon}</div>`;
+  const iconHtml = agent.img
+    ? `<img class="icon-img" src="/assets/images/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
+    : agent.icon
+      ? `<div class="icon">${agent.icon}</div>`
+      : "";
   el.innerHTML = `${iconHtml}<div class="name">${agent.ringLabel || agent.name}</div>`;
   ring.appendChild(el);
   return el;
@@ -594,6 +594,9 @@ async function initDashboard() {
     angleOffset: (i - (arr.length - 1) / 2) * SATELLITE_ANGLE_STEP,
     name: key,
     ringLabel: serviceRingLabel(key),
+    // One shared generic portrait for every backend service, same idea as
+    // the hub's own backend-agent.png — no per-service artwork needed.
+    img: "micro-service-agent1.png",
   }));
   AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
   CATEGORY_TO_KEYS.backend = BACKEND_SERVICES.map((s) => s.key);

@@ -182,14 +182,12 @@
      eat into the live-app iframe's space below (#iframe-wrap takes whatever
      vertical room #sidebar's siblings leave it). */
   #history-list { max-height: 150px; overflow-y: auto; font-size: 12px; }
-  .history-row {
-    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
-    padding: 4px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-  }
-  .history-row:last-child { border-bottom: none; }
-  .history-row .h-task { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .history-row .h-cost { color: var(--dim); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+  #history-table { width: 100%; border-collapse: collapse; }
+  #history-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  #history-table th:last-child, #history-table td:last-child { text-align: right; }
+  #history-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text); }
+  #history-table td:first-child { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #history-table tr:last-child td { border-bottom: none; }
   #history-empty { color: var(--dim); font-style: italic; font-size: 12px; }
   #dot {
     width: 10px; height: 10px; border-radius: 50%; background: var(--idle);
@@ -284,7 +282,12 @@
 
     <div id="history-card">
       <div class="label">📜 Task History</div>
-      <div id="history-list"></div>
+      <div id="history-list">
+        <table id="history-table">
+          <thead><tr><th>Task</th><th>USD</th></tr></thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -735,16 +738,16 @@ async function poll() {
 }
 
 function renderHistory(history) {
-  const list = document.getElementById("history-list");
+  const tbody = document.getElementById("history-tbody");
   if (!history.length) {
-    list.innerHTML = '<div id="history-empty">No completed tasks yet</div>';
+    tbody.innerHTML = '<tr><td colspan="2" id="history-empty">No completed tasks yet</td></tr>';
     return;
   }
-  list.innerHTML = history.map((h) => `
-    <div class="history-row">
-      <span class="h-task" title="${h.task}">${h.task}</span>
-      <span class="h-cost">$${h.totalCostUsd.toFixed(4)}</span>
-    </div>
+  tbody.innerHTML = history.map((h) => `
+    <tr>
+      <td title="${h.task}">${h.task}</td>
+      <td>${h.totalCostUsd.toFixed(4)}</td>
+    </tr>
   `).join("");
 }
 

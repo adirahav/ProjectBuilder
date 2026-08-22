@@ -135,6 +135,14 @@ const AUTO_MERGE_TASKS = process.env.AUTO_MERGE_TASKS != null || getArg("--auto-
   ? /^(1|true|yes)$/i.test(process.env.AUTO_MERGE_TASKS || getArg("--auto-merge-tasks"))
   : Boolean(orchestratorConfig.autoMergeTasks)
 
+// Separate from AUTO_APPROVE_PLANS too — the Designer agent's output is a
+// one-time, project-wide visual decision every screen built afterward has to
+// match, not a per-task thing. False (always ask) unless explicitly turned
+// on. Only relevant when designSource is "DESIGNER_AGENT" at all.
+const AUTO_APPROVE_DESIGN = process.env.AUTO_APPROVE_DESIGN != null || getArg("--auto-approve-design")
+  ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_DESIGN || getArg("--auto-approve-design"))
+  : Boolean(orchestratorConfig.autoApproveDesign)
+
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
 const COST_DIR = "docs/cost"
@@ -619,11 +627,12 @@ async function ensureFrontendDevServerRunning() {
 // agents/orchestrator/CLAUDE.md's Step 0). Only called when
 // orchestratorConfig.designSource is "DESIGNER_AGENT" — the caller already
 // checks that, this function doesn't re-check it.
-// Idempotency comes for free from runAgent() itself: it already skips
-// re-running whenever DESIGNER_REPORT_PATH exists and contains the done
-// marker, exactly the "once per project, survives a restart" behavior this
-// needs — no separate "has this run before" check required here.
+// Generation is idempotent for free via runAgent()'s own done-marker check.
+// Approval is tracked separately (DESIGN_APPROVED_MARKER) since it's a
+// distinct concern from generation — a restart after approval must not ask
+// again, but a restart after generation-with-no-approval-yet still should.
 const DESIGNER_REPORT_PATH = "docs/agent-reports/designer-agent-report.md"
+const DESIGN_APPROVED_MARKER = "docs/design/.design-approved"
 
 async function runDesignerIfNeeded() {
   emitEvent("agent-start", "designer")
@@ -641,6 +650,89 @@ async function runDesignerIfNeeded() {
     agentKey: "designer",
   })
   emitEvent("agent-back", "orchestrator")
+
+  if (!existsSync(DESIGN_APPROVED_MARKER)) {
+    await reviewDesignUntilApproved()
+  }
+}
+
+// Re-invokes the Designer agent — agentically, with tool access, exactly
+// like the original run — asking it to edit the existing mockups/notes in
+// place rather than start over. Unlike runAgent(), this never consults or
+// updates the done-marker check in DESIGNER_REPORT_PATH's *existence*; it
+// always runs when called (the approval loop below is what decides whether
+// to call it at all).
+async function runDesignerRevision(feedback) {
+  const args = [
+    "--model", modelFor("designer"),
+    "--permission-mode", CLAUDE_PERMISSION_MODE,
+    "--add-dir", process.cwd(),
+    "--system-prompt", "agents/designer/CLAUDE.md",
+    "--print",
+    "--verbose",
+    "--output-format", "stream-json",
+  ]
+  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
+
+  const input = [
+    `You are the Designer Agent, revising your own previous work based on human feedback.`,
+    `Do not start over — edit the existing files under docs/design/mockups/ and docs/design/design-notes.md in place, keeping everything the feedback doesn't ask you to change.`,
+    `Human feedback for this revision:`,
+    feedback,
+    `Follow your CLAUDE.md instructions exactly.`,
+    `End your final response with exact line: STATUS: DONE`,
+  ].join("\n")
+
+  const rawStdout = await spawnClaude(args, input, { agentKey: "designer", extraEnv: { CLAUDE_AGENT_ROLE: "designer" } })
+  if (rawStdout === null) return false
+
+  const stdout = recordCost("designer", "Designer Agent (revision)", rawStdout)
+  logLastCost("Designer Agent (revision)")
+  writeFileSync(DESIGNER_REPORT_PATH, stdout, "utf-8")
+  return true
+}
+
+// STOP-AND-ASK gate for the Designer agent's output — mirrors
+// reviewPlanUntilApproved()'s shape (terminal APPROVED-or-feedback loop),
+// but the "revision" is a real agentic file edit, not a regenerated text
+// blob. AUTO_APPROVE_DESIGN skips the wait entirely, same escape hatch
+// AUTO_APPROVE_PLANS gives plans.
+async function reviewDesignUntilApproved() {
+  if (AUTO_APPROVE_DESIGN) {
+    log("Design gate: AUTO_APPROVE_DESIGN is on — accepting the Designer agent's own output, no terminal wait.")
+    writeFileSync(DESIGN_APPROVED_MARKER, new Date().toISOString(), "utf-8")
+    return
+  }
+
+  log("Design gate: review and refine. The build proceeds only after terminal APPROVED.")
+  emitEvent("waiting-approval", "orchestrator", "Design review")
+
+  while (true) {
+    const answer = await askUserInput(
+      `Review the mockups in docs/design/mockups/ (open the .html files in a browser) and docs/design/design-notes.md. Type APPROVED to continue, or enter feedback to revise the design: `,
+    )
+    const normalized = answer.trim().toUpperCase()
+    if (normalized === "APPROVED") {
+      log("Design gate passed via terminal approval.")
+      if (!existsSync("docs/design")) mkdirSync("docs/design", { recursive: true })
+      writeFileSync(DESIGN_APPROVED_MARKER, new Date().toISOString(), "utf-8")
+      return
+    }
+
+    const feedback = answer.trim()
+    if (!feedback) {
+      warn("No feedback given and not APPROVED — type feedback to revise, or APPROVED to continue.")
+      continue
+    }
+
+    log("Revising the design based on your feedback...")
+    emitEvent("agent-start", "designer")
+    const ok = await runDesignerRevision(feedback)
+    emitEvent("agent-back", "orchestrator")
+    if (!ok) {
+      warn("Could not revise the design (Claude unavailable). Try again, or edit the mockup files manually, then type APPROVED.")
+    }
+  }
 }
 
 function startDashboardServer() {

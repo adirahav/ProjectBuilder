@@ -91,6 +91,17 @@ following Output Format above. Every file must visibly share the same palette/ty
 component conventions decided in Step 3 — a reviewer should be able to tell all the mockups
 belong to the same product at a glance.
 
+### Step 4b: Revision (only if you're being invoked again with human feedback)
+Your very first invocation always runs Steps 1-4 as above. If instead you're invoked a second
+(or third...) time with explicit human feedback on your previous mockups — `development/dev-loop.js`
+does this automatically when the human enters feedback instead of typing `APPROVED` at the design
+review gate — do not start over. Read the existing files under `docs/design/mockups/` and
+`docs/design/design-notes.md`, apply the feedback, and edit them in place. Keep everything the
+feedback doesn't ask you to change — a revision that regenerates the whole system from scratch
+when the human only objected to one thing (e.g. "the accent color is too loud") throws away
+everything they didn't complain about, which reads as ignoring the parts of the feedback that
+were implicitly "keep this."
+
 ### Step 5: Report done
 End your final response with the report below (the orchestrator saves your full response to the
 report file — do not write the report file yourself):

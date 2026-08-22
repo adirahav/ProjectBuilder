@@ -80,6 +80,8 @@ npm --prefix frontend run build
 ```
 Both must pass. If tests were added, also run them and they must pass 100%. If any check fails: fix the code, not the check.
 
+**Never run `npm run dev`/`npm start` (or any other long-running dev/watch server) as a verification step, here or anywhere else in your workflow.** It never exits on its own — running it blocks your own process forever, which blocks the orchestrator that's waiting on you, which stalls the entire loop with no error and no way to tell what happened. `lint` and `build` (and a test runner in single-run/CI mode, not watch mode) are sufficient verification and both actually terminate. If you want to confirm the app visually, say so in your report instead of trying to launch it yourself.
+
 ### Step 7: Report done
 End your final response with the report below (the orchestrator saves your full response to the report file — do not write the report file yourself):
 

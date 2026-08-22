@@ -105,6 +105,8 @@ npm --prefix backend/<your-service> run test    # must pass 100%
 ```
 If any test fails: fix the implementation, not the test. Re-run until all pass.
 
+**Never run `npm run dev`/`npm start` (or any other long-running server) as a verification step, here or anywhere else in your workflow.** It never exits on its own — running it blocks your own process forever, which blocks the orchestrator that's waiting on you, which stalls the entire loop with no error and no way to tell what happened. The test run above is sufficient verification and actually terminates. If you want to confirm the service boots, use its health-check route via a one-shot request, not a long-running process.
+
 ### Step 8: Report done
 End your final response with the report below (the orchestrator saves your full response to the report file — do not write the report file yourself):
 

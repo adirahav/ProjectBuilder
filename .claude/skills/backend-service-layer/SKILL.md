@@ -42,6 +42,7 @@ Each invocation targets exactly one service (see `agents/backend/CLAUDE.md`) —
 backend/<service>/
   api/
     lib/
+      config.ts            # env var loading + typed config object — see the dotenv note below
       db.ts              # Mongoose connection
       jwt.ts              # sign/verify helpers (issuing service only)
     models/
@@ -58,6 +59,8 @@ backend/<service>/
 Controllers never touch Mongoose directly — they call the service. Routes never contain logic — they call the controller. This mirrors `.rule/coding-rules.md`'s backend architecture section.
 
 **Report/test write paths are always repo-root-relative, never relative to your current shell directory.** If a step has you `cd backend/<service>` to run `npm` commands, every subsequent file write (reports, `docs/tests/security/...`, etc.) must still resolve against the repository root. A stray `backend/docs/`, `backend/<service>/docs/`, or similar path appearing anywhere under `backend/` is exactly this bug — reports and tests never belong there.
+
+**`config.ts` must load the real per-environment secrets file, not whatever the bare dotenv import defaults to.** A plain, un-configured dotenv import only ever loads a file literally named `.env` with no suffix — this project's convention names the real files per-environment instead (check `backend/*/` for the exact example filenames this repo actually uses), so the bare import silently loads nothing and every var falls back to its hardcoded default (localhost DB, empty secrets) with no error at all. Always pass an explicit `path` naming the actual per-environment file for the current `NODE_ENV`, resolved once at the top of `config.ts` before any `process.env.*` read below it — every other file that needs config should import the resolved `config` object from here, not load the file again itself.
 
 ## Mongoose Models
 **See the dedicated `mongoose-models-layer` skill for full schema definitions, the soft-delete hook pattern, required indexes, and query conventions.** Models: {{MODELS}}. Naming is camelCase throughout, per `.rule/naming-rules.md`; every model exposes `id` (a `uuid`) to clients and never `_id` — a controller receiving a client `id` param must resolve it to `_id` via the service layer before querying, and any `.lean()` result returned straight from a controller must be mapped through the same `uuid`→`id` shape by hand.

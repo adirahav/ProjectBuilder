@@ -49,6 +49,7 @@ dotenv.config({ path: `.env.${process.env.NODE_ENV || "development"}` })
 const MODEL_FOR = {
   planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
   "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
+  designer:            "claude-opus-5",   // Designer Agent — establishes the whole visual system once; worth the extra reasoning
   frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
   qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
   security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
@@ -174,7 +175,7 @@ function camelKey(kebabKey) {
 }
 
 const BACKEND_SERVICE_KEYS = discoverBackendServices()
-const ALL_AGENT_KEYS = ["orchestrator", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
+const ALL_AGENT_KEYS = ["orchestrator", "designer", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -211,6 +212,7 @@ const RESET = "\x1b[0m"
 
 const AGENT_IDENTITY = {
   "orchestrator": { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
+  "designer":     { icon: "🖌️", color: "\x1b[91m", label: "designer" },
   "frontend":     { icon: "🎨", color: "\x1b[35m", label: "frontend" },
   "qa":           { icon: "🐛", color: "\x1b[32m", label: "qa" },
   "security":     { icon: "🛡️", color: "\x1b[36m", label: "security" },
@@ -465,7 +467,7 @@ const DASHBOARD_DIR = "development/agent-dashboard"
 // voice/visual category — the dashboard doesn't need a distinct cue per
 // service name, and the project's service list varies per project anyway.
 function voiceCategory(agentKey) {
-  if (["frontend", "qa", "security", "orchestrator"].includes(agentKey)) return agentKey
+  if (["designer", "frontend", "qa", "security", "orchestrator"].includes(agentKey)) return agentKey
   return "backend"
 }
 
@@ -609,6 +611,36 @@ async function ensureFrontendDevServerRunning() {
   } catch (e) {
     warn(`Could not auto-start the frontend dev server (${e.message}) — the dashboard preview may stay blank until you run 'npm run dev' in frontend/ yourself.`)
   }
+}
+
+// Runs the Designer agent exactly once per project — before the first
+// backlog task, never again after (a later task does not re-trigger this,
+// even one that adds new screens; see agents/designer/CLAUDE.md and
+// agents/orchestrator/CLAUDE.md's Step 0). Only called when
+// orchestratorConfig.designSource is "DESIGNER_AGENT" — the caller already
+// checks that, this function doesn't re-check it.
+// Idempotency comes for free from runAgent() itself: it already skips
+// re-running whenever DESIGNER_REPORT_PATH exists and contains the done
+// marker, exactly the "once per project, survives a restart" behavior this
+// needs — no separate "has this run before" check required here.
+const DESIGNER_REPORT_PATH = "docs/agent-reports/designer-agent-report.md"
+
+async function runDesignerIfNeeded() {
+  emitEvent("agent-start", "designer")
+  await runAgent({
+    systemPrompt: "agents/designer/CLAUDE.md",
+    input: [
+      `You are the Designer Agent.`,
+      `Establish this project's visual system and key-screen mockups.`,
+      `Follow your CLAUDE.md instructions exactly.`,
+      `End your final response with exact line: STATUS: DONE`,
+    ].join("\n"),
+    outputFile: DESIGNER_REPORT_PATH,
+    doneMarker: "STATUS: DONE",
+    label: "Designer Agent",
+    agentKey: "designer",
+  })
+  emitEvent("agent-back", "orchestrator")
 }
 
 function startDashboardServer() {
@@ -831,7 +863,14 @@ async function main() {
   ensurePlanDirAndBacklog()
 
   log("No issue tracker configured for this project — using local plan-file approval only.")
-  log("No design source configured — Frontend Agent designs the UI per .rule/style-rules.md.")
+  if (orchestratorConfig.designSource === "DESIGNER_AGENT") {
+    log("Design source: Designer agent — establishing the visual system once, before the first task.")
+    await runDesignerIfNeeded()
+  } else if (orchestratorConfig.designSource && orchestratorConfig.designSource !== "NONE") {
+    log(`Design source: ${orchestratorConfig.designSource}.`)
+  } else {
+    log("No design source configured — Frontend Agent designs the UI per .rule/style-rules.md.")
+  }
 
   const prd = readFileSync("docs/PRD.md", "utf-8")
 

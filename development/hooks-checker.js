@@ -11,6 +11,7 @@ const RED   = "\x1b[31m"
 
 const AGENT_IDENTITY = {
   "orchestrator": { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
+  "designer":     { icon: "🖌️", color: "\x1b[91m", label: "designer" },
   "frontend":     { icon: "🎨", color: "\x1b[35m", label: "frontend" },
   "backend":      { icon: "🔧", color: "\x1b[34m", label: "backend" },
   "qa":           { icon: "🐛", color: "\x1b[32m", label: "qa" },

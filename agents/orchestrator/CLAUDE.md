@@ -28,8 +28,19 @@ This repo is a **monorepo** containing `frontend/` and `backend/` ({{SERVICES_AN
 `{{DESIGN_SOURCE}}` is for **visual design reference only**: colors, spacing, and component structure.
 - Do NOT use its `package.json` for dependency versions or tech-stack decisions.
 - Tech stack and package choices are defined in `agents/frontend/CLAUDE.md`, `agents/backend/CLAUDE.md`, and the architecture doc.
+- If Part 1 Q9's answer was "Designer agent" (not a user-provided folder, not Figma, not "none"), `{{DESIGN_SOURCE}}` is `docs/design/mockups/` and it does not exist yet on the very first run — see Step 0.
 
 ## Workflow — follow these steps in order
+
+### Step 0: Design (once per project, only if using the Designer agent)
+Only relevant if Part 1 Q9's design-source answer was "Designer agent" — skip entirely otherwise. Runs **once**, before the first Frontend Agent invocation, never again afterward (a later ticket does not re-trigger this step, even a ticket that adds new screens — the visual system is decided once; new screens follow the established system by eye, per `agents/frontend/CLAUDE.md`, not by re-running the Designer agent).
+```bash
+claude --model {{AGENT_MODEL}} \
+  --system-prompt agents/designer/CLAUDE.md \
+  --input "Establish the visual system and mockups. Start now." \
+  --output-file docs/agent-reports/designer-agent-report-$(date +%Y-%m-%d).md
+```
+Wait for the report to contain `STATUS: DONE` before Step 1. This has no ticket ID — it is not a per-feature unit of work.
 
 ### Step 1: Analyze inputs
 Read `docs/PRD.md` and design files from `{{DESIGN_SOURCE}}`.

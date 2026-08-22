@@ -86,7 +86,12 @@ Same principle as sensitive-field stripping, applied to identity: `_id` is an in
 import { randomUUID } from 'crypto'
 
 const exampleSchema = new Schema({
-  uuid: { type: String, default: randomUUID, unique: true, index: true },
+  // Wrapped, not passed directly (`default: randomUUID`) — Mongoose calls
+  // schema `default` functions with an argument in some code paths (e.g. an
+  // upsert), which `crypto.randomUUID()` then tries to use as its `options`
+  // param and throws on: "The 'options' argument must be of type object.
+  // Received null." Always wrap it, on every model.
+  uuid: { type: String, default: () => randomUUID(), unique: true, index: true },
   // ...rest of the fields
 })
 
@@ -129,5 +134,6 @@ Define indexes directly on the schema (`schema.index({...})`), not via a separat
 - [ ] No query builds its filter directly from unvalidated `req.body`/`req.query`.
 - [ ] No cross-service `.populate()` — services never query each other's collections.
 - [ ] Every model has a `uuid` field and a `toJSON` transform that maps `uuid`→`id` and deletes `_id`/`__v` — no response anywhere exposes a raw `_id`.
+- [ ] `uuid`'s default is `() => randomUUID()`, never the bare `randomUUID` function reference.
 - [ ] Any `.lean()` result that reaches a controller directly is mapped through an explicit `uuid`→`id` helper (lean bypasses `toJSON`).
 - [ ] Every controller/service that receives a client-supplied `id` resolves it via `Model.findOne({ uuid: id })` before using it in a query or ref — never treats it as a raw `_id`.

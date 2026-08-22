@@ -2,8 +2,9 @@
 
 <!--
 TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}, {{DESIGN_SOURCE}} — design reference, one of three shapes (Part 1 Q9):
-    - a filesystem folder (e.g. `raw_from_ai_studio/`) — Read path is `{{DESIGN_SOURCE}}/**`
+  {{PROJECT_NAME}}, {{DESIGN_SOURCE}} — design reference, one of four shapes (Part 1 Q9):
+    - a filesystem folder the user provided (e.g. `raw_from_ai_studio/`) — Read path is `{{DESIGN_SOURCE}}/**`
+    - `docs/design/mockups/` — the Designer agent's own output (see `agents/designer/CLAUDE.md`); functionally identical to the case above, still just a filesystem folder, but also read `docs/design/design-notes.md` (the Designer agent's written-out color/type/spacing system) alongside the mockup files themselves
     - "Figma (via MCP)" — no filesystem Read path; the agent uses its Figma MCP tool instead (confirm `.mcp.json` has a `figma` server entry)
     - unset — no design source exists; delete every {{DESIGN_SOURCE}} reference below (Role, Allowed Paths' Read line, Step 1) instead of filling them, and note in Step 1 that the agent designs the UI itself per `.rule/style-rules.md` and the `css-layer`/`ui-component-layer` skills
   {{STACK}} — frontend stack/libraries

@@ -11,6 +11,7 @@
     --text: #e6e6ec;
     --dim: #6b6b7a;
     --orchestrator: #f0b429;
+    --designer: #fb7185;
     --frontend: #d946ef;
     --backend: #3b82f6;
     --qa: #22c55e;
@@ -107,6 +108,7 @@
   .node[data-agent] { border-color: rgba(255, 255, 255, 0.14); }
 
   .node[data-agent="orchestrator"].active { border-color: var(--orchestrator); box-shadow: 0 0 24px var(--orchestrator); }
+  .node[data-agent="designer"].active     { border-color: var(--designer);     box-shadow: 0 0 24px var(--designer); }
   .node[data-agent="frontend"].active     { border-color: var(--frontend);     box-shadow: 0 0 24px var(--frontend); }
   .node[data-agent="qa"].active           { border-color: var(--qa);           box-shadow: 0 0 24px var(--qa); }
   .node[data-agent="security"].active     { border-color: var(--security);     box-shadow: 0 0 24px var(--security); }
@@ -282,7 +284,13 @@
 // carries the "this is backend work" identity. That list is fetched from
 // the server at load time (see initDashboard() below) instead of hardcoded,
 // so a project with different/more/fewer services just works.
+// designer's angle (-135) was chosen and numerically verified (no overlap
+// against frontend/qa/security or the backend satellite cluster for 1-6
+// backend services) — see chat history, don't move it without re-checking.
+// It also happens to sit clockwise-first, right before frontend — matching
+// the real pipeline order (Designer runs once, before anything else).
 const PRIMARY_AGENTS = [
+  { key: "designer", angle: -135, icon: "🖌️", img: "designer-agent.png", name: "designer" },
   { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
   { key: "backend",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "backend" },
   { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
@@ -308,6 +316,12 @@ let AGENTS = [...PRIMARY_AGENTS];
 // agent is busy — a themed replacement for the terminal's plain heartbeat
 // dots. One random word per tick, from the active category's own set.
 const THINKING_TERMS = {
+  designer: [
+    "Sketching","Moodboarding","Palette-picking","Font-pairing","Establishing tokens","Composing","Balancing","Whitespacing",
+    "Aligning grid","Choosing a scale","Setting hierarchy","Contrasting","Harmonizing","Theming","Shading","Gradient-mapping",
+    "Mocking up","Wireframing","Prototyping","Iterating","Refining","Comparing options","Cropping","Framing",
+    "Considering hierarchy","Weighing contrast","Checking legibility","Building a system","Naming a color","Tuning spacing","Polishing","Studying references",
+  ],
   orchestrator: [
     "Thinking","Planning","Coordinating","Delegating","Reviewing","Prioritizing","Sequencing","Orchestrating",
     "Deciding","Evaluating","Scheduling","Dispatching","Organizing","Strategizing","Assessing","Weighing",
@@ -414,6 +428,7 @@ setInterval(tickThinking, 3200);
 // initDashboard(). This object is only ever a fallback anyway (the server
 // always sends explicit `data.keys` in normal operation).
 const CATEGORY_TO_KEYS = {
+  designer: ["designer"],
   frontend: ["frontend"],
   backend: [],
   qa: ["qa"],
@@ -432,6 +447,7 @@ const AUDIO_MAP = {
   "session-limit": "session-limit.mp3",
   "attention-needed": "attention-needed.mp3",
   "waiting-approval": "agent-waiting-approval.mp3",
+  "agent-start:designer": "agent-designer.mp3",
   "agent-start:frontend": "agent-frontend.mp3",
   "agent-start:backend": "agent-backend.mp3",
   "agent-start:qa": "agent-qa.mp3",

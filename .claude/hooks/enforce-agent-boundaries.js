@@ -19,6 +19,10 @@ import path from 'node:path'
 
 const ALLOWED_WRITE_PREFIXES = {
   orchestrator:          ['.plan/'],
+  // Only present if Part 1 Q9's design source is "Designer agent" — drop
+  // this entry (and delete agents/designer/) otherwise, per that file's own
+  // TEMPLATE comment block.
+  designer:              ['docs/design/'],
   frontend:              ['frontend/', 'docs/api-contract/', 'docs/agent-reports/'],
   backend:               ['backend/', 'docs/agent-reports/'],
   qa:                    ['docs/agent-reports/'],

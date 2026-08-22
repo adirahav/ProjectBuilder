@@ -57,3 +57,9 @@ backend/*/.env.production
 # during setup, before the real local secrets files exist yet.
 # Consumed and deleted by dev-loop.js -- never committed.
 .setup-secrets.json
+
+# Single-instance lock for dev-loop.js -- machine/process-specific, never committed.
+.dev-loop.lock
+
+# Live agent-status feed for the dashboard -- changes every second, never committed.
+docs/agent-status.json

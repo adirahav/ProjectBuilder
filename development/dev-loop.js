@@ -1,24 +1,23 @@
 #!/usr/bin/env node
 /**
- * Dev Loop Orchestrator — Dog Grooming Clinic Appointment Booking
+ * Dev Loop Orchestrator
  *
- * This repo is a monorepo: `frontend/` + `backend/` with three services —
- * `gateway` (stateless reverse proxy in front of the other two; most tasks
- * won't scope it in, only deploy/production-setup tasks per
- * `agents/backend/CLAUDE.md`), `appointment-service` (owns Service, TimeSlot,
- * Appointment) and `user-service` (owns Admin accounts/auth). All three
- * backend services are built and run from here, via `agents/backend/CLAUDE.md`
- * (one shared prompt, parameterized per service). There is no external design
- * source — the Frontend Agent designs the UI itself per `.rule/style-rules.md`.
- * There is no issue tracker; task approval happens entirely through local
- * plan files and terminal/chat approval gates.
+ * This repo is a monorepo: `frontend/` + `backend/`, with one subfolder per
+ * backend service (currently `api-gateway`, `booking-service`,
+ * `user-service`, `notification-service` — discovered at runtime from
+ * each backend/<service>/package.json, see `discoverBackendServices()` below, not
+ * hardcoded here). All backend services are built and run via
+ * `agents/backend/CLAUDE.md` (one shared prompt, parameterized per service).
+ * There is no external design source — the Frontend Agent designs the UI
+ * itself per `.rule/style-rules.md`. There is no issue tracker; task approval
+ * happens entirely through local plan files and terminal/chat approval gates.
  *
  * Loop per backlog item:
  *   1) Pick next task from .plan/000-backlog.md
  *   2) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
  *   3) Launch the Frontend agent (builds UI per .rule/style-rules.md, defines API contract(s))
- *   4) Launch Backend agents in parallel — gateway, appointment-service, and
- *      user-service — independent services, per .rule/architecture.md
+ *   4) Launch Backend agents in parallel — one per discovered backend
+ *      service, per .rule/architecture.md
  *   5) Launch QA validation
  *   6) Report done and wait for approval
  *   7) Launch Security audit
@@ -27,8 +26,9 @@
 
 import { execSync, spawn } from "child_process"
 import dotenv from "dotenv"
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs"
-import { dirname, join } from "path"
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs"
+import http from "http"
+import { dirname, join, resolve, sep } from "path"
 import { createInterface } from "readline"
 import { fileURLToPath } from "url"
 
@@ -50,14 +50,14 @@ const MODEL_FOR = {
   planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
   "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
   frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
-  gateway:             "claude-opus-5",   // Backend Agent — gateway — multi-file code generation (reverse proxy/routing)
-  "appointment-service": "claude-opus-5", // Backend Agent — appointment-service — multi-file code generation, owns TimeSlot concurrency logic
-  "user-service":      "claude-opus-5",   // Backend Agent — user-service — multi-file code generation (auth + admin accounts)
   qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
   security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
   "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
 }
 
+// Any backend service key (discovered per-project, not listed here by name)
+// falls through to MODEL_FOR.frontend, i.e. Opus — backend code generation
+// gets the same treatment as frontend regardless of the service's name.
 function modelFor(operation) {
   return MODEL_FOR[operation] || MODEL_FOR.frontend
 }
@@ -125,15 +125,56 @@ const AUTO_APPROVE_PLANS = process.env.AUTO_APPROVE_PLANS != null || getArg("--a
   ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_PLANS || getArg("--auto-approve-plans"))
   : Boolean(orchestratorConfig.autoApprovePlans)
 
+// Separate from AUTO_APPROVE_PLANS on purpose — merging into the base branch
+// is a distinct decision from plan/feature approval (it's the one that
+// actually changes the branch the human is sitting on), so it gets its own
+// opt-in flag rather than being silently bundled into the other one. False
+// (always ask) unless explicitly turned on.
+const AUTO_MERGE_TASKS = process.env.AUTO_MERGE_TASKS != null || getArg("--auto-merge-tasks")
+  ? /^(1|true|yes)$/i.test(process.env.AUTO_MERGE_TASKS || getArg("--auto-merge-tasks"))
+  : Boolean(orchestratorConfig.autoMergeTasks)
+
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
 const COST_DIR = "docs/cost"
+// The dashboard's "last completed task" cost card reads from here, not from
+// the ephemeral docs/agent-status.json — that file is live/transient by
+// design (safe to delete, gets rebuilt from scratch), but a finished task's
+// final cost is real historical data that should survive a dev-loop.js
+// restart or a status-file cleanup, same as the per-task .txt files already
+// written into COST_DIR.
+const LAST_TASK_COST_PATH = "docs/cost/last-task.json"
+// Running append-only log of every completed task's total — feeds the
+// dashboard's task-history list. Distinct from LAST_TASK_COST_PATH (which
+// holds the full per-agent breakdown for just the most recent task).
+const TASK_HISTORY_PATH = "docs/cost/task-history.json"
 const BACKLOG_FILE = `${PLAN_DIR}/000-backlog.md`
 const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
-const ALL_AGENT_KEYS = ["orchestrator", "frontend", "gateway", "appointment-service", "user-service", "qa", "security"]
+
+// Backend services are discovered from backend/*/package.json instead of
+// hardcoded — a project with a different set of services (more, fewer,
+// different names) just works, no code edit needed. Sorted for a stable,
+// reproducible order (port/ticket-code assignment below depends on it).
+// Falls back to [] before any backend service has been scaffolded yet.
+function discoverBackendServices() {
+  if (!existsSync("backend")) return []
+  return readdirSync("backend", { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(`backend/${e.name}/package.json`))
+    .map((e) => e.name)
+    .sort()
+}
+
+// kebab-case service key -> camelCase property name, used to key the
+// per-service config objects below (BACKEND_PORTS, API_CONTRACTS, tickets).
+function camelKey(kebabKey) {
+  return kebabKey.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+}
+
+const BACKEND_SERVICE_KEYS = discoverBackendServices()
+const ALL_AGENT_KEYS = ["orchestrator", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -169,13 +210,13 @@ function clearTaskState(slug) {
 const RESET = "\x1b[0m"
 
 const AGENT_IDENTITY = {
-  "orchestrator":         { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
-  "frontend":             { icon: "🎨", color: "\x1b[35m", label: "frontend" },
-  "gateway":              { icon: "🔧", color: "\x1b[34m", label: " 🚪 gateway" },
-  "appointment-service":  { icon: "🔧", color: "\x1b[34m", label: " 📅 appointment-service" },
-  "user-service":         { icon: "🔧", color: "\x1b[34m", label: " 🔑 user-service" },
-  "qa":                   { icon: "🐛", color: "\x1b[32m", label: "qa" },
-  "security":             { icon: "🛡️", color: "\x1b[36m", label: "security" },
+  "orchestrator": { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
+  "frontend":     { icon: "🎨", color: "\x1b[35m", label: "frontend" },
+  "qa":           { icon: "🐛", color: "\x1b[32m", label: "qa" },
+  "security":     { icon: "🛡️", color: "\x1b[36m", label: "security" },
+}
+for (const key of BACKEND_SERVICE_KEYS) {
+  AGENT_IDENTITY[key] = { icon: "🔧", color: "\x1b[34m", label: ` ${key}` }
 }
 
 function agentPrefix(agentKey) {
@@ -226,8 +267,72 @@ function recordCost(role, label, rawStdout) {
     costUsd:         parsed.total_cost_usd ?? 0,
     durationMs:      parsed.duration_ms ?? 0,
   })
+  // NOT writeLastTaskCost() here — the dashboard's cost card is meant to
+  // show a completed task's final total, not a live-growing partial number
+  // for whichever task is still in progress (that number isn't the real
+  // answer yet, so showing it invites reading it as final when it's still
+  // climbing). The one and only write happens in printCostTable(), once a
+  // task is done.
 
   return parsed.result ?? rawStdout
+}
+
+// Mirrors the terminal's cost table (console.table in logLastCost/
+// printCostTable) into a small persistent file the dashboard reads — NOT
+// into docs/agent-status.json, which is ephemeral/rebuildable by design.
+// A finished task's cost is real history and should survive a dev-loop.js
+// restart or that file being deleted, exactly like the per-task .txt/JSON
+// records already written into COST_DIR.
+function writeLastTaskCost(taskLabel) {
+  const rows = costLog.map((entry) => ({
+    role: entry.role,
+    label: entry.label,
+    inputTokens: entry.inputTokens,
+    outputTokens: entry.outputTokens,
+    cacheReadTokens: entry.cacheReadTokens,
+    costUsd: entry.costUsd,
+    costNis: entry.costUsd * USD_TO_NIS,
+    durationS: entry.durationMs / 1000,
+  }))
+  const record = {
+    costTask: taskLabel,
+    costLog: rows,
+    costTotalUsd: rows.reduce((sum, r) => sum + r.costUsd, 0),
+    costTotalNis: rows.reduce((sum, r) => sum + r.costNis, 0),
+  }
+  try {
+    if (!existsSync(COST_DIR)) mkdirSync(COST_DIR, { recursive: true })
+    writeFileSync(LAST_TASK_COST_PATH, JSON.stringify(record, null, 2), "utf-8")
+  } catch (e) {
+    warn(`Could not write ${LAST_TASK_COST_PATH} (${e.message}) — the dashboard's cost card may not reflect this task's final total.`)
+  }
+}
+
+function readTaskHistory() {
+  try {
+    return existsSync(TASK_HISTORY_PATH) ? JSON.parse(readFileSync(TASK_HISTORY_PATH, "utf-8")) : []
+  } catch {
+    return []
+  }
+}
+
+// Appends one entry per completed task — never overwrites earlier ones,
+// unlike LAST_TASK_COST_PATH. Called once per task alongside writeLastTaskCost().
+function appendTaskHistory(taskLabel, totalCostUsd, totalCostNis, callCount) {
+  try {
+    if (!existsSync(COST_DIR)) mkdirSync(COST_DIR, { recursive: true })
+    const history = readTaskHistory()
+    history.push({
+      task: taskLabel,
+      totalCostUsd,
+      totalCostNis,
+      callCount,
+      completedAt: new Date().toISOString(),
+    })
+    writeFileSync(TASK_HISTORY_PATH, JSON.stringify(history, null, 2), "utf-8")
+  } catch (e) {
+    warn(`Could not write ${TASK_HISTORY_PATH} (${e.message}) — the dashboard's task-history list may be missing this task.`)
+  }
 }
 
 function formatTextTable(rows) {
@@ -332,10 +437,352 @@ function printCostTable(taskLabel) {
 
   writeCombinedCostFile(taskLabel, totalCost, date)
 
+  // The one and only dashboard write for this task's cost data — a single
+  // final snapshot, taken now that the total is actually final, tagged with
+  // which task it belongs to. Persisted (not just in the live status file),
+  // so it survives a restart and stays visible through the whole next task,
+  // since nothing overwrites it again until THIS function runs once more.
+  writeLastTaskCost(taskLabel)
+  appendTaskHistory(taskLabel, totalCost, totalCost * USD_TO_NIS, costLog.length)
   costLog = []
 }
 
+// ─── Live agent-status dashboard ─────────────────────────────────────────────
+// A small local HTTP server (no new dependency — Node's built-in `http`)
+// serves the self-contained dashboard (development/agent-dashboard/agent-dashboard.html,
+// inline CSS/JS), its voice-cue audio files (development/agent-dashboard/assets/*.mp3),
+// and a live-updating event feed this script writes to at every meaningful
+// moment (task picked, agent starting/skipped/done, waiting for approval,
+// blocked). The dashboard polls that feed, animates which agent is active,
+// and plays the matching voice cue — a prettier, audible alternative to
+// reading the raw terminal.
+const AGENT_STATUS_PATH = "docs/agent-status.json"
+const DASHBOARD_PORT = Number(process.env.DASHBOARD_PORT) || 4949
+const DASHBOARD_DIR = "development/agent-dashboard"
+
+// Maps every backend service key this project actually has (ALL_AGENT_KEYS,
+// minus orchestrator/frontend/qa/security) to the single generic "backend"
+// voice/visual category — the dashboard doesn't need a distinct cue per
+// service name, and the project's service list varies per project anyway.
+function voiceCategory(agentKey) {
+  if (["frontend", "qa", "security", "orchestrator"].includes(agentKey)) return agentKey
+  return "backend"
+}
+
+// Monotonically increasing — lets the dashboard tell "a new event just
+// happened, play its cue" apart from "the poll just re-fetched the same
+// event it already played," without needing timestamps to be perfectly
+// unique or comparable.
+let eventSeq = 0
+let currentTaskTitle = ""
+let currentTaskProgress = null // { current, total } — set alongside currentTaskTitle, see getBacklogProgress()
+
+function readStatus() {
+  try {
+    return existsSync(AGENT_STATUS_PATH) ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8")) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeStatus(status) {
+  try {
+    if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+    writeFileSync(AGENT_STATUS_PATH, JSON.stringify(status, null, 2), "utf-8")
+  } catch {
+    // The dashboard is a convenience — a status-file write failure must never
+    // affect the actual run.
+  }
+}
+
+// The single place every dashboard-visible MOMENT (not routine chatter)
+// funnels through. `eventType` is one of the dashboard's known event names
+// (orchestrator-start, picking-next-task, task-done, agent-start,
+// agent-skip, agent-back, session-limit, attention-needed, waiting-approval)
+// — see development/agent-dashboard/agent-dashboard.html for the exact list
+// and which audio file each maps to.
+//
+// Written into its own nested `lastEvent` field, separate from the
+// top-level `message`/`category`/`keys` that get refreshed on every single
+// output line via writeAgentStatus() below. This split exists because of a
+// real bug: an agent can print dozens of lines a second, each call bumping
+// the SAME top-level fields — at 1 poll/second, a discrete moment like
+// "picking-next-task" was getting overwritten by the next routine output
+// line before the dashboard's next poll ever saw it, so its cue silently
+// never played. `lastEvent` is only ever touched here, never by routine
+// output, so a real event's `seq` survives until the dashboard actually
+// polls it, no matter how much chatter happens in between.
+//
+// `keys`, if given, is the exact set of ring nodes to visually light up —
+// distinct from `agentKey`, which only decides the voice/category cue.
+// Without this distinction, a combined "backend" start event (one shared
+// sound for however many/whichever backend services this project has) would
+// have to light up every backend node at once, even on a task where only
+// one specific service is actually in scope. When omitted, `keys` defaults
+// to just `[agentKey]`.
+function emitEvent(eventType, agentKey, message, keys) {
+  eventSeq += 1
+  const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
+  const resolvedKeys = keys || (agentKey ? [agentKey] : [])
+  const status = readStatus()
+  if (lastLine) status.message = lastLine
+  status.category = agentKey ? voiceCategory(agentKey) : status.category || null
+  status.keys = resolvedKeys
+  status.task = currentTaskTitle
+  status.taskProgress = currentTaskProgress
+  status.updatedAt = new Date().toISOString()
+  status.lastEvent = {
+    seq: eventSeq,
+    event: eventType,
+    agent: agentKey || null,
+    category: status.category,
+    keys: resolvedKeys,
+  }
+  writeStatus(status)
+}
+
+// Per-output-line / per-log-call updates — refreshes only the live-text
+// fields (message/category/keys), never `lastEvent`, so routine chatter can
+// never clobber a real event before the dashboard's next poll sees it. This
+// is what makes the ring highlight track who's *currently* talking in real
+// time, while `lastEvent` independently tracks discrete moments for audio.
+function writeAgentStatus(agentKey, message) {
+  const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
+  if (!lastLine) return
+  const status = readStatus()
+  status.message = lastLine
+  status.category = agentKey ? voiceCategory(agentKey) : status.category || null
+  status.keys = agentKey ? [agentKey] : status.keys || []
+  status.task = currentTaskTitle
+  status.taskProgress = currentTaskProgress
+  status.updatedAt = new Date().toISOString()
+  writeStatus(status)
+}
+
+// Auto-starts the frontend dev server in the background so the dashboard's
+// live-preview iframe always has something to show, without ever risking
+// blocking this script: spawned detached + unref'd, never awaited by the
+// caller, and skipped entirely if something is already answering on
+// FRONTEND_DEV_URL (including a dev server left running by a previous
+// dev-loop.js run — detached processes outlive this script's own exit).
+async function ensureFrontendDevServerRunning() {
+  const frontendDir = "frontend"
+  if (!existsSync(join(frontendDir, "package.json"))) return
+
+  try {
+    await fetch(FRONTEND_DEV_URL, { signal: AbortSignal.timeout(1500) })
+    return // something's already serving there — leave it alone
+  } catch {
+    // not reachable — fall through and start it
+  }
+
+  try {
+    if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+    const logPath = "docs/frontend-dev-server.log"
+    const logFd = openSync(logPath, "a")
+    const spawnOpts = {
+      cwd: frontendDir,
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      windowsHide: true,
+      env: { ...process.env, CI: "1" },
+    }
+
+    // Windows only: `npm run dev` needs npm.cmd, a batch file, which forces
+    // either shell:true or (per a confirmed Node/Windows bug) an EINVAL crash
+    // if spawned directly with detached:true. shell:true wraps this in an
+    // extra cmd.exe that — despite detached:true — was observed staying
+    // attached to this script's own console: a Ctrl+C sent to THIS process
+    // reached that wrapper too, which then hung forever at an unanswerable
+    // "Terminate batch job (Y/N)?" prompt (stdin is "ignore") instead of the
+    // frontend ever actually starting. Bypassing npm entirely — spawning
+    // Vite's own JS entrypoint directly via node.exe, a real executable, no
+    // shell/batch-file involved at all — sidesteps both problems. Falls back
+    // to the npm/shell route (with the known Ctrl+C caveat) if that
+    // entrypoint isn't where expected, e.g. a non-Vite frontend tool.
+    const viteBin = join(frontendDir, "node_modules", "vite", "bin", "vite.js")
+    const child = process.platform === "win32" && existsSync(viteBin)
+      ? spawn(process.execPath, [join("node_modules", "vite", "bin", "vite.js")], spawnOpts)
+      : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev"], { ...spawnOpts, shell: process.platform === "win32" })
+    child.unref()
+    log(`Started the frontend dev server in the background (PID ${child.pid}) for the dashboard preview — output logged to ${logPath}.`)
+  } catch (e) {
+    warn(`Could not auto-start the frontend dev server (${e.message}) — the dashboard preview may stay blank until you run 'npm run dev' in frontend/ yourself.`)
+  }
+}
+
+function startDashboardServer() {
+  const dashboardPath = `${DASHBOARD_DIR}/agent-dashboard.html`
+  const assetsDir = `${DASHBOARD_DIR}/assets`
+
+  const server = http.createServer((req, res) => {
+    if (req.url === "/status.json") {
+      // `services` is injected fresh from the in-memory discovery result on
+      // every request (not just written once to the file) — the dashboard
+      // needs the CURRENT project's backend service list, and this is the
+      // one place both the "file missing yet" default and the persisted
+      // status object are guaranteed to pass through.
+      const base = existsSync(AGENT_STATUS_PATH)
+        ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
+        : { message: "", category: null, keys: [], task: "", taskProgress: null, updatedAt: null, lastEvent: null }
+      // Cost/history data is NOT embedded here — the dashboard fetches
+      // docs/cost/last-task.json and docs/cost/task-history.json directly via
+      // the generic /docs/** static route below, so their shape can change
+      // without ever touching this route's code again.
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
+      return
+    }
+
+    // The dashboard's Refresh button hits this before reloading the iframe —
+    // reuses the exact same check-then-spawn logic as startup, so clicking
+    // Refresh after "refused to connect" actually starts the frontend dev
+    // server instead of just re-showing the same failure.
+    if (req.url === "/ensure-frontend" && req.method === "POST") {
+      ensureFrontendDevServerRunning()
+        .catch(() => {})
+        .finally(() => {
+          res.writeHead(204)
+          res.end()
+        })
+      return
+    }
+
+    // Generic static passthrough for docs/** (cost history, agent reports,
+    // API contracts, ...) — reads straight from disk on every request, no
+    // server-side route logic involved at all. Unlike /status.json (which
+    // computes/shapes data and therefore needs a dev-loop.js restart to pick
+    // up any change to that logic), this route's own code never needs to
+    // change again just because the SHAPE of some file under docs/ changes —
+    // the dashboard can just fetch whatever JSON it wants directly.
+    if (req.url && req.url.startsWith("/docs/")) {
+      const requestedPath = decodeURIComponent(req.url.slice(1).split("?")[0])
+      const docsRoot = resolve("docs")
+      const fullPath = resolve(requestedPath)
+      // Must resolve to somewhere inside docs/ — blocks ../ escaping out.
+      if (!fullPath.startsWith(docsRoot + sep) && fullPath !== docsRoot) {
+        res.writeHead(403, { "Content-Type": "text/plain" })
+        res.end("Forbidden")
+        return
+      }
+      if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
+        res.writeHead(404, { "Content-Type": "text/plain" })
+        res.end("Not found")
+        return
+      }
+      const ext = fullPath.split(".").pop().toLowerCase()
+      const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8" }
+      res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
+      res.end(readFileSync(fullPath))
+      return
+    }
+
+    if (req.url && req.url.startsWith("/assets/")) {
+      // Now nested (assets/images/*, assets/audio/*) — resolved and checked
+      // the same way as the /docs/** route above (must land inside
+      // assetsDir), not a flat-filename-only substring check, since that
+      // would reject every legitimate subdirectory path along with real
+      // traversal attempts.
+      const assetName = decodeURIComponent(req.url.slice("/assets/".length).split("?")[0])
+      const assetsRoot = resolve(assetsDir)
+      const assetPath = resolve(assetsDir, assetName)
+      if (!assetPath.startsWith(assetsRoot + sep) || !existsSync(assetPath) || !statSync(assetPath).isFile()) {
+        res.writeHead(404, { "Content-Type": "text/plain" })
+        res.end("Not found")
+        return
+      }
+      const ext = assetPath.split(".").pop().toLowerCase()
+      const CONTENT_TYPES = { mp3: "audio/mpeg", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", svg: "image/svg+xml", webp: "image/webp", gif: "image/gif" }
+      res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
+      res.end(readFileSync(assetPath))
+      return
+    }
+
+    if (!existsSync(dashboardPath)) {
+      res.writeHead(404, { "Content-Type": "text/plain" })
+      res.end(`${dashboardPath} not found`)
+      return
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+    res.end(readFileSync(dashboardPath, "utf-8"))
+  })
+
+  // Without this, a failed .listen() (e.g. the port already held by a
+  // zombie process from a previous interrupted run) emits an unhandled
+  // 'error' event, which Node treats as an uncaught exception and crashes
+  // the whole script — silently, with no clear message pointing at the
+  // dashboard as the cause.
+  server.on("error", (e) => {
+    warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
+    if (e.code === "EADDRINUSE") {
+      warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
+    }
+  })
+
+  server.listen(DASHBOARD_PORT, () => {
+    const url = `http://localhost:${DASHBOARD_PORT}/`
+    banner(`AGENT DASHBOARD — ${url}`)
+    log(`If it didn't open automatically, open this URL yourself: ${url}`)
+    const openCmd =
+      process.platform === "win32" ? `start "" "${url}"` :
+      process.platform === "darwin" ? `open "${url}"` :
+      `xdg-open "${url}"`
+    try {
+      execSync(openCmd, { stdio: "ignore" })
+    } catch (e) {
+      warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
+    }
+  })
+
+  return server
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
+
+// Two instances of this script running at once (e.g. two terminals, each
+// running `node development/dev-loop.js`) will independently claim different
+// backlog tasks, branch/work/merge in parallel with no coordination, and
+// reliably produce a git merge conflict on .plan/000-backlog.md's checkbox
+// lines when both try to merge back — exactly what happened before this
+// guard existed. A simple PID lock file prevents a second instance from
+// starting at all while one is already running.
+const LOCK_PATH = ".dev-loop.lock"
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0) // signal 0: doesn't actually kill, just checks existence/permission
+    return true
+  } catch {
+    return false
+  }
+}
+
+function acquireLock() {
+  if (existsSync(LOCK_PATH)) {
+    const heldPid = Number(readFileSync(LOCK_PATH, "utf-8").trim())
+    if (Number.isFinite(heldPid) && isProcessAlive(heldPid)) {
+      printRed(`Refusing to start: another dev-loop.js is already running (PID ${heldPid}).`)
+      printRed(`Running two instances at once will race on the same backlog and reliably produce a git merge conflict.`)
+      printRed(`Finish or stop that one first (or delete ${LOCK_PATH} if you're certain it's not actually running anymore), then rerun.`)
+      process.exit(1)
+    }
+    // Stale lock (process no longer alive) — safe to take over.
+  }
+  writeFileSync(LOCK_PATH, String(process.pid), "utf-8")
+
+  const releaseLock = () => {
+    try {
+      if (existsSync(LOCK_PATH) && readFileSync(LOCK_PATH, "utf-8").trim() === String(process.pid)) {
+        rmSync(LOCK_PATH)
+      }
+    } catch {
+      // Best-effort cleanup — a leftover lock just self-heals via the stale-PID check above.
+    }
+  }
+  process.on("exit", releaseLock)
+  process.on("SIGINT", () => { releaseLock(); process.exit(130) })
+  process.on("SIGTERM", () => { releaseLock(); process.exit(143) })
+}
 
 // Fails fast with a clear, specific reason instead of a confusing crash deep
 // inside the loop (e.g. "fetch is not defined" on old Node, or a cryptic
@@ -368,8 +815,12 @@ function checkPrerequisites() {
 
 async function main() {
   checkPrerequisites()
+  acquireLock()
+  startDashboardServer()
+  ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
 
-  banner("DEV LOOP ORCHESTRATOR — DOG GROOMING CLINIC APPOINTMENT BOOKING")
+  banner("DEV LOOP ORCHESTRATOR")
+  emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
   log(`Base branch: '${BASE_BRANCH}' — every task branches from here and merges back here, only after your approval.`)
@@ -395,13 +846,25 @@ async function main() {
     loopCount += 1
     banner(`LOOP ${loopCount} · ${task.title}`)
     log(`Picked task from backlog: ${task.title}`)
+    currentTaskTitle = task.title
+    currentTaskProgress = getBacklogProgress(task)
+    emitEvent("picking-next-task", null, task.title)
 
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })
 
     let state = loadTaskState(task.slug)
     const planResumable = Boolean(state?.approved && state?.planPath && existsSync(state.planPath))
     const draftResumable = Boolean(!planResumable && state?.planPath && existsSync(state.planPath))
-    const ticketsResumable = planResumable && Boolean(state?.tickets)
+    // A saved `tickets`/`reports` object from before a backend service was
+    // added/renamed (e.g. discoverBackendServices() found a different set
+    // than it did when this state was written) is missing keys the rest of
+    // this function assumes exist — reusing it crashes deep in the backend
+    // launch loop with "Cannot read properties of undefined". Requiring
+    // every currently-expected key to be present makes stale state regenerate
+    // fresh instead (same as if this were a first run), rather than crash.
+    const expectedTicketKeys = ["frontend", "qa", "security", ...BACKEND_SERVICE_KEYS.map(camelKey)]
+    const hasAllExpectedKeys = (obj) => Boolean(obj) && expectedTicketKeys.every((k) => k in obj)
+    const ticketsResumable = planResumable && hasAllExpectedKeys(state?.tickets)
     if (state) {
       if (planResumable) {
         log(`Resuming task '${task.slug}' from saved state — reusing approved plan${ticketsResumable ? " and existing task ids" : ""}.`)
@@ -484,24 +947,23 @@ async function main() {
     // "already done" check in runAgent can never find yesterday's completed work
     // and reruns every agent from Frontend on.
     let reports
-    if (state?.reports) {
+    const expectedReportKeys = ["fe", "qa", "security", ...BACKEND_SERVICE_KEYS.map(camelKey)]
+    const reportsResumable = Boolean(state?.reports) && expectedReportKeys.every((k) => k in state.reports)
+    if (reportsResumable) {
       reports = state.reports
       log("Report paths reused from saved state (keeps original run date).")
     } else {
-      reports = makeReportPaths(task.slug, {
-        frontend: tickets.frontend.id,
-        gateway: tickets.gateway.id,
-        appointmentService: tickets.appointmentService.id,
-        userService: tickets.userService.id,
-        qa: tickets.qa.id,
-        security: tickets.security.id,
-      })
+      const ticketIds = Object.fromEntries(
+        Object.entries(tickets).map(([key, ticket]) => [key, ticket.id])
+      )
+      reports = makeReportPaths(task.slug, ticketIds)
       state = { ...state, reports }
       saveTaskState(task.slug, state)
     }
 
     // ── Step: Frontend ──────────────────────────────────────────────────────
     if (inScope(task, "frontend")) {
+      emitEvent("agent-start", "frontend")
       await runAgent({
         systemPrompt: "agents/frontend/CLAUDE.md",
         input: [
@@ -519,80 +981,47 @@ async function main() {
         agentKey: "frontend",
       })
     } else {
+      emitEvent("agent-skip", "frontend")
       logSkip("Frontend Agent", "out of scope for this task")
       writeSkippedReport(reports.fe, "Frontend Agent")
     }
 
-    // ── Step: Backend (all three services, in parallel — only those in scope) ──
-    // gateway is a stateless reverse proxy; most tasks won't scope it in — only
-    // deploy/production-setup tasks per agents/backend/CLAUDE.md.
+    // ── Step: Backend (every discovered service, in parallel — only those in
+    // scope). One combined start/skip event for the whole group, not one per
+    // service — the dashboard's voice/visual "backend" category is already
+    // generic across every service name, so N near-simultaneous per-service
+    // events would just be redundant noise.
+    const backendKeysInScope = BACKEND_SERVICE_KEYS.filter((k) => inScope(task, k))
+    emitEvent(backendKeysInScope.length > 0 ? "agent-start" : "agent-skip", "backend", null, backendKeysInScope)
     log("Launching backend agents (only those in scope, in parallel)...")
 
-    await Promise.all([
-      inScope(task, "gateway")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.gateway.id}`,
-              `Service: gateway`,
-              `Port: ${BACKEND_PORTS.gateway}`,
-              `API contract: ${API_CONTRACTS.gateway}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.gateway,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — gateway",
-            agentKey: "gateway",
-          })
-        : (logSkip("Backend Agent — gateway", "out of scope for this task"),
-           writeSkippedReport(reports.gateway, "Backend Agent — gateway")),
-      inScope(task, "appointment-service")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.appointmentService.id}`,
-              `Service: appointment-service`,
-              `Port: ${BACKEND_PORTS.appointmentService}`,
-              `API contract: ${API_CONTRACTS.appointmentService}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.appointmentService,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — appointment-service",
-            agentKey: "appointment-service",
-          })
-        : (logSkip("Backend Agent — appointment-service", "out of scope for this task"),
-           writeSkippedReport(reports.appointmentService, "Backend Agent — appointment-service")),
-      inScope(task, "user-service")
-        ? runAgent({
-            systemPrompt: "agents/backend/CLAUDE.md",
-            input: [
-              `You are the Backend Agent.`,
-              `Task: ${task.title}`,
-              `Task id: ${tickets.userService.id}`,
-              `Service: user-service`,
-              `Port: ${BACKEND_PORTS.userService}`,
-              `API contract: ${API_CONTRACTS.userService}`,
-              `Approved plan: ${planPath}`,
-              `Follow your CLAUDE.md instructions exactly.`,
-              `End your final response with exact line: STATUS: DONE`,
-            ].join("\n"),
-            outputFile: reports.userService,
-            doneMarker: "STATUS: DONE",
-            label: "Backend Agent — user-service",
-            agentKey: "user-service",
-          })
-        : (logSkip("Backend Agent — user-service", "out of scope for this task"),
-           writeSkippedReport(reports.userService, "Backend Agent — user-service")),
-    ])
+    await Promise.all(BACKEND_SERVICE_KEYS.map((key) => {
+      const label = `Backend Agent — ${key}`
+      const ck = camelKey(key)
+      if (!inScope(task, key)) {
+        logSkip(label, "out of scope for this task")
+        writeSkippedReport(reports[ck], label)
+        return undefined
+      }
+      return runAgent({
+        systemPrompt: "agents/backend/CLAUDE.md",
+        input: [
+          `You are the Backend Agent.`,
+          `Task: ${task.title}`,
+          `Task id: ${tickets[ck].id}`,
+          `Service: ${key}`,
+          `Port: ${BACKEND_PORTS[ck]}`,
+          `API contract: ${API_CONTRACTS[ck]}`,
+          `Approved plan: ${planPath}`,
+          `Follow your CLAUDE.md instructions exactly.`,
+          `End your final response with exact line: STATUS: DONE`,
+        ].join("\n"),
+        outputFile: reports[ck],
+        doneMarker: "STATUS: DONE",
+        label,
+        agentKey: key,
+      })
+    }))
 
     // Real config values (MONGODB_URI, JWT_SECRET, ...) are collected HERE by
     // the orchestrator via a real blocking terminal prompt — not left to the
@@ -601,12 +1030,13 @@ async function main() {
     // streamed output is easy to scroll past unanswered. This runs once per
     // service (only after that service's .env.example exists, i.e. after its
     // scaffold task), and reuses any value already set for a sibling service.
-    if (inScope(task, "gateway")) await ensureBackendEnv("gateway")
-    if (inScope(task, "appointment-service")) await ensureBackendEnv("appointment-service")
-    if (inScope(task, "user-service")) await ensureBackendEnv("user-service")
+    for (const key of BACKEND_SERVICE_KEYS) {
+      if (inScope(task, key)) await ensureBackendEnv(key)
+    }
 
     // ── Step: QA ─────────────────────────────────────────────────────────────
     if (inScope(task, "qa")) {
+      emitEvent("agent-start", "qa")
       await runAgent({
         systemPrompt: "agents/qa/CLAUDE.md",
         input: [
@@ -615,9 +1045,7 @@ async function main() {
           `Task id: ${tickets.qa.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.gateway}`,
-          `- ${API_CONTRACTS.appointmentService}`,
-          `- ${API_CONTRACTS.userService}`,
+          ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
           `Run validation across frontend, all in-scope backend services, and e2e.`,
           `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -627,14 +1055,17 @@ async function main() {
         agentKey: "qa",
       })
     } else {
+      emitEvent("agent-skip", "qa")
       logSkip("QA Agent", "out of scope for this task")
       writeSkippedReport(reports.qa, "QA Agent")
     }
 
+    emitEvent("agent-back", "orchestrator")
     await waitForApprovalWithChat({ task, tickets, planPath })
 
     // ── Step: Security ───────────────────────────────────────────────────────
     if (inScope(task, "security")) {
+      emitEvent("agent-start", "security")
       await runAgent({
         systemPrompt: "agents/security/CLAUDE.md",
         input: [
@@ -643,9 +1074,7 @@ async function main() {
           `Task id: ${tickets.security.id}`,
           `Approved plan: ${planPath}`,
           `API contracts:`,
-          `- ${API_CONTRACTS.gateway}`,
-          `- ${API_CONTRACTS.appointmentService}`,
-          `- ${API_CONTRACTS.userService}`,
+          ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
           `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
           `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
         ].join("\n"),
@@ -655,18 +1084,37 @@ async function main() {
         agentKey: "security",
       })
     } else {
+      emitEvent("agent-skip", "security")
       logSkip("Security Agent", "out of scope for this task")
       writeSkippedReport(reports.security, "Security Agent")
     }
+    emitEvent("agent-back", "orchestrator")
 
     await markPlanStatus(planPath, "done")
     markBacklogTaskDone(task)
     clearTaskState(task.slug)
     commitTaskChanges(task, branchName)
-    await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
+    openChangedFilesInEditor()
+    // Opened BEFORE the merge-approval gate below, not after — the merge
+    // question always blocks waiting for a human answer (unaffected by
+    // AUTO_APPROVE_PLANS, on purpose: merging into the base branch is a
+    // separate, always-explicit decision from plan/feature approval), and
+    // the human should already be able to see the task's result on screen
+    // while deciding, not have the browser open only after they've answered.
     openBrowserForTask(task)
+    await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     printCostTable(task.title)
+    // printCostTable() just wrote cost files to disk — at this point we're
+    // already back on BASE_BRANCH (pushAndMergeTaskBranch left us there),
+    // so these writes are UNCOMMITTED changes sitting on that branch. Left
+    // as-is, the very next task's `git checkout -b <new-branch>` reliably
+    // fails ("local changes would be overwritten" / untracked-file
+    // conflicts) the moment it tries to switch away from BASE_BRANCH with
+    // this dirty state present. Committing immediately closes that window
+    // for good, regardless of exactly when/where a future cost write happens.
+    commitCostArtifacts(task, BASE_BRANCH)
     log(`Task complete: ${task.title}`)
+    emitEvent("task-done", null, task.title)
   }
 }
 
@@ -678,8 +1126,8 @@ function ensurePlanDirAndBacklog() {
   }
 }
 
-// Which of the 6 gated agents (frontend/gateway/appointment-service/
-// user-service/qa/security) a task actually needs, read from the backlog line's `scope:`
+// Which of the gated agents (frontend / each discovered backend service /
+// qa / security) a task actually needs, read from the backlog line's `scope:`
 // field (comma-separated agent keys, or "none" for zero of them). No
 // `scope:` field at all means "unknown scope" — run everything, since that's
 // the only safe default when nobody has classified the task yet.
@@ -712,13 +1160,62 @@ function inScope(task, agentKey) {
 async function runTaskCommand(task) {
   log(`Running task command: ${task.cmd}`)
   try {
-    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit" })
+    // CI=1 is the de-facto standard signal most JS scaffolding CLIs
+    // (create-vite, create-vue, npm init *, ...) check to switch to
+    // non-interactive mode — critically, this also makes them skip
+    // "install AND start the dev server now?"-style prompts entirely,
+    // since a CI environment must never end a "scaffold" step by launching
+    // a server that runs forever. Without this, a scaffold command can
+    // silently turn into a hang with no error — this script just waits on
+    // a process that was never going to exit on its own.
+    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit", env: { ...process.env, CI: "1" } })
     log(`Command succeeded: ${task.cmd}`)
   } catch (err) {
     printRed(`Command failed: ${task.cmd}`)
     printRed(err.message)
+    emitEvent("attention-needed", null, `Command failed: ${task.cmd}`)
     await askUserInput(`Fix the issue above, then press Enter to retry this command: `)
     return runTaskCommand(task)
+  }
+}
+
+// Opens every file this task's just-made commit touched (created or
+// modified) as tabs in a running VS Code window, so the human can see what
+// was actually built without hunting through the file tree themselves.
+// Silently does nothing if the `code` CLI isn't on PATH (not every setup has
+// it) — this is a convenience, not a required step.
+let codeCliChecked = false
+let codeCliAvailable = false
+
+function openChangedFilesInEditor() {
+  if (!codeCliChecked) {
+    codeCliChecked = true
+    try {
+      execSync("code --version", { stdio: "ignore" })
+      codeCliAvailable = true
+    } catch {
+      warn("'code' CLI not found on PATH — skipping auto-open in VS Code for this and future tasks. (VS Code: Command Palette -> \"Shell Command: Install 'code' command in PATH\" to enable this.)")
+    }
+  }
+  if (!codeCliAvailable) return
+
+  let changedFiles
+  try {
+    changedFiles = execSync("git diff-tree --no-commit-id --name-only -r HEAD", { encoding: "utf-8" })
+      .split("\n")
+      .map((f) => f.trim())
+      .filter(Boolean)
+  } catch (e) {
+    warn(`Could not list this task's changed files (${e.message}) — skipping auto-open in VS Code.`)
+    return
+  }
+  if (changedFiles.length === 0) return
+
+  try {
+    execSync(`code ${changedFiles.map((f) => `"${f}"`).join(" ")}`, { stdio: "ignore" })
+    log(`Opened ${changedFiles.length} changed file(s) in VS Code.`)
+  } catch (e) {
+    warn(`Could not open changed files in VS Code (${e.message}).`)
   }
 }
 
@@ -792,6 +1289,19 @@ function getNextBacklogTask() {
   return null
 }
 
+// "Task N of M" for the dashboard — position of `task.lineIndex` among every
+// checklist line in the backlog (done or not), 1-based. Recomputed fresh
+// each time (not cached) since the backlog file itself is the source of
+// truth and can gain/lose lines between runs.
+function getBacklogProgress(task) {
+  const lines = readFileSync(BACKLOG_FILE, "utf-8").split("\n")
+  const checklistLineIndexes = lines
+    .map((line, i) => (line.trim().match(/^\s*-\s*\[( |x|X)\]/) ? i : -1))
+    .filter((i) => i !== -1)
+  const position = checklistLineIndexes.indexOf(task.lineIndex)
+  return { current: position === -1 ? null : position + 1, total: checklistLineIndexes.length }
+}
+
 function markBacklogTaskDone(task) {
   const text = readFileSync(BACKLOG_FILE, "utf-8")
   const lines = text.split("\n")
@@ -836,27 +1346,29 @@ async function markPlanStatus(planPath, status) {
 
 function makeReportPaths(slug, ticketIds) {
   const date = new Date().toISOString().slice(0, 10)
-  return {
-    fe:                 `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
-    gateway:            `${REPORTS_DIR}/${date}-${ticketIds.gateway}-${slug}-gateway.md`,
-    appointmentService: `${REPORTS_DIR}/${date}-${ticketIds.appointmentService}-${slug}-appointment-service.md`,
-    userService:        `${REPORTS_DIR}/${date}-${ticketIds.userService}-${slug}-user-service.md`,
-    qa:                 `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
-    security:           `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
+  const paths = {
+    fe:       `${REPORTS_DIR}/${date}-${ticketIds.frontend}-${slug}-frontend.md`,
+    qa:       `${REPORTS_DIR}/${date}-${ticketIds.qa}-${slug}-qa.md`,
+    security: `${REPORTS_DIR}/${date}-${ticketIds.security}-${slug}-security.md`,
   }
+  for (const key of BACKEND_SERVICE_KEYS) {
+    paths[camelKey(key)] = `${REPORTS_DIR}/${date}-${ticketIds[camelKey(key)]}-${slug}-${key}.md`
+  }
+  return paths
 }
 
-const API_CONTRACTS = {
-  gateway:            "docs/api-contract/api-contract.gateway.yaml",
-  appointmentService: "docs/api-contract/api-contract.appointment-service.yaml",
-  userService:        "docs/api-contract/api-contract.user-service.yaml",
-}
+const API_CONTRACTS = Object.fromEntries(
+  BACKEND_SERVICE_KEYS.map((key) => [camelKey(key), `docs/api-contract/api-contract.${key}.yaml`])
+)
 
-const BACKEND_PORTS = {
-  gateway: 5000,
-  appointmentService: 5001,
-  userService: 5002,
-}
+// Sequential ports starting at 4000, in the same stable sorted order as
+// BACKEND_SERVICE_KEYS — adding a new service later appends at the end of
+// that sort order in most cases, but an insertion earlier in the alphabet
+// will shift everything after it. Re-run once after adding a service to
+// confirm the assignment still matches what's in each service's .env.
+const BACKEND_PORTS = Object.fromEntries(
+  BACKEND_SERVICE_KEYS.map((key, i) => [camelKey(key), 4000 + i])
+)
 
 // ─── Claude planning ──────────────────────────────────────────────────────────
 
@@ -971,6 +1483,7 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
   }
 
   log("Plan gate: review and refine. The task proceeds only after terminal APPROVED.")
+  emitEvent("waiting-approval", "orchestrator", "Plan review")
 
   while (true) {
     const answer = await askUserInput(
@@ -1005,16 +1518,25 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
 // No issue tracker is configured for this project, so agent steps are keyed
 // by simple local task identifiers instead of tickets in an external system.
 
+// Short per-service code derived mechanically from the key (first 4 letters
+// with hyphens stripped, e.g. "booking-service" -> "BOOK") — not as
+// hand-picked/memorable as the old fixed abbreviations, but works for any
+// service name without a code edit.
+function ticketCode(kebabKey) {
+  return kebabKey.replace(/-/g, "").toUpperCase().slice(0, 4)
+}
+
 function simulateTickets(slug) {
   const up = slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "TASK"
-  return {
-    frontend:           { id: `${up}-FE` },
-    gateway:            { id: `${up}-GW` },
-    appointmentService: { id: `${up}-APT` },
-    userService:        { id: `${up}-USR` },
-    qa:                 { id: `${up}-QA` },
-    security:           { id: `${up}-SEC` },
+  const tickets = {
+    frontend: { id: `${up}-FE` },
+    qa:       { id: `${up}-QA` },
+    security: { id: `${up}-SEC` },
   }
+  for (const key of BACKEND_SERVICE_KEYS) {
+    tickets[camelKey(key)] = { id: `${up}-${ticketCode(key)}` }
+  }
+  return tickets
 }
 
 // ─── Agent runner ─────────────────────────────────────────────────────────────
@@ -1055,6 +1577,7 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
   printRed(`${label}: BLOCKED — ${reason}`)
   if (raw) printRed(raw)
   printRed(`Status written to: ${statusPath}`)
+  emitEvent(kind === "SESSION_LIMIT" ? "session-limit" : "attention-needed", agentKey, reason)
 
   await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `)
   return runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey })
@@ -1106,6 +1629,7 @@ async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, ag
   if (blockedRegex.test(stdout)) {
     printRed(`${label}: STATUS: BLOCKED — the agent found something that must be fixed before continuing.`)
     printRed(`Report (real, not simulated): ${outputFile}`)
+    emitEvent("attention-needed", agentKey, `${label} reported STATUS: BLOCKED`)
     throw new AgentBlockedError(`${label} reported STATUS: BLOCKED — see ${outputFile}`)
   } else if (stdout.includes(doneMarker) || doneRegex.test(stdout)) {
     log(`${label}: STATUS: DONE ✓`)
@@ -1301,6 +1825,7 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
               assistantText += block.text + "\n"
               const out = agentKey ? prefixLines(block.text, agentKey) : block.text
               process.stdout.write(out.endsWith("\n") ? out : out + "\n")
+              writeAgentStatus(agentKey, block.text)
 
               // React the moment a session-limit/login message actually shows up
               // in the stream — don't wait for the process to close on its own
@@ -1437,7 +1962,7 @@ function generatePlanFallback({ task }) {
 Status: draft
 Owner: Orchestrator
 Last updated: ${today}
-Scope-Agents: frontend,appointment-service,user-service,qa,security
+Scope-Agents: frontend,${BACKEND_SERVICE_KEYS.join(",")},qa,security
 
 ## Goal
 Deliver ${task.title} in the existing product.
@@ -1456,18 +1981,16 @@ Deliver ${task.title} in the existing product.
 
 ## Steps
 1. Frontend agent implements UI and defines API contract(s) if needed.
-2. Backend agents (appointment-service, user-service, and gateway if in scope) run in parallel — independent services.
+2. Backend agents (${BACKEND_SERVICE_KEYS.join(", ")} — whichever are in scope) run in parallel — independent services.
 3. QA agent runs unit, integration, and e2e checks across frontend and all in-scope backend services.
 4. Security agent audits frontend, all in-scope backend services, and API contracts.
 
 ## Validation
 - frontend: npm --prefix frontend run lint && npm --prefix frontend run build && npm --prefix frontend run test
-- backend/appointment-service: npm --prefix backend/appointment-service run test
-- backend/user-service: npm --prefix backend/user-service run test
-- backend/gateway (only if in scope): npm --prefix backend/gateway run test
+${BACKEND_SERVICE_KEYS.map((key) => `- backend/${key} (only if in scope): npm --prefix backend/${key} run test`).join("\n")}
 
 ## Risks
-- TimeSlot concurrency (appointment-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
+- TimeSlot concurrency (booking-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
 - Existing tests may fail due to unrelated baseline issues.
 
 ## Rollout Order
@@ -1492,7 +2015,19 @@ function getBaseBranch() {
   const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim()
   if (branch === "main" || branch === "master") {
     printRed(`Refusing to run: current branch is '${branch}'. main/master is sacred — dev-loop.js never branches from or merges into it.`)
-    printRed(`Check out your own base branch first (e.g. 'git checkout booking_clinic_appointment'), then rerun.`)
+    printRed(`Check out your own base branch first (e.g. 'git checkout <your-feature-branch>'), then rerun.`)
+    process.exit(1)
+  }
+  if (branch.includes("-tasks/")) {
+    // A task branch this same script generated (`<base>-tasks/<slug>`), not a
+    // real human base branch. Re-deriving BASE_BRANCH from one of these is
+    // how the naming compounds without limit on every rerun after an
+    // interrupted (e.g. Ctrl+C'd) task that never reached the merge step:
+    // <base>-tasks/<slug>-tasks/<slug>-tasks/<slug>... until git or Windows
+    // rejects the filename as too long. Refuse outright rather than silently
+    // treating this as a new base.
+    printRed(`Refusing to run: current branch '${branch}' looks like a task branch this script generated (contains "-tasks/"), not your real base branch.`)
+    printRed(`This usually means a previous run was interrupted (Ctrl+C, crash) before it could merge back. Check out your real base branch first — the part before the first "-tasks/" — then rerun. If that task's work is still needed, merge or cherry-pick it manually first; this branch won't be touched.`)
     process.exit(1)
   }
   return branch
@@ -1545,16 +2080,42 @@ function commitTaskChanges(task, branch) {
   }
 }
 
+// Sweeps up any cost-tracking files (docs/cost/**) written after the task's
+// own commit — currently just printCostTable()'s output, but this stays
+// correct even if something else starts writing there later, since it just
+// commits whatever's actually dirty rather than naming specific files.
+// Directly on `baseBranch` (not a task branch — there's no PR/approval step
+// for this, it's pure bookkeeping), so the working tree is guaranteed clean
+// before the loop's next iteration tries to check out a new task branch.
+function commitCostArtifacts(task, baseBranch) {
+  try {
+    const status = execSync("git status --porcelain", { encoding: "utf-8" })
+    if (!status.trim()) return
+    execSync("git add -A -- docs/cost", { stdio: "inherit" })
+    const stillDirty = execSync("git status --porcelain", { encoding: "utf-8" })
+    if (!stillDirty.trim()) return // nothing under docs/cost/ was actually dirty
+    execSync(`git commit -m "Cost tracking for: ${task.title.replace(/"/g, '\\"')}"`, { stdio: "inherit" })
+    log(`Committed cost-tracking files on '${baseBranch}'.`)
+  } catch (e) {
+    warn(`Could not auto-commit cost-tracking files (${e.message}) — the next task's branch checkout may fail until this is committed or discarded manually.`)
+  }
+}
+
 // Approval gate: nothing gets pushed or merged into BASE_BRANCH without an
 // explicit APPROVED from the human. main/master can never be a merge target
 // here — getBaseBranch() already refused to run if that were the case.
 async function pushAndMergeTaskBranch(task, branch, baseBranch) {
-  const answer = await askUserInput(
-    `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
-  )
-  if (answer.trim().toUpperCase() !== "APPROVED") {
-    log(`Leaving '${branch}' unmerged and unpushed — merge it into '${baseBranch}' yourself when ready.`)
-    return
+  if (AUTO_MERGE_TASKS) {
+    log(`Merge gate: AUTO_MERGE_TASKS is on — merging '${branch}' into '${baseBranch}' automatically, no terminal wait.`)
+  } else {
+    emitEvent("waiting-approval", "orchestrator", "Merge approval")
+    const answer = await askUserInput(
+      `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
+    )
+    if (answer.trim().toUpperCase() !== "APPROVED") {
+      log(`Leaving '${branch}' unmerged and unpushed — merge it into '${baseBranch}' yourself when ready.`)
+      return
+    }
   }
 
   try {
@@ -1592,7 +2153,13 @@ async function waitForApproval(prompt) {
 }
 
 async function waitForApprovalWithChat({ task, tickets, planPath }) {
+  if (AUTO_APPROVE_PLANS) {
+    log("Feature-done gate: AUTO_APPROVE_PLANS is on — auto-approving, no terminal wait.")
+    return
+  }
+
   log("Feature done. Type APPROVED to mark task complete, or send a command to the orchestrator.")
+  emitEvent("waiting-approval", "orchestrator", "Feature-done approval")
 
   while (true) {
     const answer = await askUserInput("orchestrator> ")
@@ -1799,6 +2366,7 @@ function banner(msg) {
 function log(msg) {
   const { icon, color } = AGENT_IDENTITY["orchestrator"]
   console.log(`${color}${icon} [ORCHESTRATOR]${RESET} ${msg}`)
+  writeAgentStatus("orchestrator", msg)
 }
 
 function warn(msg) {

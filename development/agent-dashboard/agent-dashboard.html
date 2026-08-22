@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<title>Agent Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0b10;
+    --panel: #16161d;
+    --border: #2a2a35;
+    --text: #e6e6ec;
+    --dim: #6b6b7a;
+    --orchestrator: #f0b429;
+    --frontend: #d946ef;
+    --backend: #3b82f6;
+    --qa: #22c55e;
+    --security: #06b6d4;
+    --idle: #3a3a46;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr;
+    height: 100vh;
+    gap: 0;
+  }
+  #stage {
+    position: relative;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--border);
+  }
+  #ring { position: relative; width: min(70vh, 560px); height: min(70vh, 560px); }
+  svg#beams { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .beam {
+    stroke: var(--idle);
+    stroke-width: 2;
+    opacity: 0.25;
+    transition: stroke 0.4s ease, opacity 0.4s ease, stroke-width 0.4s ease;
+  }
+  .beam.active {
+    stroke-width: 3;
+    opacity: 1;
+    stroke-dasharray: 6 4;
+    animation: dash 1s linear infinite;
+  }
+  @keyframes dash { to { stroke-dashoffset: -20; } }
+
+  .node {
+    position: absolute;
+    width: 96px; height: 96px;
+    margin-left: -48px; margin-top: -48px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    transition: box-shadow 0.4s ease, border-color 0.4s ease, transform 0.4s ease;
+  }
+  .node .icon { font-size: 30px; line-height: 1; }
+  .node .icon-img { width: 92px; height: 92px; border-radius: 50%; object-fit: cover; display: block; filter: brightness(1.25) contrast(1.1) saturate(1.1); }
+  .node .name { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: center; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: absolute; bottom: 10px; color: aliceblue;}
+  .node.center { width: 128px; height: 128px; margin-left: -64px; margin-top: -64px; }
+  .node.center .icon { font-size: 42px; }
+  .node.center .icon-img { width: 124px; height: 124px; }
+
+  /* Backend-service satellites — smaller than the primary ring so 4 of them
+     fit around the backend hub without overlapping it, each other, or the
+     box edge. Small shared portrait + 2-line label, both scaled down to
+     still fit the tight 52px circle. */
+  .node.satellite {
+    width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 3px;
+    background: radial-gradient(circle at 32% 30%, rgba(59, 130, 246, 0.24), var(--panel) 72%);
+  }
+  .node.satellite .icon-img { width: 20px; height: 20px; margin-bottom: 1px; }
+  /* Extra attribute selector to out-specificity the generic idle-border rule
+     below (.node[data-agent]) — satellites keep their own static tint even
+     while idle, instead of falling back to the plain gray border. */
+  .node.satellite[data-agent] { border-color: rgba(59, 130, 246, 0.45); }
+  .node.satellite .name {
+    font-size: 7.5px; line-height: 1.15; font-weight: 700; letter-spacing: 0.01em;
+    color: #eaf2ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    /* Overriding the base .node .name rule's nowrap/ellipsis — satellites
+       need real 2-line wrapping (via the explicit <br> in ringLabel above),
+       not a single-line ellipsis that mangles mid-word. */
+    max-width: 46px; white-space: normal; margin-top: 0; overflow: visible; text-overflow: clip;
+  }
+
+  .node.active {
+    transform: scale(1.12);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  /* Idle-state separation — just a faint neutral border, no per-category glow.
+     Color and glow are reserved entirely for .active below, so the eye goes
+     straight to whoever's actually working instead of every node competing
+     for attention at once. */
+  .node[data-agent] { border-color: rgba(255, 255, 255, 0.14); }
+
+  .node[data-agent="orchestrator"].active { border-color: var(--orchestrator); box-shadow: 0 0 24px var(--orchestrator); }
+  .node[data-agent="frontend"].active     { border-color: var(--frontend);     box-shadow: 0 0 24px var(--frontend); }
+  .node[data-agent="qa"].active           { border-color: var(--qa);           box-shadow: 0 0 24px var(--qa); }
+  .node[data-agent="security"].active     { border-color: var(--security);     box-shadow: 0 0 24px var(--security); }
+  /* .satellite covers every backend service regardless of its key/name —
+     not a name-pattern guess like the old ".../-service"/"gateway" match,
+     which broke the moment a service's key didn't happen to fit that shape. */
+  .node.satellite.active,
+  .node[data-agent="backend"].active      { border-color: var(--backend);      box-shadow: 0 0 24px var(--backend); }
+
+  @keyframes pulse {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.35); }
+  }
+
+  #sidebar {
+    grid-column: 2; grid-row: 1;
+    display: flex; flex-direction: column;
+    padding: 20px 24px;
+    overflow: hidden;
+  }
+  #status-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .sidebar-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+  #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; }
+  #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; margin-bottom:2.0em }
+  #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
+
+  .progress-badge {
+    display: inline-block;
+    font-size: 10px; font-weight: 700; letter-spacing: normal; text-transform: none;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: rgba(240, 180, 41, 0.18);
+    color: var(--orchestrator);
+    vertical-align: middle;
+  }
+  .progress-badge:empty { display: none; }
+  #status-task-name { text-transform: none; letter-spacing: normal; color: var(--text); font-weight: 600; }
+
+  #history-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  #history-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; }
+  /* Capped height with its own scrollbar — a growing task list must never
+     eat into the live-app iframe's space below (#iframe-wrap takes whatever
+     vertical room #sidebar's siblings leave it). */
+  #history-list { max-height: 100px; overflow-y: auto; font-size: 12px; }
+  #history-table { width: 100%; border-collapse: collapse; }
+  #history-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  #history-table th:last-child, #history-table td:last-child { text-align: right; }
+  #history-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text); }
+  #history-table td:first-child { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #history-table tr:last-child td { border-bottom: none; }
+  #history-empty { color: var(--dim); font-style: italic; font-size: 12px; }
+  #dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--idle);
+    box-shadow: 0 0 0 rgba(0,0,0,0); transition: background 0.4s, box-shadow 0.4s;
+  }
+  #dot.live { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  #active-thinking { animation: thinkingPulse 3.2s ease-in-out infinite; }
+  @keyframes thinkingPulse { 0%, 100% { color: var(--dim); } 50% { color: #35353f; } }
+
+  #iframe-wrap {
+    grid-column: 2; grid-row: 2;
+    padding: 0 24px 20px;
+    display: flex; flex-direction: column;
+    flex: 1; min-height: 0;
+  }
+  #iframe-wrap .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  #iframe-refresh {
+    font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: normal;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  #iframe-refresh:hover { border-color: var(--orchestrator); }
+  #app-frame {
+    flex: 1; min-height: 0;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fff;
+  }
+  h1 {
+    position: absolute; top: 16px; left: 24px;
+    font-size: 14px; font-weight: 600; letter-spacing: 0.04em; color: var(--dim);
+    margin: 0;
+  }
+
+  /* A small always-visible toggle, not a blocking overlay — the page and
+     everything on it is usable immediately; this just switches voice cues
+     on/off, same as any mute button. The very first click still doubles as
+     the browser's required user-gesture to unlock autoplay. */
+  #sound-toggle {
+    position: fixed; top: 16px; right: 24px; z-index: 50;
+    font-size: 13px; font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #sound-toggle:hover { border-color: var(--orchestrator); }
+</style>
+</head>
+<body>
+<h1>👑 AGENT DASHBOARD</h1>
+<div id="layout">
+  <div id="stage">
+    <div id="ring">
+      <svg id="beams"></svg>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div id="status-card">
+      <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span> <span id="status-task-name"></span></div>
+      <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/images/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
+      <div class="message" id="active-message">Waiting for the loop to start…</div>
+      <div class="thinking" id="active-thinking"></div>
+      <div class="updated" id="active-updated"></div>
+    </div>
+
+    <div id="history-card">
+      <div class="label">📜 Task History</div>
+      <div id="history-list">
+        <table id="history-table">
+          <thead><tr><th>Task</th><th>USD</th></tr></thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="iframe-wrap">
+    <div class="label">
+      🌐 Live app — http://localhost:5173
+      <button id="iframe-refresh" title="Reload the preview">↻ Refresh</button>
+    </div>
+    <iframe id="app-frame" src="http://localhost:5173" title="Live app preview"></iframe>
+  </div>
+</div>
+
+<button id="sound-toggle">🔇 Enable voice cues</button>
+
+<script>
+// Primary ring: one portrait node per category, "backend" standing in for
+// all backend work generically (matching frontend/qa/security) — these 4
+// are fixed system roles, not per-project data. The real backend SERVICES
+// (however many the current project actually has) are plain text badges
+// branching off "backend" — no portrait needed, the hub's portrait already
+// carries the "this is backend work" identity. That list is fetched from
+// the server at load time (see initDashboard() below) instead of hardcoded,
+// so a project with different/more/fewer services just works.
+const PRIMARY_AGENTS = [
+  { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
+  { key: "backend",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "backend" },
+  { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
+  { key: "security", angle: 180, icon: "🛡️", img: "security-agent.png", name: "security" },
+];
+const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
+
+// Breaks a kebab-case service key into a 2-line ring label at its first
+// hyphen (e.g. "notification-service" -> "notification-<br>service") — left
+// to CSS auto-wrap instead, a long single word wrapped mid-letter into an
+// illegible ellipsis. Keys without a hyphen render on one line as-is.
+function serviceRingLabel(key) {
+  return key.includes("-") ? key.replace("-", "-<br>") : key;
+}
+
+// Populated once the real per-project service list is fetched — see
+// initDashboard(). Declared here (not const) because everything below that
+// references them runs only after that fetch resolves.
+let BACKEND_SERVICES = [];
+let AGENTS = [...PRIMARY_AGENTS];
+
+// "Thinking..."-style ambient words shown under the current action while an
+// agent is busy — a themed replacement for the terminal's plain heartbeat
+// dots. One random word per tick, from the active category's own set.
+const THINKING_TERMS = {
+  orchestrator: [
+    "Thinking","Planning","Coordinating","Delegating","Reviewing","Prioritizing","Sequencing","Orchestrating",
+    "Deciding","Evaluating","Scheduling","Dispatching","Organizing","Strategizing","Assessing","Weighing",
+    "Balancing","Directing","Managing","Overseeing","Synchronizing","Aligning","Routing","Allocating",
+    "Arbitrating","Negotiating","Mediating","Steering","Guiding","Supervising","Monitoring","Tracking",
+    "Auditing","Verifying","Confirming","Approving","Queuing","Processing","Analyzing","Considering",
+    "Pondering","Reflecting","Calculating","Estimating","Forecasting","Projecting","Ranking","Sorting",
+    "Filtering","Selecting","Choosing","Comparing","Contrasting","Cross-checking","Validating","Reconciling",
+    "Consolidating","Summarizing","Reporting","Logging","Recording","Documenting","Archiving","Distributing",
+    "Branching","Merging","Committing","Escalating","Deferring","Resuming","Watching","Observing",
+    "Inspecting","Diagnosing","Troubleshooting","Resolving","Untangling","Streamlining","Optimizing","Refining",
+    "Tuning","Calibrating","Configuring","Initializing","Bootstrapping","Launching","Deploying","Handing off",
+    "Load-balancing","Checkpointing","Snapshotting","Backing up","Restoring","Recovering","Stabilizing","Finalizing",
+    "Coordinating handoffs","Reading the plan","Checking scope","Waiting on agents","Tallying results","Wrapping up","Taking notes","Double-checking",
+  ],
+  frontend: [
+    "Sketching","Designing","Styling","Rendering","Painting","Illustrating","Composing","Arranging",
+    "Aligning","Spacing","Animating","Transitioning","Polishing","Prototyping","Wireframing","Mocking up",
+    "Theming","Coloring","Shading","Gradient-mapping","Typesetting","Kerning","Laying out","Breakpoint-tuning",
+    "Pixel-pushing","Component-building","Scaffolding","Structuring","Templating","Binding","Hooking up state","Hydrating",
+    "Lazy-loading","Bundling","Transpiling","Linting","Formatting","Debugging","Inspecting","Previewing",
+    "Iterating","Brainstorming","Ideating","Envisioning","Imagining","Conceptualizing","Drafting","Revising",
+    "Beautifying","Harmonizing","Balancing tones","Contrasting","Highlighting","Emphasizing","Simplifying","Decluttering",
+    "Minimizing","Whitespacing","Centering","Justifying","Wrapping text","Flexing","Gridding","Stacking",
+    "Layering","Z-indexing","Transforming","Scaling","Rotating","Blurring","Shadowing","Glowing",
+    "Fading","Sliding","Bouncing","Easing","Interpolating","Morphing","Moodboarding","Gathering inspiration",
+    "Palette-picking","Font-pairing","Icon-hunting","Accessibility-checking","Contrast-testing","Localizing","Translating","RTL-mirroring",
+    "Wiring the store","Mapping routes","Memoizing","Debouncing","Throttling","Cropping","Framing","Composing a layout",
+    "Refactoring a component","Extracting a hook","Naming things","Tidying imports",
+  ],
+  backend: [
+    "Querying","Indexing","Modeling","Migrating","Validating","Authenticating","Authorizing","Encrypting",
+    "Hashing","Salting","Tokenizing","Serializing","Deserializing","Parsing","Routing","Chaining middleware",
+    "Writing a handler","Building an endpoint","Defining a schema","Mapping relations","Joining tables","Aggregating","Filtering","Sorting",
+    "Paginating","Caching","Invalidating cache","Queuing","Dispatching","Processing","Batching","Streaming",
+    "Buffering","Throttling","Rate-limiting","Retrying","Handling a fallback","Catching an error","Wrapping an exception","Logging",
+    "Tracing","Monitoring","Health-checking","Load-testing","Benchmarking","Profiling","Optimizing","Refactoring",
+    "Restructuring","Normalizing","Transacting","Committing","Rolling back","Locking","Unlocking","Synchronizing",
+    "Guarding a race condition","Handling concurrency","Atomic-updating","Checking idempotency","Seeding data","Bootstrapping","Configuring","Loading environment",
+    "Managing secrets","Pooling connections","Binding a socket","Listening on a port","Handling a request","Shaping a response","Setting headers","Configuring CORS",
+    "Forwarding a proxy","Routing the gateway","Discovering a service","Installing dependencies","Resolving packages","Pinning versions","Type-checking","Compiling",
+    "Building","Deploying","Scaling","Replicating","Sharding","Partitioning","Backing up","Restoring",
+    "Cleaning up","Garbage-collecting","Managing memory","Pooling threads","Scheduling a job","Running a cron","Handling a webhook","Emitting an event",
+    "Attaching a listener","Verifying a token",
+  ],
+  qa: [
+    "Testing","Verifying","Validating","Checking","Inspecting","Auditing","Reviewing","Scrutinizing",
+    "Probing","Poking","Prodding","Stress-testing","Load-testing","Hunting edge cases","Hunting bugs","Chasing a bug",
+    "Reproducing","Isolating","Narrowing it down","Root-causing","Diagnosing","Debugging","Tracing","Stepping through",
+    "Setting a breakpoint","Logging","Asserting","Expecting","Mocking","Stubbing","Faking","Spying",
+    "Simulating","Fuzzing","Regression-testing","Smoke-testing","Sanity-checking","Unit-testing","Integration-testing","Running end-to-end",
+    "Snapshot-testing","Visual-diffing","Measuring coverage","Checking thresholds","Hunting flakiness","Testing a race condition","Testing timing","Testing boundaries",
+    "Checking nulls","Type-checking","Validating a schema","Verifying a contract","Probing the API","Inspecting a response","Checking status codes","Checking headers",
+    "Checking a payload","Auditing accessibility","Testing a screen reader","Checking contrast","Cross-browser testing","Cross-device testing","Checking responsiveness","Testing i18n",
+    "Checking RTL","Profiling performance","Hunting a memory leak","Scanning the console","Chasing a warning","Writing a report","Gathering evidence","Capturing a screenshot",
+    "Stepping through a repro","Running triage","Ranking severity","Sorting priority","Filing a ticket","Re-running a test","Confirming a fix","Marking pass or fail",
+    "Running a checklist","Matching criteria","Comparing to spec","Observing behavior","Checking expectations","Writing an assertion","Running the test suite","Watching CI",
+    "Checking the pipeline","Verifying a build","Smoke-testing a deploy","Testing a rollback","Testing failover","Running chaos tests","Checking resilience","Checking data integrity",
+    "Verifying consistency","Comparing results",
+  ],
+  security: [
+    "Auditing","Scanning","Probing","Penetration-testing","Hunting vulnerabilities","Modeling threats","Assessing risk","Mapping attack surface",
+    "Checking an exploit","Testing injection","Checking XSS","Checking CSRF","Testing SQL injection","Checking auth bypass","Testing privilege escalation","Checking session hijacking",
+    "Validating a token","Scanning for secrets","Checking credentials","Checking password strength","Verifying a hash","Verifying encryption","Checking TLS","Validating a certificate",
+    "Checking security headers","Auditing CORS","Checking CSP","Testing rate limits","Testing brute force","Sanitizing input","Encoding output","Escaping",
+    "Checking a whitelist","Checking a blacklist","Verifying permissions","Checking access control","Verifying a role","Testing boundaries","Checking isolation","Verifying a sandbox",
+    "Scanning dependencies","Checking for CVEs","Verifying a patch","Auditing the supply chain","Checking package integrity","Verifying a signature","Scanning logs","Detecting anomalies",
+    "Checking for intrusion","Verifying a firewall rule","Scanning the network","Scanning ports","Checking exposure","Checking for data leaks","Scanning for PII","Checking compliance",
+    "Verifying policy","Hardening configuration","Checking defaults","Verifying least privilege","Checking zero trust","Verifying a backup","Testing recovery","Simulating an incident",
+    "Red-teaming","Blue-teaming","Hunting threats","Running forensics","Collecting evidence","Checking chain of custody","Writing a report","Documenting a finding",
+    "Scoring severity","Scoring CVSS","Suggesting remediation","Planning mitigation","Verifying a fix","Checking for regression","Reviewing a dependency","Checking an API key",
+    "Reviewing a header","Checking a cookie flag","Verifying same-origin","Checking a redirect","Reviewing an upload path","Checking file permissions",
+  ],
+};
+
+function randomThinkingTerm(category) {
+  const list = THINKING_TERMS[category] || THINKING_TERMS.orchestrator;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+let currentThinkingCategory = "orchestrator";
+// Set true whenever the last known moment is one where nothing is actually
+// being "thought" — waiting on the human (approval) or stuck (session limit /
+// needs attention). The rotating terms would be misleading there, so they're
+// suppressed until a real agent-start/agent-back moment resumes them.
+let thinkingPaused = false;
+const PAUSE_ON_EVENTS = new Set(["waiting-approval", "session-limit", "attention-needed", "task-done"]);
+
+function tickThinking() {
+  const dot = document.getElementById("dot");
+  const el = document.getElementById("active-thinking");
+  if (!dot.classList.contains("live") || thinkingPaused) {
+    el.textContent = "";
+    return;
+  }
+  el.textContent = randomThinkingTerm(currentThinkingCategory) + "…";
+}
+setInterval(tickThinking, 3200);
+
+// One category can cover several ring nodes (every backend service, no
+// matter its real name, is the same "backend" voice/visual category) — so
+// highlighting works by category, not by a single node key.
+// `backend` list is filled in once the real service keys are known — see
+// initDashboard(). This object is only ever a fallback anyway (the server
+// always sends explicit `data.keys` in normal operation).
+const CATEGORY_TO_KEYS = {
+  frontend: ["frontend"],
+  backend: [],
+  qa: ["qa"],
+  security: ["security"],
+  orchestrator: ["orchestrator"],
+};
+
+// event -> audio file. "agent-start"/"agent-skip" additionally key off
+// category (frontend/backend/qa/security) since those are the only ones
+// with a per-category voice line.
+const AUDIO_MAP = {
+  "orchestrator-start": "orchestrator-start.mp3",
+  "picking-next-task": "picking-next-task.mp3",
+  "task-done": "task-done.mp3",
+  "agent-back": "agent-orchestrator.mp3",
+  "session-limit": "session-limit.mp3",
+  "attention-needed": "attention-needed.mp3",
+  "waiting-approval": "agent-waiting-approval.mp3",
+  "agent-start:frontend": "agent-frontend.mp3",
+  "agent-start:backend": "agent-backend.mp3",
+  "agent-start:qa": "agent-qa.mp3",
+  "agent-start:security": "agent-security.mp3",
+  "agent-skip:frontend": "agent-frontend-skip.mp3",
+  "agent-skip:backend": "agent-backend-skip.mp3",
+  "agent-skip:qa": "agent-qa-skip.mp3",
+  "agent-skip:security": "agent-security-skip.mp3",
+};
+
+function audioFileFor(event, category) {
+  if (event === "agent-start" || event === "agent-skip") {
+    return AUDIO_MAP[`${event}:${category}`] || null;
+  }
+  return AUDIO_MAP[event] || null;
+}
+
+let soundEnabled = false;
+const audioCache = {};
+// Track whichever cue is currently playing so a new one can cut it off first.
+// Without this, waking the machine after it slept lets the browser's throttled
+// polling catch up all at once — several missed events firing back-to-back —
+// and their cues would otherwise all play on top of each other.
+let currentAudio = null;
+function playCue(fileName) {
+  if (!soundEnabled || !fileName) return;
+  if (currentAudio && !currentAudio.paused) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+  }
+  if (!audioCache[fileName]) audioCache[fileName] = new Audio(`/assets/audio/${fileName}`);
+  const audio = audioCache[fileName];
+  audio.currentTime = 0;
+  currentAudio = audio;
+  audio.play().catch(() => { /* still locked or file missing — ignore, not critical */ });
+}
+
+const soundToggleBtn = document.getElementById("sound-toggle");
+let audioUnlocked = false;
+soundToggleBtn.addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  soundToggleBtn.textContent = soundEnabled ? "🔊 Voice cues on" : "🔇 Enable voice cues";
+  if (soundEnabled && !audioUnlocked) {
+    // Play a near-silent cue synchronously inside the click handler — this is
+    // what actually unlocks autoplay in most browsers, since the permission
+    // is tied to a real user-gesture call stack, not just a boolean flag.
+    // Only needs doing once per page load, not on every re-enable.
+    audioUnlocked = true;
+    const unlock = new Audio(`/assets/audio/${AUDIO_MAP["orchestrator-start"]}`);
+    unlock.volume = 0;
+    unlock.play().catch(() => {});
+  }
+});
+
+document.getElementById("iframe-refresh").addEventListener("click", async () => {
+  const btn = document.getElementById("iframe-refresh");
+  const frame = document.getElementById("app-frame");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+  try {
+    // Server-side: no-ops if something's already answering on the frontend
+    // URL, otherwise spawns `npm run dev` for it — same check-then-spawn
+    // logic dev-loop.js runs at startup, just triggerable on demand here.
+    await fetch("/ensure-frontend", { method: "POST" });
+  } catch {
+    // Dashboard server itself unreachable — reload attempt below will just
+    // fail the same way the iframe already has; nothing more to do here.
+  }
+  // Re-assigning src (not frame.contentWindow.location.reload()) works even
+  // when the previous load failed outright ("refused to connect") — a
+  // failed load has no same-origin document to reload the other way.
+  frame.src = frame.src;
+  btn.disabled = false;
+  btn.textContent = "↻ Refresh";
+});
+
+const ring = document.getElementById("ring");
+const beams = document.getElementById("beams");
+
+// Percent-of-ring-box distances, hand-tuned and checked numerically for
+// overlap. The primary ring (frontend/backend/qa/security) sits at
+// PRIMARY_RADIUS_PCT around the orchestrator; the 4 backend-service badges
+// fan out from the backend hub at SATELLITE_RADIUS_PCT.
+const PRIMARY_RADIUS_PCT = 36;
+// The backend hub sits closer in than the other 3 primary nodes — pulling it
+// in is the only way its 4-badge satellite cluster has room to exist without
+// running off the box edge (verified numerically, not just eyeballed).
+const HUB_RADIUS_PCT = 33.5;
+const SATELLITE_RADIUS_PCT = 18;
+// Must match .node.satellite's width in the <style> above.
+const SATELLITE_NODE_PX = 52;
+
+function pointAt(cx, cy, radiusPct, angleDeg) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + radiusPct * Math.cos(rad), y: cy + radiusPct * Math.sin(rad) };
+}
+
+function makeNode(agent, pos, isCenter, isSatellite) {
+  const el = document.createElement("div");
+  el.className = "node" + (isCenter ? " center" : "") + (isSatellite ? " satellite" : "");
+  el.dataset.agent = agent.key;
+  el.style.left = pos.x + "%";
+  el.style.top = pos.y + "%";
+  const iconHtml = agent.img
+    ? `<img class="icon-img" src="/assets/images/${agent.img}" alt="${agent.name}" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'icon', textContent: '${agent.icon}'}))">`
+    : agent.icon
+      ? `<div class="icon">${agent.icon}</div>`
+      : "";
+  el.innerHTML = `${iconHtml}<div class="name">${agent.ringLabel || agent.name}</div>`;
+  ring.appendChild(el);
+  return el;
+}
+
+// Shifted left of true-center (not 50) — the only way to buy the backend
+// cluster more room on the right without shrinking the orchestrator-backend
+// gap. Checked numerically: 46.5 is the most it can shift before "security"
+// on the left starts clipping the box edge.
+const centerPos = { x: 46.5, y: 50 };
+makeNode(CENTER, centerPos, true, false);
+
+function makeBeam(key, from, to) {
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("class", "beam");
+  line.setAttribute("id", "beam-" + key);
+  line.setAttribute("x1", from.x + "%");
+  line.setAttribute("y1", from.y + "%");
+  line.setAttribute("x2", to.x + "%");
+  line.setAttribute("y2", to.y + "%");
+  beams.appendChild(line);
+}
+
+const nodePositions = {};
+let ALL_KEYS = ["orchestrator", ...AGENTS.map((a) => a.key)];
+let BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map((a) => [a.key, a]));
+
+// Angle spacing between adjacent satellites — verified numerically for the
+// 4-service case (offsets end up -120/-40/40/120, matching the layout this
+// was hand-tuned against). Holds up reasonably for 1-4 services; a project
+// with 5+ backend services will need this re-checked for overlap, since the
+// satellites would start wrapping back around toward the primary ring.
+const SATELLITE_ANGLE_STEP = 80;
+
+// Fetches this project's actual backend-service list from the server (see
+// the /status.json route in dev-loop.js, which injects `services` fresh
+// from a live backend/ directory scan) and builds the ring around whatever
+// that turns out to be — no service list hardcoded client-side.
+async function initDashboard() {
+  let services = [];
+  try {
+    const res = await fetch("/status.json", { cache: "no-store" });
+    const data = await res.json();
+    services = Array.isArray(data.services) ? data.services : [];
+  } catch {
+    // Dashboard server not reachable yet — ring just stays empty (backend
+    // hub with no satellites) until a later poll() successfully retries.
+  }
+
+  BACKEND_SERVICES = services.map((key, i, arr) => ({
+    key,
+    angleOffset: (i - (arr.length - 1) / 2) * SATELLITE_ANGLE_STEP,
+    name: key,
+    ringLabel: serviceRingLabel(key),
+    // One shared generic portrait for every backend service, same idea as
+    // the hub's own backend-agent.png — no per-service artwork needed.
+    img: "micro-service-agent1.png",
+  }));
+  AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
+  CATEGORY_TO_KEYS.backend = BACKEND_SERVICES.map((s) => s.key);
+  ALL_KEYS = ["orchestrator", ...AGENTS.map((a) => a.key)];
+  BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map((a) => [a.key, a]));
+
+  PRIMARY_AGENTS.forEach((agent) => {
+    const radius = agent.key === "backend" ? HUB_RADIUS_PCT : PRIMARY_RADIUS_PCT;
+    const pos = pointAt(centerPos.x, centerPos.y, radius, agent.angle);
+    nodePositions[agent.key] = pos;
+    makeNode(agent, pos, false, false);
+    makeBeam(agent.key, centerPos, pos);
+  });
+
+  const hubPos = nodePositions["backend"];
+  const hubAngle = PRIMARY_AGENTS.find((a) => a.key === "backend").angle;
+  BACKEND_SERVICES.forEach((agent) => {
+    const pos = pointAt(hubPos.x, hubPos.y, SATELLITE_RADIUS_PCT, hubAngle + agent.angleOffset);
+    nodePositions[agent.key] = pos;
+    makeNode(agent, pos, false, true);
+    makeBeam(agent.key, hubPos, pos);
+  });
+}
+
+// `keys` is the exact set of ring nodes to light up (from the server's
+// `data.keys`) — NOT every node in the category. A task usually only has
+// one or two backend services actually in scope; lighting up all four just
+// because the category is "backend" would visually claim work is happening
+// somewhere it isn't. `category` still drives which voice cue plays and
+// which color the glow uses — only the "which nodes glow" question is keys-based.
+function setActiveCategory(category, keys) {
+  currentThinkingCategory = category || "orchestrator";
+  const activeKeys = new Set(keys && keys.length ? keys : (CATEGORY_TO_KEYS[category] || []));
+  // The hub is a pure category node (not a real running service) — light it
+  // up in step with whichever specific backend service is actually active,
+  // so the orchestrator→backend beam and hub glow track real work too.
+  if (BACKEND_SERVICES.some((s) => activeKeys.has(s.key))) activeKeys.add("backend");
+  ALL_KEYS.forEach((key) => {
+    const isActive = activeKeys.has(key);
+    const node = document.querySelector('.node[data-agent="' + key + '"]');
+    if (node) node.classList.toggle("active", isActive);
+    const beam = document.getElementById("beam-" + key);
+    if (beam) beam.classList.toggle("active", isActive);
+  });
+
+  // Label shows the first actually-active node's identity — accurate even
+  // for "backend", where that's now whichever specific service(s) are
+  // really in scope, not a generic stand-in.
+  const repKey = activeKeys.size ? [...activeKeys][0] : category;
+  const info = BY_KEY[repKey] || { icon: "🤖", img: null, name: category || "idle" };
+  const iconImg = document.getElementById("active-icon-img");
+  if (info.img) iconImg.src = `/assets/images/${info.img}`;
+  document.getElementById("active-name").textContent = activeKeys.size > 1 ? `${info.name} +${activeKeys.size - 1}` : info.name;
+}
+
+let lastSeq = 0;
+
+async function poll() {
+  const dot = document.getElementById("dot");
+  try {
+    const res = await fetch("/status.json", { cache: "no-store" });
+    const data = await res.json();
+    dot.classList.add("live");
+
+    // Live text/highlight — refreshed by every output line, tracks who's
+    // talking right now.
+    const category = data.category || "orchestrator";
+    setActiveCategory(category, data.keys);
+    thinkingPaused = !!(data.lastEvent && PAUSE_ON_EVENTS.has(data.lastEvent.event));
+    document.getElementById("active-message").textContent = data.message || "…";
+    document.getElementById("active-updated").textContent = data.updatedAt
+      ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
+      : "";
+
+    // "N of M" as a small badge, plus the task name filling the rest of the
+    // line — the label's own CSS truncates it with an ellipsis if it's long.
+    const progressText = data.taskProgress && data.taskProgress.current
+      ? `${data.taskProgress.current}/${data.taskProgress.total}`
+      : "";
+    document.getElementById("status-progress").textContent = progressText;
+    document.getElementById("status-task-name").textContent = data.task || "";
+
+    // Audio cue — driven ONLY by `lastEvent`, which routine output can never
+    // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely
+    // NEW event (seq increased since the last poll) plays — re-fetching the
+    // same still-current event on the next poll must never replay its sound.
+    // While muted, `lastSeq` must NOT advance past an unplayed event — only
+    // the very first poll after page load (lastSeq === 0) gets baselined so
+    // we don't dump the whole history the moment sound is enabled. Any event
+    // that arrives while still muted stays "unseen" and plays as soon as the
+    // user clicks enable, instead of being silently lost.
+    const evt = data.lastEvent;
+    if (evt && evt.seq !== lastSeq) {
+      if (soundEnabled) {
+        lastSeq = evt.seq;
+        playCue(audioFileFor(evt.event, evt.category));
+      } else if (lastSeq === 0) {
+        lastSeq = evt.seq;
+      }
+    }
+
+  } catch {
+    dot.classList.remove("live");
+  }
+
+  // Task-history data is fetched straight from its own file under docs/cost/
+  // (a generic static route in dev-loop.js, not a shaped /status.json field)
+  // — so changing what's shown here, or the file's own shape, never needs a
+  // dev-loop.js restart again; only this page needs to reload. Kept in its
+  // own try/catch so a hiccup here never breaks the live-status half above.
+  try {
+    const historyRes = await fetch("/docs/cost/task-history.json", { cache: "no-store" });
+    const history = historyRes.ok ? await historyRes.json() : [];
+    renderHistory(Array.isArray(history) ? history.slice(-30).reverse() : []);
+  } catch {
+    // Files not written yet (nothing completed this run) — leave whatever
+    // was last rendered (or the initial empty state) as-is.
+  }
+}
+
+function renderHistory(history) {
+  const tbody = document.getElementById("history-tbody");
+  if (!history.length) {
+    tbody.innerHTML = '<tr><td colspan="2" id="history-empty">No completed tasks yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = history.map((h) => `
+    <tr>
+      <td title="${h.task}">${h.task}</td>
+      <td>${h.totalCostUsd.toFixed(4)}</td>
+    </tr>
+  `).join("");
+}
+
+setActiveCategory("orchestrator");
+initDashboard().finally(() => {
+  poll();
+  setInterval(poll, 1000);
+});
+</script>
+</body>
+</html>

@@ -76,7 +76,7 @@ Once you have enough of the picture, summarize it back in 3-5 bullet points and 
 ## How to ask a question — applies everywhere in this document
 Every question this process asks — in Part 1, in a Phase 0 interview, in a Phase A/B/C/D/E clarifying round — follows the same two rules, no exceptions:
 1. **One question per turn.** Never ask two or more questions in the same message, even if they're related or short. Get an answer, then ask the next one. This applies even where earlier instructions in this document say "ask 2-4 questions at a time" or similar — those are superseded by this rule.
-2. **Use a structured question/choice prompt, not conversational prose.** If the agent running this process has a dedicated question-asking tool (e.g. Claude Code's `AskUserQuestion`, or an equivalent choice/text-input mechanism), use it for every question — free-text questions use its text-input form, multiple-choice questions (e.g. "Tailwind or SCSS?", "gated or ungated?") use its option-list form. Only fall back to plain conversational text if no such tool is available to the running agent at all.
+2. **Use a structured choice prompt for questions that genuinely have a small set of reasonable answers** (e.g. "Tailwind or SCSS?", "gated or ungated?", "DEFAULT / SKIP / provide your own"). If the running agent has a dedicated tool for this (e.g. Claude Code's `AskUserQuestion`), use it — note that such tools require real, meaningful options (typically 2-4), with free text as a fallback escape hatch alongside them, not as a mode of their own. **Genuinely open-ended questions with no natural set of options** (e.g. "what is the app?", "what's the product name?") do NOT belong in a choice prompt — forcing one into fake/placeholder options just to use the tool is worse than plain conversational text. Ask those as normal chat text.
 
 This changes *how* every question in this document gets asked, not *what* gets asked or *when* — the question content, order, and phase sequencing described elsewhere are unaffected.
 
@@ -142,11 +142,13 @@ The worked example in each template is a starting point, not a contract. If the 
     ```json
     {
       "autoApprovePlans": false,
+      "autoMergeTasks": false,
       "linearEnabled": true,
       "designSource": "NONE"
     }
     ```
     - `autoApprovePlans` — `true` if Approval mode was answered "ungated" (see that section), `false` if "gated". `development/dev-loop.js` also self-adopts this from `.setup-progress.md` on its own first run if this key is still `false`/missing, so getting it right here isn't strictly load-bearing — but don't leave it unset if the answer is already known.
+    - `autoMergeTasks` — deliberately **separate** from `autoApprovePlans`, not derived from Approval mode. Always defaults to `false` (always ask before merging a finished task branch into the base branch) unless the user explicitly asks for automatic merging during setup — merging into the branch the human is actually sitting on is a distinct, higher-stakes decision than plan/feature approval, so it never inherits "ungated" implicitly.
     - `linearEnabled` — `true`/`false` matching whether Linear is the issue tracker (Q9).
     - `designSource` — `"FIGMA"` / `"AISTUDIO"` / `"NONE"` matching Q9's design-source branch exactly, not left as a placeholder.
     This file is plain, committed JSON — deliberately not an env file, since none of these three values are secrets or read by the product's own runtime code, only by the orchestrator script.

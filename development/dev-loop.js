@@ -937,6 +937,27 @@ function checkPrerequisites() {
   }
 }
 
+// Whether to branch per task at all is asked fresh EVERY run (not a fixed
+// orchestrator.config.json setting like the other gates) — the whole point
+// is that the right answer genuinely varies session to session (a batch of
+// small/related tasks vs. real feature work needing its own review/merge
+// step), not something worth locking in once during setup. A CLI flag/env
+// var can still skip the prompt for a non-interactive/automated run.
+async function resolveCreateBranchPerTask() {
+  const rawOverride = process.env.CREATE_BRANCH_PER_TASK ?? getArg("--create-branch-per-task")
+  if (rawOverride != null) {
+    const value = /^(1|true|yes)$/i.test(rawOverride)
+    log(`Branch-per-task: ${value ? "on" : "off"} (from CLI/env override — not asked).`)
+    return value
+  }
+  const answer = await askUserInput(
+    "Create a separate git branch per task this run, merged back only after your approval? " +
+      "(Y = yes, per-task branch — the usual behavior; n = commit every task directly onto the base branch, no per-task branch or merge step) [Y/n]: ",
+  )
+  const normalized = answer.trim().toLowerCase()
+  return normalized !== "n" && normalized !== "no"
+}
+
 async function main() {
   checkPrerequisites()
   acquireLock()
@@ -947,7 +968,13 @@ async function main() {
   emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
-  log(`Base branch: '${BASE_BRANCH}' — every task branches from here and merges back here, only after your approval.`)
+  const CREATE_BRANCH_PER_TASK = await resolveCreateBranchPerTask()
+  log(
+    `Base branch: '${BASE_BRANCH}'` +
+      (CREATE_BRANCH_PER_TASK
+        ? " — every task branches from here and merges back here, only after your approval."
+        : " — tasks commit directly onto this branch, no per-task branch/merge this run.")
+  )
 
   USD_TO_NIS = await fetchUsdToNis()
   log(`Exchange rate: 1 USD = ₪${USD_TO_NIS} (ILS)`)
@@ -1010,8 +1037,15 @@ async function main() {
       ? ""
       : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ")
 
-    const branchName = `${BASE_BRANCH}-tasks/${task.slug}`
-    createGitBranch(branchName, BASE_BRANCH)
+    const branchName = CREATE_BRANCH_PER_TASK ? `${BASE_BRANCH}-tasks/${task.slug}` : BASE_BRANCH
+    if (CREATE_BRANCH_PER_TASK) {
+      createGitBranch(branchName, BASE_BRANCH)
+    } else if (execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim() !== BASE_BRANCH) {
+      // Only relevant right after a run with branching ON left a task branch
+      // checked out — get back onto the base branch before working directly
+      // on it this time.
+      execSync(`git checkout ${BASE_BRANCH}`, { stdio: "inherit" })
+    }
 
     let planPath
     if (planResumable) {
@@ -2236,6 +2270,13 @@ function commitCostArtifacts(task, baseBranch) {
 // explicit APPROVED from the human. main/master can never be a merge target
 // here — getBaseBranch() already refused to run if that were the case.
 async function pushAndMergeTaskBranch(task, branch, baseBranch) {
+  if (branch === baseBranch) {
+    // CREATE_BRANCH_PER_TASK was off for this run — the task's commit
+    // already landed directly on baseBranch (commitTaskChanges did that),
+    // so there is nothing to push or merge here at all.
+    log(`No separate task branch was used — '${task.title}' is already committed directly on '${baseBranch}'.`)
+    return
+  }
   if (AUTO_MERGE_TASKS) {
     log(`Merge gate: AUTO_MERGE_TASKS is on — merging '${branch}' into '${baseBranch}' automatically, no terminal wait.`)
   } else {

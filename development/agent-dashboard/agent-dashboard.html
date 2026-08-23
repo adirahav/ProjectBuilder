@@ -590,6 +590,20 @@ let BY_KEY = Object.fromEntries([CENTER, ...AGENTS].map((a) => [a.key, a]));
 // satellites would start wrapping back around toward the primary ring.
 const SATELLITE_ANGLE_STEP = 80;
 
+// 13 generic backend-service portrait variants, assigned one-per-service
+// (see initDashboard() below) so a project with several services doesn't
+// show the same face on every satellite badge.
+const MICRO_SERVICE_PORTRAITS = Array.from({ length: 13 }, (_, i) => `micro-service-agent${i + 1}.png`);
+
+function shuffle(arr) {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 // Fetches this project's actual backend-service list from the server (see
 // the /status.json route in dev-loop.js, which injects `services` fresh
 // from a live backend/ directory scan) and builds the ring around whatever
@@ -605,14 +619,16 @@ async function initDashboard() {
     // hub with no satellites) until a later poll() successfully retries.
   }
 
+  // 13 generic portrait variants — shuffled once here so each backend
+  // service gets a visually distinct one (no repeats, up to 13 services;
+  // cycles gracefully rather than crashing if a project somehow has more).
+  const shuffledPortraits = shuffle(MICRO_SERVICE_PORTRAITS);
   BACKEND_SERVICES = services.map((key, i, arr) => ({
     key,
     angleOffset: (i - (arr.length - 1) / 2) * SATELLITE_ANGLE_STEP,
     name: key,
     ringLabel: serviceRingLabel(key),
-    // One shared generic portrait for every backend service, same idea as
-    // the hub's own backend-agent.png — no per-service artwork needed.
-    img: "micro-service-agent1.png",
+    img: shuffledPortraits[i % shuffledPortraits.length],
   }));
   AGENTS = [...PRIMARY_AGENTS, ...BACKEND_SERVICES];
   CATEGORY_TO_KEYS.backend = BACKEND_SERVICES.map((s) => s.key);

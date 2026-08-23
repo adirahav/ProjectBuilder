@@ -1,0 +1,7 @@
+{
+  "autoApprovePlans": true,
+  "autoMergeTasks": false,
+  "autoApproveDesign": false,
+  "linearEnabled": false,
+  "designSource": "DESIGNER_AGENT"
+}

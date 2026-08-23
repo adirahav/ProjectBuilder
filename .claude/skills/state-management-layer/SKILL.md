@@ -6,19 +6,11 @@ references:
   - @api-layer/SKILL.md
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{FEATURE_SLICES}}       — list of feature slices, e.g. auth, app, tour, bus, seat
-  {{HIGH_CONTENTION_SLICE}} — a slice needing single-source-of-truth treatment due to concurrent writers, if any
-  {{SPECIAL_ERROR_CODE}}   — a domain-specific conflict status code, if any
-Ask the user: "What are your app's main feature domains/slices?" "Any slice needing single-source-of-truth treatment due to concurrent writers (e.g. a live/real-time view)?"
--->
-
 # Zustand Slices Architecture Guidelines
 *Goal:* Maintain a "Single Source of Truth" by organizing the application state into scalable, feature-based slices, combined into a unified store.
 
 **Core Principles:**
-- **Modular Slices:** Each feature ({{FEATURE_SLICES}}) must have its own dedicated slice file.
+- **Modular Slices:** Each feature (`auth`, `tour`, `bus`, `busType`, `seat`, `manifest`, `app`) must have its own dedicated slice file.
 - **StateCreator Pattern:** Slices are defined as functions that receive `set` and `get`.
 - **Atomic Updates:** Define clear, predictable actions within the slice to update the state.
 - **No Direct Mutations:** Use Zustand's functional updates to ensure immutability.
@@ -31,8 +23,12 @@ Ask the user: "What are your app's main feature domains/slices?" "Any slice need
 frontend/src/store/
 ├── slices/
 │   ├── app.slice.ts       # Global UI/App state
-│   ├── auth.slice.ts      # Authentication state
-│   ├── <feature>.slice.ts # One per entry in {{FEATURE_SLICES}}
+│   ├── auth.slice.ts      # Authentication state (loggedinUser: Admin | null, token)
+│   ├── tour.slice.ts      # Tour list/selected tour
+│   ├── bus.slice.ts       # Bus list/selected bus, pickupPoints
+│   ├── busType.slice.ts   # Bus-type templates
+│   ├── seat.slice.ts      # Live seat map — the high-contention slice, see below
+│   ├── manifest.slice.ts  # Passenger manifest report (filtered/searched view)
 └── store.ts               # Root Store (Unified Hook)
 
 ## Slice Pattern (The "Slices" Way)
@@ -66,13 +62,23 @@ export const createFeatureSlice: StateCreator<RootState, [], [], FeatureSlice> =
 import { create } from 'zustand'
 import { createAuthSlice, AuthSlice } from './slices/auth.slice'
 import { createAppSlice, AppSlice } from './slices/app.slice'
+import { createTourSlice, TourSlice } from './slices/tour.slice'
+import { createBusSlice, BusSlice } from './slices/bus.slice'
+import { createBusTypeSlice, BusTypeSlice } from './slices/busType.slice'
+import { createSeatSlice, SeatSlice } from './slices/seat.slice'
+import { createManifestSlice, ManifestSlice } from './slices/manifest.slice'
 
-// Combined Type — add one member per slice in {{FEATURE_SLICES}}
-export type RootState = AuthSlice & AppSlice
+// Combined Type — one member per feature slice
+export type RootState = AuthSlice & AppSlice & TourSlice & BusSlice & BusTypeSlice & SeatSlice & ManifestSlice
 
 export const useStore = create<RootState>((...a) => ({
   ...createAuthSlice(...a),
   ...createAppSlice(...a),
+  ...createTourSlice(...a),
+  ...createBusSlice(...a),
+  ...createBusTypeSlice(...a),
+  ...createSeatSlice(...a),
+  ...createManifestSlice(...a),
 }))
 
 // Usage in components:
@@ -86,10 +92,10 @@ export const useStore = create<RootState>((...a) => ({
 
 - For global state persistence, use Zustand's `persist` middleware only where strictly necessary.
 
-## High-Contention Slice — Single Source of Truth (fill in if applicable)
-`{{HIGH_CONTENTION_SLICE}}` is a slice with an extra rule: since its state can change from multiple directions at once (e.g. concurrent user actions and admin actions), it must be kept as the single source of truth, not re-derived locally inside components that display it.
-- Every service call that changes this state (success or conflict) must update the slice directly — components read from the slice, they never keep a parallel local copy.
-- On a `{{SPECIAL_ERROR_CODE}}` conflict response, re-sync the affected record(s) in the slice from the server's latest response rather than leaving stale local state.
+## High-Contention Slice — Single Source of Truth
+`seat.slice.ts` is the one slice with an extra rule: since the live seat map can change from multiple directions at once (a passenger's request, an admin's approve/cancel/toggle-reserve/manual-assign/swap-move, or another passenger racing for the same seat), it must be kept as the single source of truth, not re-derived locally inside components that display it — both the Passenger View's seat map and the Admin Dashboard's Seat Management tab read from the same slice.
+- Every service call that changes seat state (success or `409` conflict) must update `seat.slice.ts` directly — components read from the slice, they never keep a parallel local copy.
+- On a `409` conflict response, re-sync the affected seat(s) in `seat.slice.ts` from the server's latest response rather than leaving stale local state.
 
 ## Utility Functions (frontend/src/services/util.service.ts)
 Keep utilities pure. Use Capacitor-aware storage helpers for cross-platform compatibility.
@@ -125,4 +131,4 @@ export const utilService = {
 
 - *Naming Convention:* Slices should be named `create[Feature]Slice`.
 
-- *Backend Sync:* Pass fields through to services as-is if the backend's field casing already matches the frontend's convention — no transformation layer needed unless the contracts diverge.
+- *Backend Sync:* Pass fields through to services as-is — the backend's camelCase field naming already matches the frontend's convention, no transformation layer needed.

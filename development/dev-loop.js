@@ -2,15 +2,19 @@
 /**
  * Dev Loop Orchestrator
  *
- * This repo is a monorepo: `frontend/` + `backend/`, with one subfolder per
- * backend service (currently `api-gateway`, `booking-service`,
- * `user-service`, `notification-service` — discovered at runtime from
- * each backend/<service>/package.json, see `discoverBackendServices()` below, not
+ * This repo (Hila Tours) is a monorepo: `frontend/` + `backend/`, with one
+ * subfolder per backend service (currently `tour-service` and
+ * `user-management-service` — no gateway — discovered at runtime from each
+ * backend/<service>/package.json, see `discoverBackendServices()` below, not
  * hardcoded here). All backend services are built and run via
  * `agents/backend/CLAUDE.md` (one shared prompt, parameterized per service).
- * There is no external design source — the Frontend Agent designs the UI
- * itself per `.rule/style-rules.md`. There is no issue tracker; task approval
- * happens entirely through local plan files and terminal/chat approval gates.
+ * Design source is the Designer agent (orchestrator.config.json's
+ * designSource: "DESIGNER_AGENT") — it establishes the visual system and key
+ * mockups once, before the first backlog task; the Frontend Agent then builds
+ * screens against those mockups plus `.rule/style-rules.md`. There is no
+ * issue tracker (Linear is disabled — orchestrator.config.json's
+ * linearEnabled: false); task approval happens entirely through local plan
+ * files and terminal/chat approval gates.
  *
  * Loop per backlog item:
  *   1) Pick next task from .plan/000-backlog.md

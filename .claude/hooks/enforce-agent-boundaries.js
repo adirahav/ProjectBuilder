@@ -2,31 +2,25 @@
 // Orchestrator runs (no CLAUDE_AGENT_ROLE set) and interactive sessions are
 // left unrestricted by this hook on purpose.
 //
-// TEMPLATE — only relevant if Part 1 Q9 says this project uses the
-// multi-agent build workflow (agents/*/CLAUDE.md). If single-agent, this
-// whole file (and its wiring in .claude/settings.json) should be deleted
-// along with the agents/ directory.
-// ALLOWED_WRITE_PREFIXES below encodes two things from Part 1:
-//   - one entry per agent role actually used (Q9) — drop roles that don't apply.
-//   - each role's prefixes must match the real backend topology (Q7): a single
-//     backend/ folder for a monolith, or one prefix per microservice directory
-//     (e.g. 'backend/user-management-service/') if multiple services exist,
-//     so a backend agent scoped to one service can't write into another's.
-// Ask the user: "What are the final agent roles and their exact write-scoped directories?"
-// Delete this comment block once confirmed.
+// Hila Tours — multi-agent build workflow (agents/*/CLAUDE.md). Backend is
+// two microservices, no gateway: tour-service and user-management-service.
+// development/dev-loop.js sets CLAUDE_AGENT_ROLE to the real backend service
+// key (e.g. "tour-service") when spawning a backend agent — not a generic
+// "backend" role — so each service gets its own entry here, scoped only to
+// its own directory, so a backend agent working on one service can't write
+// into the other's. Designer agent is used (designSource: DESIGNER_AGENT),
+// so it keeps its own entry too.
 
 import path from 'node:path'
 
 const ALLOWED_WRITE_PREFIXES = {
-  orchestrator:          ['.plan/'],
-  // Only present if Part 1 Q9's design source is "Designer agent" — drop
-  // this entry (and delete agents/designer/) otherwise, per that file's own
-  // TEMPLATE comment block.
-  designer:              ['docs/design/'],
-  frontend:              ['frontend/', 'docs/api-contract/', 'docs/agent-reports/'],
-  backend:               ['backend/', 'docs/agent-reports/'],
-  qa:                    ['docs/agent-reports/'],
-  security:              ['docs/tests/security/', 'docs/agent-reports/'],
+  orchestrator:               ['.plan/'],
+  designer:                   ['docs/design/'],
+  frontend:                   ['frontend/', 'docs/api-contract/', 'docs/agent-reports/'],
+  'tour-service':             ['backend/tour-service/', 'docs/agent-reports/'],
+  'user-management-service':  ['backend/user-management-service/', 'docs/agent-reports/'],
+  qa:                         ['docs/agent-reports/'],
+  security:                   ['docs/tests/security/', 'docs/agent-reports/'],
 }
 
 let input = ''

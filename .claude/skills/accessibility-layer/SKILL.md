@@ -6,22 +6,11 @@ references:
   - @css-layer/SKILL.md
 examples:
    - input: "Create a functional icon button for closing a modal"
-     output: "<button onClick={onClose} className={cn('p-2 hover:bg-slate-100 rounded-full transition-colors')} aria-label='{{CLOSE_LABEL_TEXT}}' title='{{CLOSE_LABEL_TEXT}}'><X size={20} aria-hidden='true' /></button>"
+     output: "<button onClick={onClose} className={cn('p-2 hover:bg-slate-100 rounded-full transition-colors')} aria-label='סגור' title='סגור'><X size={20} aria-hidden='true' /></button>"
 ---
 
-<!--
-TEMPLATE — fill during project setup. Placeholders used in this file:
-  {{PROJECT_NAME}}          — the app's name
-  {{RTL_OR_LTR}}            — "RTL (Hebrew)" / "LTR" / "bidirectional"
-  {{PRIMARY_LANGUAGE}}      — e.g. Hebrew, English
-  {{MULTI_STATE_ENTITY}}    — a domain entity with a visual multi-state status (e.g. seat/order/ticket), if any — omit section 3b if none
-  {{STATUS_VALUES}}         — the entity's status enum (e.g. available/pending/taken)
-  {{KEY_FORMS_LIST}}        — the app's main forms needing aria-describedby error association
-Ask the user: "Is this app RTL or LTR (or both)?" / "Does any entity have a multi-state visual status that needs non-color cues?" / "What are the main forms in the app?"
--->
-
 # Accessibility & Inclusive Design Layer (A11y)
-*Objective:* Build digital experiences that are perceivable, operable, understandable, and robust for all users. This layer ensures {{PROJECT_NAME}} is not just "compliant" but truly inclusive by design.
+*Objective:* Build digital experiences that are perceivable, operable, understandable, and robust for all users. This layer ensures Hila Tours is not just "compliant" but truly inclusive by design.
 
 **Key Focus Areas:**
 - *WCAG 2.1 Level AA:* Strict adherence to color contrast (4.5:1), text scaling, and focus indicators.
@@ -48,33 +37,33 @@ Ask the user: "Is this app RTL or LTR (or both)?" / "Does any entity have a mult
 
 - *Skip Links:* Implement a "Skip to Content" link for keyboard users to bypass navigation.
 
-- *Modals & Dialogs:* Must implement focus trapping (focus stays inside the modal) and close on `Esc` key. Use `role="dialog"` and `aria-modal="true"`.
+- *Modals & Dialogs:* Must implement focus trapping (focus stays inside the modal) and close on `Esc` key. Use `role="dialog"` and `aria-modal="true"`. Applies to the admin login modal, the seat-request modal, and the manual-assign/swap-move modal.
 
 ### 3. Visual & Cognitive Inclusion
 - *Contrast Ratios:* Text-to-background contrast must meet a minimum of 4.5:1. Use tools to verify color combinations.
 
 - *No Color-Only Cues:* Information must not be conveyed by color alone (e.g., an error should have an icon or text, not just red color).
 
-- *Multi-State Entity ({{PROJECT_NAME}}-specific — fill in if applicable):* If a domain entity like `{{MULTI_STATE_ENTITY}}` has a `status` (`{{STATUS_VALUES}}`), it must never rely on color alone. Each status should carry a distinct icon plus a text label reachable via tooltip/`aria-label`, so the UI is usable by colorblind users and in grayscale/high-contrast display modes.
+- *Multi-State Entity (Hila Tours-specific):* `seat`'s `seatStatus` (`available`/`pending`/`taken`/`reserved`) must never rely on color alone. Each status carries a distinct icon plus a text label reachable via tooltip/`aria-label`, so the seat map is usable by colorblind users and in grayscale/high-contrast display modes — this is a hard PRD requirement (AC-3, AC-17), not a nice-to-have.
 
 - *Text Scaling:* Ensure layout remains functional when font size is increased by 200% via the Accessibility Menu or browser settings.
 
 ### 4. ARIA & Screen Reader Mastery
-- *Aria-Labels:* Every icon-only button must have a descriptive, hardcoded `aria-label` in `{{PRIMARY_LANGUAGE}}` (unless the project has a translation/phrase layer — see `ui-component-layer` skill).
+- *Aria-Labels:* Every icon-only button must have a descriptive, hardcoded `aria-label` in Hebrew (no translation/phrase layer in this project — see `ui-component-layer` skill).
 
 - *Aria-Hidden:* Decorative icons and images that do not add information must have `aria-hidden="true"` to reduce screen reader noise.
 
-- *Live Regions:* Use `aria-live="polite"` for dynamic content updates (loading states, toasts, real-time status changes) so screen readers announce changes without the user needing to re-navigate.
+- *Live Regions:* Use `aria-live="polite"` for dynamic content updates (loading states, toasts, real-time seat-status changes on the seat map) so screen readers announce changes without the user needing to re-navigate.
 
-- *Error Association:* Every inline validation error must be linked to its input via `aria-describedby`, so screen readers announce the error when the field receives focus — not only when it's visually next to the field. Applies to every form in the app: {{KEY_FORMS_LIST}}.
+- *Error Association:* Every inline validation error must be linked to its input via `aria-describedby`, so screen readers announce the error when the field receives focus — not only when it's visually next to the field. Applies to every form in the app: the Admin Login modal, the Admin Signup page, the Seat Request modal (name/phone/pickup point), and the Manual Assign / Move / Swap modal.
 
 ### 5. Motion Sensitivity
-- *Respect `prefers-reduced-motion`:* When set, disable or drastically reduce animation-library transitions in favor of instant state changes. Motion must never be the only signal that a change occurred; it's an enhancement, not a requirement, for perceiving the update.
+- *Respect `prefers-reduced-motion`:* When set, disable or drastically reduce animation-library transitions in favor of instant state changes (e.g. a seat's color-flash when it moves to `pending`/`taken`). Motion must never be the only signal that a change occurred; it's an enhancement, not a requirement, for perceiving the update.
 
-### 6. Directional Accessibility ({{RTL_OR_LTR}})
-- *Directional Clarity:* Ensure the reading order for screen readers follows the {{RTL_OR_LTR}} flow.
+### 6. Directional Accessibility (RTL)
+- *Directional Clarity:* Ensure the reading order for screen readers follows the RTL flow — the entire app is Hebrew/RTL, with the sole exception of `SeatMap`'s internal spatial layout (see `css-layer`), which is a visual/physical diagram, not reading content, so its DOM reading order should still make sense sequentially even though it renders `dir="ltr"`.
 
-- *Logical Mapping:* Focus order must follow the visual flow for the project's primary direction.
+- *Logical Mapping:* Focus order must follow the visual flow for RTL.
 
 ## Implementation Checklist
 - [ ] Element uses semantic tag (`<button>`, `<section>`, etc.).
@@ -83,14 +72,14 @@ Ask the user: "Is this app RTL or LTR (or both)?" / "Does any entity have a mult
 
 - [ ] Color contrast is verified for all background/foreground pairs.
 
-- [ ] All icon-only actions have descriptive `aria-label` strings.
+- [ ] All icon-only actions have descriptive Hebrew `aria-label` strings.
 
 - [ ] Logical `Tab` order is maintained.
 
-- [ ] Any multi-state entity status is conveyed via icon/label in addition to color, not color alone.
+- [ ] Every `seatStatus` is conveyed via icon/label in addition to color, not color alone.
 
-- [ ] Real-time status changes are announced via an `aria-live="polite"` region.
+- [ ] Real-time seat-status changes are announced via an `aria-live="polite"` region.
 
-- [ ] Inline form errors are linked to their input via `aria-describedby`.
+- [ ] Inline form errors (login, signup, seat request, manual-assign/swap-move) are linked to their input via `aria-describedby`.
 
 - [ ] Animations respect `prefers-reduced-motion` and are never the sole signal of a state change.

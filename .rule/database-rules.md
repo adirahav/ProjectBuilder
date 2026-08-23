@@ -1,55 +1,94 @@
 # Database Rules
 
-<!--
-TEMPLATE — fill during project setup. Placeholders:
-  {{PROJECT_NAME}}, {{SERVICES_AND_PORTS}}, {{ENTITIES}}, {{MODEL_OWNERSHIP}}
-  {{ROLE_NAME}}, {{ROLES_LIST}}, {{PERMISSION_KEYS}} — if RBAC is used
-  {{CONTESTED_ENTITY}}, {{STATUS_VALUES}}, {{STATUS_TRANSITIONS}} — if a contested entity exists
-  {{REQUIRED_INDEXES}}
-Ask the user: "What are your core data entities and their key fields?" "Is there a stateful/contested entity requiring atomic concurrency-safe transitions?" "Do you need role-based permissions, or a simpler auth model?"
-Delete this comment block once filled.
--->
-
 ## Purpose
 - Define database source-of-truth expectations, migration behavior, and bootstrap guidance.
-- Project: {{PROJECT_NAME}} — one-line description of the domain.
+- Project: Hila Tours — a real-time tour-bus seat-booking management system for passengers and admins.
 
 ## Source of Truth
 - Mongoose models are the source of truth for collection structure and validation.
-- `api/scripts/seed.ts` (per-service, run via `npm run seed`) is a standalone bootstrap script: idempotent upserts of reference data (e.g. roles/permissions, if used). It never touches core business-entity data.
+- `api/scripts/seed.ts` (per-service, run via `npm run seed`) is a standalone bootstrap script: idempotent upserts of reference data (e.g. a default `busType`, if used). It never touches core business-entity data.
 
 ## External Identity — uuid, never `_id`
-- `_id` (Mongo ObjectId) is an internal implementation detail: used for cross-collection refs and for querying — never serialized to a client.
+- `_id` (Mongo ObjectId) is an internal implementation detail — used for cross-collection refs and for querying — never serialized to a client.
 - Every collection below also has a `uuid` field (String, auto-generated e.g. via `crypto.randomUUID()`, required, unique, indexed) — this is the only identity clients ever see, exposed as `id` in every API response.
-- Enforce this at the schema level (`toJSON` transform: drop `_id`/`__v`, rename `uuid` → `id`), the same mechanism used to strip any sensitive field — never rely on every controller remembering to map it. See `mongoose-models-layer` skill for the exact transform.
+- Enforce this at the schema level (`toJSON` transform: drop `_id`/`__v`, rename `uuid` → `id`), the same mechanism used to strip any sensitive field (e.g. `passwordHash`) — never rely on every controller remembering to map it. See `mongoose-models-layer` skill for the exact transform.
 - When a client sends an `id` (uuid) — in a URL param or a request body — resolve it to the internal `_id` (`Model.findOne({ uuid: id })`) before using it in any query or ref. Never accept a raw Mongo ObjectId from a client as if it were the identity.
 
 ## Core Collections
-List every collection here, one subsection per entity in {{ENTITIES}}, following this shape:
 
-### <entity>  *(owned by <service>)*
+### tour  *(owned by tour-service)*
 - `_id` — ObjectId (auto-generated, internal only — never sent to clients)
 - `uuid` — String (auto-generated, unique, indexed — this is the `id` clients see)
-- ...domain fields...
+- `name` — String, required
+- `date` — Date, required
+- `description` — String
+- `createdBy` — String (admin `uuid`)
 - `createdAt` — Date, default: Date.now
-- `deletedAt` — Date, default: null (soft delete — omit if this entity isn't soft-deleted)
+- `deletedAt` — Date, default: null (soft delete)
 
-If a contested entity exists, describe its status field here:
-### {{CONTESTED_ENTITY}}
-- `status` — String, required, enum: {{STATUS_VALUES}}, default: `<initial value>`
-- Other fields tracking who/what triggered the current state (e.g. requester info, timestamps, who last modified it).
+### bus  *(owned by tour-service)*
+- `_id` — ObjectId
+- `uuid` — String (unique, indexed)
+- `tourId` — String (`tour` uuid, indexed) — belongs to a `tour`
+- `name` — String, required
+- `seatLayout` — Object/Array (rows, door position, driver side, seat grid)
+- `pickupPoints` — Array of `{ name: String, order: Number }`
+- `createdAt` — Date, default: Date.now
+- `deletedAt` — Date, default: null (soft delete)
 
-## Status Rules (fill in if {{CONTESTED_ENTITY}} exists)
-- `status` must always be one of the canonical values above — never store any other string.
-- Valid transitions (enforced in the owning service's `<entity>.service.ts`, not just at the DB layer): {{STATUS_TRANSITIONS}}
-- **Concurrency:** any transition away from the "available"/initial state must use an atomic, condition-checked update (e.g. Mongoose `findOneAndUpdate({ _id, status: '<expected>' }, { $set: { status: '<next>', ... } })`) so two simultaneous requests for the same resource can't both succeed. Never read-then-write the status in two separate steps. See `seat-concurrency-layer` skill for the full pattern.
+### busType  *(owned by tour-service)*
+- `_id` — ObjectId
+- `uuid` — String (unique, indexed)
+- `rows` — Number, required
+- `doorRowPosition` — Number, required
+- `backRowSeatCount` — Number, required
+- `manuallyBlockedSeats` — Array of seat positions
+- `isDefault` — Boolean, default: false (exactly one `busType` may have `isDefault: true` — enforced in `busType.service.ts`)
+- `createdAt` — Date, default: Date.now
+- Not soft-deleted — see Soft Delete section below.
 
-## Roles & Permissions (RBAC — fill in if this project uses role-based access, otherwise delete this section)
-- List the roles here: {{ROLES_LIST}}.
-- An account's `roles` field is an array (not a single string) to support multiple roles per account later without a schema change.
-- Permission `key`s follow `<category>:<action>` — e.g. {{PERMISSION_KEYS}}.
-- List which routes remain fully public — the permission system governs admin-only write/management routes only.
-- The seed script must create baseline role/permission documents on first run — the app should never start with zero roles defined.
+### seat  *(owned by tour-service — the contested entity)*
+- `_id` — ObjectId
+- `uuid` — String (unique, indexed)
+- `busId` — String (`bus` uuid, indexed) — belongs to a `bus`
+- `position` — Object (row/column or seat number in the bus layout)
+- `status` — String, required, enum: `available` | `pending` | `taken` | `reserved`, default: `available`
+- `pickupPointName` — String, null until requested
+- `passengerName` — String, null until requested
+- `passengerPhone` — String, null until requested
+- `requestedAt` — Date, null
+- `approvedAt` — Date, null
+- `assignedBy` — String (admin `uuid`, set on `manual-assign`), null
+- Not soft-deleted — see Soft Delete section below.
+
+### admin  *(owned by user-management-service)*
+- `_id` — ObjectId
+- `uuid` — String (unique, indexed)
+- `username` — String, required, unique
+- `email` — String, required, unique
+- `passwordHash` — String, required (never serialized to a client — strip in `toJSON`)
+- `roles` — Array of String, enum values `admin` | `user`, default: `["user"]`
+- `createdAt` — Date, default: Date.now
+- `deletedAt` — Date, default: null (soft delete — for account deactivation)
+
+## Status Rules — seat (the contested entity)
+- `status` must always be one of `available` / `pending` / `taken` / `reserved` — never store any other string.
+- Valid transitions (enforced in `tour-service`'s `seat.service.ts`, not just at the DB layer):
+  - `available` → `pending` (passenger `request`)
+  - `pending` → `taken` (admin `approve`)
+  - `pending` → `available` (admin `cancel`)
+  - `taken` → `available` (admin `cancel`)
+  - `available` → `reserved`, `reserved` → `available` (admin `toggle-reserve`)
+  - any state → `taken` (admin `manual-assign`, passenger set directly)
+  - any two seats → positions/occupants exchanged or moved (admin `swap-move`, single atomic operation)
+- **Concurrency:** any transition away from `available` must use an atomic, condition-checked update (e.g. Mongoose `findOneAndUpdate({ _id, status: 'available' }, { $set: { status: 'pending', ... } })`) so two simultaneous requests for the same seat can't both succeed. A losing request receives a conflict response (409) and the frontend refreshes the seat map — never a silent overwrite. Never read-then-write the status in two separate steps. See `seat-concurrency-layer` skill for the full pattern.
+
+## Roles & Permissions (RBAC)
+- Roles: `admin`, `user`.
+- An `admin` entity's `roles` field is an array (not a single string) to support multiple roles per account later without a schema change. Every new signup gets `roles: ["user"]`; only an existing admin can promote another account via `PATCH /api/admins/:id/roles`.
+- Permission checks are role-gate checks, not a fine-grained permission-key system: every mutating admin route on `tour-service` and every admin-management route on `user-management-service` requires `roles.includes("admin")`.
+- Fully public routes (no auth required): `GET /api/tours`, `GET /api/buses/:busId/seats`, `POST /api/seats/bookings` (passenger request), `POST /api/auth/login`, `POST /api/auth/signup`. All other routes require a valid admin JWT with the `admin` role.
+- The `tour-service` seed script may upsert a default `busType` on first run; `user-management-service` does not need a seed script unless a bootstrap admin account is desired for local dev.
 
 ## Migration Rules
 - Migrations are managed via Mongoose model changes.
@@ -58,19 +97,22 @@ If a contested entity exists, describe its status field here:
 - When backfilling existing documents, use a dedicated migration script.
 
 ## Bootstrap
-- The seed script upserts reference data — core business-entity collections start empty and are created only through the app itself.
-- Required indexes: {{REQUIRED_INDEXES}}
+- The seed script upserts reference data only (e.g. a default `busType`) — core business-entity collections (`tour`, `bus`, `seat`, `admin`) start empty and are created only through the app itself.
+- Required indexes:
+  - `tour.uuid` (unique), `bus.uuid` (unique), `bus.tourId`, `busType.uuid` (unique), `seat.uuid` (unique), `seat.busId`, `seat.status`, `admin.uuid` (unique), `admin.username` (unique), `admin.email` (unique).
 
 ## Soft Delete
 - Documents are never permanently deleted — set `deletedAt` to current timestamp, for every entity marked as soft-deleted above.
-- All queries must filter: `{ deletedAt: null }`.
+- Soft-deleted entities: `tour`, `bus`, `admin`.
+- All queries against soft-deleted entities must filter: `{ deletedAt: null }`.
 - Use Mongoose `pre('find')` middleware to exclude soft-deleted documents automatically.
-- Any entity excluded from soft-delete should say so explicitly here, along with why (e.g. deleted/recreated with its parent, or small admin-managed reference data).
+- **Not soft-deleted: `busType` and `seat`.** `busType` is small admin-managed reference data (hard delete is fine and matches its `delete` action in the PRD). `seat` documents are created once per bus layout and never deleted independently — they're recreated when a bus's layout changes, and cease to be relevant only when their parent `bus` is soft-deleted.
 
 ## Operational Notes
-- Each service owns its own collections — never access another service's collections directly ({{MODEL_OWNERSHIP}}).
-- Do not store in-memory state between requests — especially any contested-entity status, which must always be read from the DB, never cached in a way that could serve a stale value during a status check.
+- Each service owns its own collections — never access another service's collections directly (`tour-service` owns `tour`/`bus`/`busType`/`seat`; `user-management-service` owns `admin`).
+- Do not store in-memory state between requests — especially `seat.status`, which must always be read from the DB, never cached in a way that could serve a stale value during a status check.
 - Define indexes in Mongoose schemas (`index: true` or `unique: true`).
 
 ## Open Questions / TBD
-- List anything still undecided about the schema, indexing, or audit-log needs here.
+- Per-tour admin ownership vs. shared admin pool — deferred per `product-definition.md`/`architecture.md` Open Questions.
+- Whether `user-management-service` needs a seed script for a bootstrap admin account in local dev.

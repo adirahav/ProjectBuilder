@@ -1,139 +1,102 @@
 # Product Definition
 
-<!--
-TEMPLATE — QUESTION-DRIVEN, not fill-in-the-blank. Unlike the .rule/.claude/agents templates,
-this file has no {{PLACEHOLDER}} markers — its content IS the product, which must be authored
-fresh per project, not adapted from the Reference App's seat-booking domain. For each section below,
-interview the user with the listed questions, then WRITE the section in prose (matching the
-depth/tone of the reference sentence given per section), replacing the instruction
-block. Do not leave any "<!-- ... -->" instruction text in the finished file.
-
-Ask 2-4 questions at a time, not the whole file at once. Work top to bottom — later sections
-(Scope, Constraints) depend on earlier ones (Vision, Users) being settled first.
--->
-
 ## Purpose
 Define shared product intent so planning, architecture, and delivery stay aligned.
 
 ---
 
 ## Product Vision
-<!--
-Ask: "In one or two sentences, what does this product remove/replace/enable that's manual or
-painful today?" Reference depth: "This product removes the manual work of seating
-passengers on tour buses. Instead of an admin figuring out by hand who sits where, the admin
-sets up a tour with its buses and pickup points, and passengers browse the tour and request
-their own seat — the admin approves, manages, and finalizes the seating from there."
-Write 2-4 sentences here once answered.
--->
+Hila Tours removes the manual, error-prone work of assigning passengers to seats on tour buses. Instead of an admin tracking who sits where by hand (phone calls, spreadsheets, paper lists), the admin sets up a tour with its buses, seat layouts, and pickup points, and passengers browse the tour's live seat map and request their own seat directly. The admin reviews, approves, manually assigns, or reassigns seats from a single dashboard, with the server as the single source of truth for seat state at every step.
 
 ---
 
 ## Target Users
-<!--
-Ask: "Who are the primary users (the ones with the main workflow/pain), and who are the
-secondary users (if any)?" For each: what are they trying to accomplish, what's their core need.
-Reference depth: distinguished "admins/tour managers" (primary — run tours, want
-to avoid manual seating) from "passengers" (secondary — want a live seat map and self-service
-seat pick). If this project has only one user type, say so explicitly rather than forcing a
-primary/secondary split.
-Write one subsection per user type once answered.
--->
+
+### Admins (primary)
+Tour organizers who run one or more tours end-to-end: creating tours and buses, defining reusable bus-type seat-grid templates, approving or rejecting passenger seat requests, manually assigning or swapping seats when needed, and producing a passenger manifest for the day of the trip. Their core need is full control over seat allocation with minimal manual bookkeeping, plus a fast way to resolve conflicts and produce a shareable roster.
+
+### Passengers (secondary)
+Anonymous users who want to see a tour's bus and pick a seat themselves rather than calling the organizer. Their core need is a clear, real-time seat map (never a stale one) and confidence that once they request a seat, it's actually reserved for them, not silently double-booked.
 
 ---
 
 ## Problem Statement
-<!--
-Ask: "What breaks or gets painful today without this product, and for whom specifically?"
-Reference depth: one paragraph connecting the manual-seating pain for admins to
-the lack of visibility/control for passengers, and how the product resolves both sides.
-Write one paragraph here once answered.
--->
+Without this product, tour admins coordinate seating manually — over phone, WhatsApp, or spreadsheets — which does not scale past a handful of passengers and is highly error-prone when two people are assigned the same seat or an admin loses track of who has and hasn't confirmed. Passengers have no visibility into which seats are free and no way to act on that information themselves; they depend entirely on the admin being reachable. Hila Tours resolves both sides at once: passengers get a live, accurate seat map and self-service booking, while admins get a single dashboard to approve, override, and finalize seating without needing to track anything outside the system.
 
 ---
 
 ## Value Proposition
-<!--
-Ask: "What's the core value delivered, and what are 3-4 concrete differentiators from doing
-this manually or with a generic tool?"
-Reference depth: one paragraph + a "Key differentiators" bullet list of 3-4 items.
-Write here once answered.
--->
+Hila Tours turns bus seating from a manual coordination problem into a self-service, real-time workflow the admin only has to supervise, not perform. Unlike a generic booking tool, it is purpose-built around the seat as a contested resource — every request is arbitrated server-side so two passengers can never be confirmed into the same seat, and the admin always retains full manual override.
 
 **Key differentiators:**
-- <fill in>
+- Real-time seat map with color *and* icon/label status (never color-only), so status is legible to everyone including colorblind users.
+- Race-safe seat booking — concurrent requests for the same seat are resolved server-side; only one succeeds, the loser gets a conflict response with a refreshed map.
+- Reusable bus-type templates mean a new bus can be created from a saved seat-grid layout instead of defined from scratch every time.
+- One-click manifest export (copy to clipboard) for sharing the passenger list via WhatsApp or print, with no separate reporting tool needed.
 
 ---
 
 ## Product Scope
 
-<!--
-Ask: "What's in scope for v1 — list every major feature area." Then: "What's explicitly out of
-scope for v1, and why (deferred vs. never)?" Cross-check against the entities/roles/contested-
-resource already established when this project's other config files were filled in (if this
-file is being written first, note that those other files should stay consistent with what's
-decided here).
-Reference depth: a bulleted "In scope" list (~8 items, each one line, referencing
-the owning rule/skill file where relevant) and a bulleted "Out of scope (v1)" list (~6 items,
-each noting briefly why it's deferred).
--->
-
 **In scope:**
-- <fill in>
+- Gateway login screen: passenger entry vs. admin login (username/password → JWT) — see `app-layer`.
+- Admin signup as a standalone page; new accounts always get `roles: ["user"]`, never `admin` automatically — see `.rule/database-rules.md`.
+- Passenger tour/bus browsing and interactive seat map with accessible (non-color-only) status — see `ui-component-layer`, `accessibility-layer`.
+- Passenger seat request modal (name, phone, pickup point) — seat moves to `pending`.
+- Admin dashboard: seat management (approve/release/reserve/manual-assign/move/swap) — see `seat-concurrency-layer`.
+- Admin dashboard: tour and bus CRUD with soft-delete, plus bus-type template management (create/duplicate/reset-to-default/delete, one default template) — see `database-rules`.
+- Admin dashboard: passenger manifest report with status filter, free-text search, and copy-to-clipboard.
+- Real-time seat-state sync without full page reloads.
+- Native Android build via Capacitor, with JWT stored in `@capacitor/preferences` — see `native-navigation-layer`.
+- Full RTL Hebrew layout and WCAG 2.1 AA accessibility (semantic HTML, full keyboard nav, focus states).
 
 **Out of scope (v1):**
-- <fill in>
+- Online payment — deferred; no payment processor integration planned for v1.
+- Automatic SMS notifications — deferred; manual admin communication (phone/WhatsApp) suffices for v1 scale.
+- Multi-language support — never for v1; Hebrew/RTL only by design.
+- Per-tour admin ownership vs. a shared admin pool — open question, deferred until multi-org usage is validated.
+- A distinct Passenger entity/account system — deferred; passenger identity intentionally lives on the seat record only.
+- Automated waitlisting when a bus is full — deferred; admin handles overflow manually for v1.
 
 ---
 
 ## Success Metrics
-<!--
-Ask: "What business metrics and product metrics would tell you this is working?" It's fine if
-exact targets are TBD — note that explicitly rather than inventing numbers.
-Reference depth: "Business metrics" (2 items) + "Product metrics" (3 items), each
-one line, with a closing note that baselines are TBD until real usage data exists.
--->
 
 **Business metrics:**
-- <fill in>
+- Reduction in admin time spent per tour on manual seat coordination (phone calls, spreadsheet updates).
+- Number of tours run through the system without a double-booking incident.
 
 **Product metrics:**
-- <fill in>
+- Seat request → resolution (approved/rejected) turnaround time.
+- Conflict rate: percentage of seat requests that hit a concurrency conflict.
+- Manifest export usage rate (copies-to-clipboard per tour).
 
 *Baseline values to be defined after first real usage.*
 
 ---
 
 ## Constraints and Assumptions
-<!--
-Ask: "What hard constraints does this product operate under (auth requirements, no-instant-
-confirmation rules, etc.)?" and "What assumptions are you making that should be validated later
-(e.g. about user behavior, scale, org structure)?"
-Reference depth: "Constraints" (3 bullets, each a hard rule) + "Assumptions to
-validate" (4 bullets, each an open question to revisit later).
--->
 
 **Constraints:**
-- <fill in>
+- The server is the sole source of truth for seat state; the frontend never assumes a seat's status without confirming against the API.
+- Every admin action (create/edit/delete/approve/cancel/reserve/assign/swap) requires a valid admin JWT.
+- Tour and bus deletion is soft-delete only (`deletedAt`), never a physical row delete.
 
 **Assumptions to validate:**
-- <fill in>
+- Passengers have reliable enough connectivity during booking that a real-time (non-polling-heavy) sync approach is worthwhile.
+- A single shared admin pool (rather than per-tour ownership) is acceptable at current scale — revisit if multiple independent organizers use the system concurrently.
+- Manual admin approval of every seat request remains fast enough as tour volume grows; high volume may later require auto-approval rules.
+- Hebrew-only, RTL-only is sufficient for the initial user base — revisit if non-Hebrew-speaking passengers become common.
 
 ---
 
 ## Prioritization Rules
-<!--
-Ask: "When two features compete for attention, what should generally win?" Keep this short —
-3-5 rules of thumb, not a full roadmap.
-Reference depth: 4 one-line prioritization rules (reduce manual workload, lower
-friction on the core flow, defer speculative scope, avoid premature complexity).
--->
-
-- <fill in>
+- Reduce the admin's manual seating workload before adding new passenger-facing convenience features.
+- Lower friction on the core booking flow (browse → pick seat → request → approved) before polishing secondary flows like the manifest report.
+- Defer speculative scope (payments, SMS, multi-language, per-tour admin ownership) until the core flow is proven in real use.
+- Avoid premature complexity — no feature should compromise the "server is the source of truth for seats" constraint for the sake of a faster-feeling UI.
 
 ---
 
 ## Update Triggers
-List the kinds of changes that should trigger someone to revisit this file — e.g. a new user
-segment, a scope change, a metric revision, a new platform target. (This section's shape is
-reusable as-is; just adapt the specific triggers to this product.)
+Revisit this file when: a new user role is introduced (e.g. a distinct Passenger account system), the admin-ownership model changes (per-tour vs. shared pool), a new platform target is added (e.g. iOS), payment or SMS integration moves into scope, or success metrics are revised after real usage data exists.

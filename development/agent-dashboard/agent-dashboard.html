@@ -284,18 +284,30 @@
 // carries the "this is backend work" identity. That list is fetched from
 // the server at load time (see initDashboard() below) instead of hardcoded,
 // so a project with different/more/fewer services just works.
-// designer's angle (-135) was chosen and numerically verified (no overlap
-// against frontend/qa/security or the backend satellite cluster for 1-6
-// backend services) — see chat history, don't move it without re-checking.
-// It also happens to sit clockwise-first, right before frontend — matching
-// the real pipeline order (Designer runs once, before anything else).
+// Angles are assigned dynamically (see assignPrimaryAngles() below) so the
+// ring stays evenly spaced no matter how many primary agents this array ends
+// up with — never hardcode an `angle` field here again. Order here is still
+// meaningful: it's the clockwise order they're placed in, starting at
+// PRIMARY_ANGLE_START, and it's also read as the real pipeline order
+// (Designer runs once, before anything else, then frontend/backend/qa/security).
 const PRIMARY_AGENTS = [
-  { key: "designer", angle: -135, icon: "🖌️", img: "designer-agent.png", name: "designer" },
-  { key: "frontend", angle: -90, icon: "🎨", img: "fronend-agent.png", name: "frontend" },
-  { key: "backend",  angle: 0,   icon: "🔧", img: "backend-agent.png", name: "backend" },
-  { key: "qa",       angle: 90,  icon: "🐛", img: "qa-agent.png",      name: "qa" },
-  { key: "security", angle: 180, icon: "🛡️", img: "security-agent.png", name: "security" },
+  { key: "designer", icon: "🖌️", img: "designer-agent.png", name: "designer" },
+  { key: "frontend", icon: "🎨", img: "fronend-agent.png", name: "frontend" },
+  { key: "backend",  icon: "🔧", img: "backend-agent.png", name: "backend" },
+  { key: "qa",       icon: "🐛", img: "qa-agent.png",      name: "qa" },
+  { key: "security", icon: "🛡️", img: "security-agent.png", name: "security" },
 ];
+// Matches the old fixed "designer" angle so the existing layout is unchanged
+// for the current 5-agent set; a different agent count just redistributes
+// the 360° evenly from this same starting point.
+const PRIMARY_ANGLE_START = -135;
+function assignPrimaryAngles() {
+  const step = 360 / PRIMARY_AGENTS.length;
+  PRIMARY_AGENTS.forEach((agent, i) => {
+    agent.angle = PRIMARY_ANGLE_START + i * step;
+  });
+}
+assignPrimaryAngles();
 const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png", name: "orchestrator" };
 
 // Breaks a kebab-case service key into a 2-line ring label at its first

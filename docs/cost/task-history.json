@@ -19,5 +19,12 @@
     "totalCostNis": 0.6388881107700001,
     "callCount": 1,
     "completedAt": "2026-08-24T17:12:59.117Z"
+  },
+  {
+    "task": "Install root/frontend/backend dependencies",
+    "totalCostUsd": 0.1267452,
+    "totalCostNis": 0.37924698744,
+    "callCount": 1,
+    "completedAt": "2026-08-24T17:13:56.688Z"
   }
 ]

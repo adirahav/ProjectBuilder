@@ -1,17 +1,17 @@
 {
-  "costTask": "Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT)",
+  "costTask": "Install root/frontend/backend dependencies",
   "costLog": [
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 5,
-      "outputTokens": 8764,
-      "cacheReadTokens": 71002,
-      "costUsd": 0.21351785000000004,
-      "costNis": 0.6388881107700001,
-      "durationS": 72.899
+      "inputTokens": 7,
+      "outputTokens": 2410,
+      "cacheReadTokens": 102304,
+      "costUsd": 0.1267452,
+      "costNis": 0.37924698744,
+      "durationS": 35.21
     }
   ],
-  "costTotalUsd": 0.21351785000000004,
-  "costTotalNis": 0.6388881107700001
+  "costTotalUsd": 0.1267452,
+  "costTotalNis": 0.37924698744
 }

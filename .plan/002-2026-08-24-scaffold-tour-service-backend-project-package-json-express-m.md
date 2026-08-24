@@ -1,6 +1,6 @@
 # Plan 002 — Scaffold tour-service backend project (package.json, Express, Mongoose, MONGODB_URI)
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-24
 Scope-Agents: tour-service, qa

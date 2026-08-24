@@ -4,7 +4,7 @@ Current queue:
 
 - [x] Scaffold frontend project (Vite + React + TS + Tailwind v4 + Zustand + Lucide React) | scope: frontend
 - [x] Scaffold tour-service backend project (package.json, Express, Mongoose, MONGODB_URI) | scope: tour-service
-- [ ] Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT) | scope: user-management-service
+- [x] Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT) | scope: user-management-service
 - [ ] Install root/frontend/backend dependencies | scope: none
 - [ ] Admin signup page | scope: frontend,user-management-service,qa | url: /signup
 - [ ] Gateway (login) screen — passenger vs admin entry, admin login modal | scope: frontend,user-management-service,qa,security | url: /

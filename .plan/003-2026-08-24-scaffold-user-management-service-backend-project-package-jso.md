@@ -1,6 +1,6 @@
 # Plan 003 — Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT)
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-24
 Scope-Agents: user-management-service, security, qa

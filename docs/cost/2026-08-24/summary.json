@@ -3,21 +3,12 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 9,
-      "outputTokens": 6638,
-      "cacheReadTokens": 104921,
-      "costUsd": 0.2543598,
-      "durationMs": 86391
-    },
-    {
-      "role": "frontend",
-      "label": "Frontend Agent",
-      "inputTokens": 2568,
-      "outputTokens": 17480,
-      "cacheReadTokens": 2024975,
-      "costUsd": 1.11863825,
-      "durationMs": 493353
+      "inputTokens": 11,
+      "outputTokens": 8376,
+      "cacheReadTokens": 167027,
+      "costUsd": 0.27388285,
+      "durationMs": 78498
     }
   ],
-  "totalCostUsd": 1.37299805
+  "totalCostUsd": 0.27388285
 }

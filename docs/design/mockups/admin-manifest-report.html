@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>הילה טיולים — דוח נוסעים</title>
+
+<!-- ==== HILA TOURS SHARED DESIGN TOKENS (identical in every mockup file) ==== -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  colors: {
+    primary: { 100:'#DCEFF4', 500:'#1A8CA8', 700:'#115E75', 900:'#0B3A47' },
+    accent:  { 100:'#FDF0E4', 500:'#E8873A' },
+    success: { 50:'#E6F4EC', 600:'#2F855A' },
+    warning: { 50:'#FDF3DC', 600:'#B7791F' },
+    danger:  { 50:'#FBEAEA', 600:'#C53030' },
+    info:    { 50:'#E7F0FA', 600:'#2B6CB0' },
+    n: { 0:'#FFFFFF', 50:'#F7F8FA', 100:'#EDEFF3', 200:'#D8DCE3', 400:'#9AA3AF', 500:'#5B6472', 700:'#333B47', 900:'#1A1F27' },
+    seat: { available:'#FFFFFF', pending:'#FDF3DC', taken:'#D8DCE3', reserved:'#EFE9FB' }
+  },
+  fontFamily: { sans: ["Heebo","Segoe UI","system-ui","-apple-system","sans-serif"] },
+  fontSize: {
+    caption:['12px','16px'], label:['14px','20px'], body:['16px','24px'],
+    h2:['20px','28px'], h1:['24px','32px'], display:['30px','38px']
+  },
+  borderRadius: { lg:'8px', xl:'12px' },
+  boxShadow: {
+    sm:'0 1px 2px rgba(16,24,40,.06)', md:'0 4px 12px rgba(16,24,40,.08)', lg:'0 12px 32px rgba(16,24,40,.16)'
+  },
+  spacing: { 1:'4px', 2:'8px', 3:'12px', 4:'16px', 6:'24px', 8:'32px', 12:'48px' }
+}}};
+</script>
+<style>
+  :root{
+    --primary-900:#0B3A47; --primary-700:#115E75; --primary-500:#1A8CA8; --primary-100:#DCEFF4;
+    --accent-500:#E8873A;  --accent-100:#FDF0E4;
+    --success-600:#2F855A; --warning-600:#B7791F; --danger-600:#C53030; --info-600:#2B6CB0;
+    --n-0:#FFFFFF; --n-50:#F7F8FA; --n-100:#EDEFF3; --n-200:#D8DCE3;
+    --n-400:#9AA3AF; --n-500:#5B6472; --n-700:#333B47; --n-900:#1A1F27;
+  }
+  body{ font-family:'Heebo','Segoe UI',system-ui,sans-serif; background:var(--n-50); color:var(--n-900); }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible{
+    outline:2px solid var(--primary-500); outline-offset:2px;
+  }
+  .num{ direction:ltr; unicode-bidi:isolate; }
+
+  .seat{
+    inline-size:44px; block-size:44px; border-radius:8px; border-width:2px; border-style:solid;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    font-size:12px; line-height:1; font-weight:600; cursor:pointer; transition:transform .12s, box-shadow .12s;
+  }
+  .seat:hover{ transform:translateY(-2px); box-shadow:0 4px 12px rgba(16,24,40,.08); }
+  .seat .ico{ font-size:11px; line-height:1; }
+  .seat-available{ background:#FFFFFF; border-color:#1A8CA8; color:#0B3A47; }
+  .seat-pending  { background:#FDF3DC; border-color:#B7791F; color:#7A5312; }
+  .seat-taken    { background:#D8DCE3; border-color:#5B6472; color:#333B47; cursor:default; }
+  .seat-reserved { background:#EFE9FB; border-color:#6B46C1; color:#4C2E9E; }
+  .seat-taken:hover{ transform:none; box-shadow:none; }
+  .aisle{ inline-size:20px; }
+
+  /* Table conventions */
+  th{ text-align:start; }
+  tbody tr:hover{ background:rgba(220,239,244,.4); }
+</style>
+<!-- ==== END SHARED DESIGN TOKENS ==== -->
+</head>
+
+<body class="min-h-screen pb-12">
+
+<header class="sticky top-0 z-30 bg-primary-900 text-white shadow-md">
+  <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-3">
+    <div class="flex items-center gap-2">
+      <span class="flex h-[32px] w-[32px] items-center justify-center rounded-lg bg-accent-500 text-[16px]" aria-hidden="true">🚌</span>
+      <span class="text-body font-bold">הילה טיולים</span>
+      <span class="ms-2 rounded-full bg-white/10 px-3 py-1 text-caption font-medium">מנהל</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="hidden text-label md:inline">הילה אברהמי</span>
+      <button class="rounded-lg border border-white/25 px-3 py-1 text-label font-medium transition hover:bg-white/10">התנתקות</button>
+    </div>
+  </div>
+
+  <nav class="border-t border-white/10" aria-label="לשוניות לוח הבקרה">
+    <div class="mx-auto flex max-w-[1200px] gap-6 px-4">
+      <a href="admin-seat-management.html" class="border-b-2 border-transparent py-3 text-label font-medium text-white/70 transition hover:text-white">ניהול מושבים</a>
+      <a href="#" class="border-b-2 border-transparent py-3 text-label font-medium text-white/70 transition hover:text-white">טיולים ואוטובוסים</a>
+      <a href="#" aria-current="page" class="border-b-2 border-accent-500 py-3 text-label font-semibold text-white">דוח נוסעים</a>
+    </div>
+  </nav>
+</header>
+
+<main class="mx-auto max-w-[1200px] px-4 py-6">
+
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="text-h1 font-bold text-primary-900">דוח נוסעים</h1>
+      <p class="mt-2 text-label text-n-500">הגליל העליון · <span class="num">12.04.2026</span> · אוטובוס 1</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="rounded-lg border border-n-200 bg-n-0 px-4 py-2 text-label font-medium text-n-700 transition hover:bg-n-50">רענון</button>
+      <button class="rounded-lg bg-accent-500 px-4 py-2 text-label font-semibold text-white transition hover:brightness-95">📋 העתקת דוח</button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <section class="mt-6 rounded-xl border border-n-100 bg-n-0 p-4 shadow-sm md:p-6" aria-label="סינון וחיפוש">
+    <div class="flex flex-col gap-4 md:flex-row md:items-end">
+      <div class="flex-1">
+        <label for="tour" class="mb-1 block text-label font-medium text-n-700">טיול</label>
+        <select id="tour" class="h-[40px] w-full rounded-lg border border-n-200 bg-n-0 px-3 text-body text-n-900">
+          <option>הגליל העליון — 12.04.2026</option>
+          <option>מכתש רמון וצפון הנגב — 03.05.2026</option>
+        </select>
+      </div>
+      <div class="flex-1">
+        <label for="bus" class="mb-1 block text-label font-medium text-n-700">אוטובוס</label>
+        <select id="bus" class="h-[40px] w-full rounded-lg border border-n-200 bg-n-0 px-3 text-body text-n-900">
+          <option>אוטובוס 1 — 45 מקומות</option>
+          <option>אוטובוס 2 — 45 מקומות</option>
+        </select>
+      </div>
+      <div class="flex-[1.4]">
+        <label for="q" class="mb-1 block text-label font-medium text-n-700">חיפוש חופשי</label>
+        <input id="q" type="search" placeholder="שם, טלפון או נקודת איסוף" value=""
+               class="h-[40px] w-full rounded-lg border border-n-200 bg-n-0 px-3 text-body text-n-900 focus:border-primary-500">
+      </div>
+    </div>
+
+    <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-n-100 pt-4" role="group" aria-label="סינון לפי סטטוס">
+      <span class="me-1 text-label font-medium text-n-700">סטטוס:</span>
+      <button aria-pressed="true" class="rounded-full bg-primary-700 px-4 py-1 text-caption font-medium text-white">הכול · <span class="num">45</span></button>
+      <button class="rounded-full border border-primary-500 bg-n-0 px-4 py-1 text-caption font-medium text-primary-900 transition hover:bg-primary-100">✓ פנוי · <span class="num">18</span></button>
+      <button class="rounded-full bg-warning-50 px-4 py-1 text-caption font-medium text-warning-600 transition hover:brightness-95">⏳ ממתין לאישור · <span class="num">5</span></button>
+      <button class="rounded-full bg-n-200 px-4 py-1 text-caption font-medium text-n-700 transition hover:brightness-95">👤 תפוס · <span class="num">17</span></button>
+      <button class="rounded-full px-4 py-1 text-caption font-medium transition hover:brightness-95" style="background:#EFE9FB;color:#4C2E9E">🔒 שמור · <span class="num">5</span></button>
+    </div>
+  </section>
+
+  <!-- Manifest table (desktop) -->
+  <section class="mt-6 hidden overflow-hidden rounded-xl border border-n-100 bg-n-0 shadow-sm md:block" aria-label="טבלת נוסעים">
+    <table class="w-full border-collapse">
+      <caption class="sr-only">רשימת כל המושבים באוטובוס 1 עם פרטי הנוסעים והסטטוס</caption>
+      <thead class="bg-n-50">
+        <tr class="text-label font-medium text-n-500">
+          <th scope="col" class="px-4 py-3">מושב</th>
+          <th scope="col" class="px-4 py-3">שם הנוסע</th>
+          <th scope="col" class="px-4 py-3">טלפון</th>
+          <th scope="col" class="px-4 py-3">נקודת איסוף</th>
+          <th scope="col" class="px-4 py-3">סטטוס</th>
+          <th scope="col" class="px-4 py-3">פעולות</th>
+        </tr>
+      </thead>
+      <tbody class="text-body">
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">1</td>
+          <td class="px-4 py-3">אבי מזרחי</td>
+          <td class="num px-4 py-3 text-n-700">054-3312089</td>
+          <td class="px-4 py-3 text-n-700">התחנה המרכזית תל אביב</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-n-200 px-3 py-1 text-caption font-medium text-n-700">👤 תפוס</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">ביטול</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">2</td>
+          <td class="px-4 py-3">דנה שרעבי</td>
+          <td class="num px-4 py-3 text-n-700">050-7761420</td>
+          <td class="px-4 py-3 text-n-700">כפר סבא — מרכז העיר</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-n-200 px-3 py-1 text-caption font-medium text-n-700">👤 תפוס</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">ביטול</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">3</td>
+          <td class="px-4 py-3 text-n-400">—</td>
+          <td class="px-4 py-3 text-n-400">—</td>
+          <td class="px-4 py-3 text-n-400">—</td>
+          <td class="px-4 py-3"><span class="rounded-full px-3 py-1 text-caption font-medium" style="background:#EFE9FB;color:#4C2E9E">🔒 שמור</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">שחרור</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">6</td>
+          <td class="px-4 py-3">יעל כהן</td>
+          <td class="num px-4 py-3 text-n-700">052-9930741</td>
+          <td class="px-4 py-3 text-n-700">צומת רעננה דרום</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-warning-50 px-3 py-1 text-caption font-medium text-warning-600">⏳ ממתין לאישור</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg bg-primary-700 px-3 py-1 text-caption font-medium text-white transition hover:bg-primary-900">אישור</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">7</td>
+          <td class="px-4 py-3">איתי ברק</td>
+          <td class="num px-4 py-3 text-n-700">058-4410267</td>
+          <td class="px-4 py-3 text-n-700">חיפה — חוף הכרמל</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-n-200 px-3 py-1 text-caption font-medium text-n-700">👤 תפוס</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">ביטול</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">9</td>
+          <td class="px-4 py-3 text-n-400">—</td>
+          <td class="px-4 py-3 text-n-400">—</td>
+          <td class="px-4 py-3 text-n-400">—</td>
+          <td class="px-4 py-3"><span class="rounded-full border border-primary-500 bg-n-0 px-3 py-1 text-caption font-medium text-primary-900">✓ פנוי</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">שיוך ידני</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">11</td>
+          <td class="px-4 py-3">רון אלמוג</td>
+          <td class="num px-4 py-3 text-n-700">053-2218804</td>
+          <td class="px-4 py-3 text-n-700">התחנה המרכזית תל אביב</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-warning-50 px-3 py-1 text-caption font-medium text-warning-600">⏳ ממתין לאישור</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg bg-primary-700 px-3 py-1 text-caption font-medium text-white transition hover:bg-primary-900">אישור</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">15</td>
+          <td class="px-4 py-3">שירה נחום</td>
+          <td class="num px-4 py-3 text-n-700">050-6027338</td>
+          <td class="px-4 py-3 text-n-700">צומת רעננה דרום</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-n-200 px-3 py-1 text-caption font-medium text-n-700">👤 תפוס</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">ביטול</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">17</td>
+          <td class="px-4 py-3">נועה לוי</td>
+          <td class="num px-4 py-3 text-n-700">052-4471903</td>
+          <td class="px-4 py-3 text-n-700">צומת רעננה דרום</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-warning-50 px-3 py-1 text-caption font-medium text-warning-600">⏳ ממתין לאישור</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg bg-primary-700 px-3 py-1 text-caption font-medium text-white transition hover:bg-primary-900">אישור</button></td>
+        </tr>
+        <tr class="border-t border-n-100">
+          <td class="num px-4 py-3 font-semibold text-primary-900">20</td>
+          <td class="px-4 py-3">טל גבאי</td>
+          <td class="num px-4 py-3 text-n-700">053-8820117</td>
+          <td class="px-4 py-3 text-n-700">חיפה — חוף הכרמל</td>
+          <td class="px-4 py-3"><span class="rounded-full bg-n-200 px-3 py-1 text-caption font-medium text-n-700">👤 תפוס</span></td>
+          <td class="px-4 py-3"><button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">ביטול</button></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="flex items-center justify-between gap-4 border-t border-n-100 bg-n-50 px-4 py-3">
+      <p class="text-label text-n-500">מוצגים <span class="num">10</span> מתוך <span class="num">45</span> מושבים</p>
+      <div class="flex items-center gap-2">
+        <button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">הקודם</button>
+        <button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">הבא</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Manifest stacked cards (mobile) -->
+  <section class="mt-6 flex flex-col gap-3 md:hidden" aria-label="רשימת נוסעים">
+    <article class="rounded-xl border border-n-100 bg-n-0 p-4 shadow-sm">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-body font-semibold text-n-900">אבי מזרחי</p>
+          <p class="num mt-1 text-label text-n-500">054-3312089</p>
+        </div>
+        <span class="seat seat-taken" aria-hidden="true"><span class="ico">👤</span><span class="num">1</span></span>
+      </div>
+      <p class="mt-3 text-label text-n-700">התחנה המרכזית תל אביב</p>
+      <div class="mt-3 flex items-center justify-between gap-3 border-t border-n-100 pt-3">
+        <span class="rounded-full bg-n-200 px-3 py-1 text-caption font-medium text-n-700">👤 תפוס</span>
+        <button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">ביטול</button>
+      </div>
+    </article>
+
+    <article class="rounded-xl border border-n-100 bg-n-0 p-4 shadow-sm">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-body font-semibold text-n-900">יעל כהן</p>
+          <p class="num mt-1 text-label text-n-500">052-9930741</p>
+        </div>
+        <span class="seat seat-pending" aria-hidden="true"><span class="ico">⏳</span><span class="num">6</span></span>
+      </div>
+      <p class="mt-3 text-label text-n-700">צומת רעננה דרום</p>
+      <div class="mt-3 flex items-center justify-between gap-3 border-t border-n-100 pt-3">
+        <span class="rounded-full bg-warning-50 px-3 py-1 text-caption font-medium text-warning-600">⏳ ממתין לאישור</span>
+        <button class="rounded-lg bg-primary-700 px-3 py-1 text-caption font-medium text-white transition hover:bg-primary-900">אישור</button>
+      </div>
+    </article>
+
+    <article class="rounded-xl border border-n-100 bg-n-0 p-4 shadow-sm">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-body font-semibold text-n-400">ללא נוסע</p>
+          <p class="mt-1 text-label text-n-400">—</p>
+        </div>
+        <span class="seat seat-reserved" aria-hidden="true"><span class="ico">🔒</span><span class="num">3</span></span>
+      </div>
+      <p class="mt-3 text-label text-n-500">שמור על ידי מנהל</p>
+      <div class="mt-3 flex items-center justify-between gap-3 border-t border-n-100 pt-3">
+        <span class="rounded-full px-3 py-1 text-caption font-medium" style="background:#EFE9FB;color:#4C2E9E">🔒 שמור</span>
+        <button class="rounded-lg border border-n-200 bg-n-0 px-3 py-1 text-caption font-medium text-n-700 transition hover:bg-n-50">שחרור</button>
+      </div>
+    </article>
+  </section>
+
+  <!-- Copy-report confirmation toast -->
+  <div class="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-xl bg-success-50 px-4 py-3 shadow-lg" role="status">
+    <p class="flex items-center gap-2 text-label font-medium text-success-600">
+      <span aria-hidden="true">✓</span> הדוח הועתק ללוח — ניתן להדביק בוואטסאפ או להדפיס
+    </p>
+  </div>
+</main>
+
+</body>
+</html>

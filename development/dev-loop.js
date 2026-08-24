@@ -740,11 +740,35 @@ async function reviewDesignUntilApproved() {
   }
 }
 
+// Returns a promise that resolves once the server has either started
+// listening or failed to — callers await this before printing/asking
+// anything else. Without it, .listen()'s callback fires asynchronously and
+// can land in the middle of the very next interactive prompt (the
+// branch-per-task question), interleaving the "AGENT DASHBOARD" banner with
+// an already-displayed readline prompt and making it look like the terminal
+// is stuck or re-asking, even though the prompt itself is still live and
+// still accepting the answer already typed.
 function startDashboardServer() {
   const dashboardPath = `${DASHBOARD_DIR}/agent-dashboard.html`
   const assetsDir = `${DASHBOARD_DIR}/assets`
 
   const server = http.createServer((req, res) => {
+    // Lets the dashboard show the Designer agent's mockups in-page (a select
+    // of screen names + an iframe pointed at /docs/design/mockups/<file> via
+    // the generic /docs/** route below) instead of the human having to open
+    // each .html file manually. Empty list (dir doesn't exist yet, or this
+    // project isn't using the Designer agent) just means the panel stays
+    // hidden client-side — this route never errors for that case.
+    if (req.url === "/design-mockups.json") {
+      const mockupsDir = "docs/design/mockups"
+      const files = existsSync(mockupsDir)
+        ? readdirSync(mockupsDir).filter((f) => f.endsWith(".html")).sort()
+        : []
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ files }))
+      return
+    }
+
     if (req.url === "/status.json") {
       // `services` is injected fresh from the in-memory discovery result on
       // every request (not just written once to the file) — the dashboard
@@ -800,7 +824,7 @@ function startDashboardServer() {
         return
       }
       const ext = fullPath.split(".").pop().toLowerCase()
-      const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8" }
+      const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8", html: "text/html; charset=utf-8" }
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
       res.end(readFileSync(fullPath))
       return
@@ -836,34 +860,36 @@ function startDashboardServer() {
     res.end(readFileSync(dashboardPath, "utf-8"))
   })
 
-  // Without this, a failed .listen() (e.g. the port already held by a
-  // zombie process from a previous interrupted run) emits an unhandled
-  // 'error' event, which Node treats as an uncaught exception and crashes
-  // the whole script — silently, with no clear message pointing at the
-  // dashboard as the cause.
-  server.on("error", (e) => {
-    warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
-    if (e.code === "EADDRINUSE") {
-      warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
-    }
-  })
+  return new Promise((resolveStarted) => {
+    // Without this, a failed .listen() (e.g. the port already held by a
+    // zombie process from a previous interrupted run) emits an unhandled
+    // 'error' event, which Node treats as an uncaught exception and crashes
+    // the whole script — silently, with no clear message pointing at the
+    // dashboard as the cause.
+    server.on("error", (e) => {
+      warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
+      if (e.code === "EADDRINUSE") {
+        warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
+      }
+      resolveStarted(null)
+    })
 
-  server.listen(DASHBOARD_PORT, () => {
-    const url = `http://localhost:${DASHBOARD_PORT}/`
-    banner(`AGENT DASHBOARD — ${url}`)
-    log(`If it didn't open automatically, open this URL yourself: ${url}`)
-    const openCmd =
-      process.platform === "win32" ? `start "" "${url}"` :
-      process.platform === "darwin" ? `open "${url}"` :
-      `xdg-open "${url}"`
-    try {
-      execSync(openCmd, { stdio: "ignore" })
-    } catch (e) {
-      warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
-    }
+    server.listen(DASHBOARD_PORT, () => {
+      const url = `http://localhost:${DASHBOARD_PORT}/`
+      banner(`AGENT DASHBOARD — ${url}`)
+      log(`If it didn't open automatically, open this URL yourself: ${url}`)
+      const openCmd =
+        process.platform === "win32" ? `start "" "${url}"` :
+        process.platform === "darwin" ? `open "${url}"` :
+        `xdg-open "${url}"`
+      try {
+        execSync(openCmd, { stdio: "ignore" })
+      } catch (e) {
+        warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
+      }
+      resolveStarted(server)
+    })
   })
-
-  return server
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -966,7 +992,7 @@ async function resolveCreateBranchPerTask() {
 async function main() {
   checkPrerequisites()
   acquireLock()
-  startDashboardServer()
+  await startDashboardServer()
   ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
 
   banner("DEV LOOP ORCHESTRATOR")

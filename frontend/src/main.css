@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+/* Design tokens — extracted from docs/design/mockups/ + docs/design/design-notes.md ("Aegean" palette) */
+@theme {
+  /* Brand */
+  --color-primary: #115e75;
+  --color-primary-900: #0b3a47;
+  --color-primary-700: #115e75;
+  --color-primary-500: #1a8ca8;
+  --color-primary-100: #dceff4;
+
+  --color-secondary: #0b3a47;
+
+  --color-accent: #e8873a;
+  --color-accent-500: #e8873a;
+  --color-accent-100: #fdf0e4;
+
+  /* Semantic */
+  --color-success: #2f855a;
+  --color-success-600: #2f855a;
+  --color-success-50: #e6f4ec;
+
+  --color-warning: #b7791f;
+  --color-warning-600: #b7791f;
+  --color-warning-50: #fdf3dc;
+
+  --color-danger: #c53030;
+  --color-danger-600: #c53030;
+  --color-danger-50: #fbeaea;
+
+  --color-info-600: #2b6cb0;
+  --color-info-50: #e7f0fa;
+
+  /* Neutrals */
+  --color-n-0: #ffffff;
+  --color-n-50: #f7f8fa;
+  --color-n-100: #edeff3;
+  --color-n-200: #d8dce3;
+  --color-n-400: #9aa3af;
+  --color-n-500: #5b6472;
+  --color-n-700: #333b47;
+  --color-n-900: #1a1f27;
+
+  /* Seat status — fill / border / text per seatStatus value */
+  --color-seat-available: #ffffff;
+  --color-seat-available-border: #1a8ca8;
+  --color-seat-available-text: #0b3a47;
+
+  --color-seat-pending: #fdf3dc;
+  --color-seat-pending-border: #b7791f;
+  --color-seat-pending-text: #7a5312;
+
+  --color-seat-taken: #d8dce3;
+  --color-seat-taken-border: #5b6472;
+  --color-seat-taken-text: #333b47;
+
+  --color-seat-reserved: #efe9fb;
+  --color-seat-reserved-border: #6b46c1;
+  --color-seat-reserved-text: #4c2e9e;
+
+  /* Typography */
+  --font-sans: "Heebo", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  --text-display: 1.875rem;
+  --text-display--line-height: 2.375rem;
+  --text-display--font-weight: 700;
+
+  --text-h1: 1.5rem;
+  --text-h1--line-height: 2rem;
+  --text-h1--font-weight: 700;
+
+  --text-h2: 1.25rem;
+  --text-h2--line-height: 1.75rem;
+  --text-h2--font-weight: 600;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
+  --text-body--font-weight: 400;
+
+  --text-label: 0.875rem;
+  --text-label--line-height: 1.25rem;
+  --text-label--font-weight: 500;
+
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-caption--font-weight: 500;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06);
+  --shadow-md: 0 4px 12px rgb(16 24 40 / 0.08);
+  --shadow-lg: 0 12px 32px rgb(16 24 40 / 0.16);
+}
+
+/*
+ * Limited to what Tailwind utilities genuinely cannot express
+ * (global base defaults + a bidi isolation primitive).
+ */
+@layer base {
+  body {
+    background-color: var(--color-n-50);
+    color: var(--color-n-900);
+    font-family: var(--font-sans);
+  }
+
+  /* Global focus convention (design-notes §Component conventions) — never removed. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary-500);
+    outline-offset: 2px;
+  }
+}
+
+@utility numeral {
+  /* Numerals (seat numbers, phone numbers) render LTR inside RTL text. */
+  direction: ltr;
+  unicode-bidi: isolate;
+}

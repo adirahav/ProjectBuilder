@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>הילה טיולים — כניסה</title>
+
+<!-- ==== HILA TOURS SHARED DESIGN TOKENS (identical in every mockup file) ==== -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  colors: {
+    primary: { 100:'#DCEFF4', 500:'#1A8CA8', 700:'#115E75', 900:'#0B3A47' },
+    accent:  { 100:'#FDF0E4', 500:'#E8873A' },
+    success: { 50:'#E6F4EC', 600:'#2F855A' },
+    warning: { 50:'#FDF3DC', 600:'#B7791F' },
+    danger:  { 50:'#FBEAEA', 600:'#C53030' },
+    info:    { 50:'#E7F0FA', 600:'#2B6CB0' },
+    n: { 0:'#FFFFFF', 50:'#F7F8FA', 100:'#EDEFF3', 200:'#D8DCE3', 400:'#9AA3AF', 500:'#5B6472', 700:'#333B47', 900:'#1A1F27' },
+    seat: { available:'#FFFFFF', pending:'#FDF3DC', taken:'#D8DCE3', reserved:'#EFE9FB' }
+  },
+  fontFamily: { sans: ["Heebo","Segoe UI","system-ui","-apple-system","sans-serif"] },
+  fontSize: {
+    caption:['12px','16px'], label:['14px','20px'], body:['16px','24px'],
+    h2:['20px','28px'], h1:['24px','32px'], display:['30px','38px']
+  },
+  borderRadius: { lg:'8px', xl:'12px' },
+  boxShadow: {
+    sm:'0 1px 2px rgba(16,24,40,.06)', md:'0 4px 12px rgba(16,24,40,.08)', lg:'0 12px 32px rgba(16,24,40,.16)'
+  },
+  spacing: { 1:'4px', 2:'8px', 3:'12px', 4:'16px', 6:'24px', 8:'32px', 12:'48px' }
+}}};
+</script>
+<style>
+  :root{
+    --primary-900:#0B3A47; --primary-700:#115E75; --primary-500:#1A8CA8; --primary-100:#DCEFF4;
+    --accent-500:#E8873A;  --accent-100:#FDF0E4;
+    --success-600:#2F855A; --warning-600:#B7791F; --danger-600:#C53030; --info-600:#2B6CB0;
+    --n-0:#FFFFFF; --n-50:#F7F8FA; --n-100:#EDEFF3; --n-200:#D8DCE3;
+    --n-400:#9AA3AF; --n-500:#5B6472; --n-700:#333B47; --n-900:#1A1F27;
+  }
+  body{ font-family:'Heebo','Segoe UI',system-ui,sans-serif; background:var(--n-50); color:var(--n-900); }
+  /* Global focus convention — never removed (WCAG 2.1 AA) */
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible{
+    outline:2px solid var(--primary-500); outline-offset:2px;
+  }
+  /* Numerals stay LTR inside RTL text */
+  .num{ direction:ltr; unicode-bidi:isolate; }
+
+  /* ---- Seat component: status = fill + border + icon + text label (never colour alone) ---- */
+  .seat{
+    inline-size:44px; block-size:44px; border-radius:8px; border-width:2px; border-style:solid;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    font-size:12px; line-height:1; font-weight:600; cursor:pointer; transition:transform .12s, box-shadow .12s;
+  }
+  .seat:hover{ transform:translateY(-2px); box-shadow:0 4px 12px rgba(16,24,40,.08); }
+  .seat .ico{ font-size:11px; line-height:1; }
+  .seat-available{ background:#FFFFFF; border-color:#1A8CA8; color:#0B3A47; }
+  .seat-pending  { background:#FDF3DC; border-color:#B7791F; color:#7A5312; }
+  .seat-taken    { background:#D8DCE3; border-color:#5B6472; color:#333B47; cursor:default; }
+  .seat-reserved { background:#EFE9FB; border-color:#6B46C1; color:#4C2E9E; }
+  .seat-taken:hover{ transform:none; box-shadow:none; }
+  .aisle{ inline-size:20px; }
+</style>
+<!-- ==== END SHARED DESIGN TOKENS ==== -->
+</head>
+
+<body class="min-h-screen">
+
+<main class="min-h-screen flex flex-col items-center justify-center px-4 py-12">
+
+  <!-- Brand -->
+  <div class="text-center mb-8">
+    <div class="mx-auto mb-4 flex h-[56px] w-[56px] items-center justify-center rounded-xl bg-accent-500 text-[28px] shadow-md" aria-hidden="true">🚌</div>
+    <h1 class="text-display font-bold text-primary-900">הילה טיולים</h1>
+    <p class="mt-2 text-body text-n-500">ניהול מושבים באוטובוסי טיולים — בזמן אמת</p>
+  </div>
+
+  <!-- Entry choice card -->
+  <div class="w-full max-w-[420px] rounded-xl border border-n-100 bg-n-0 p-6 shadow-sm">
+    <h2 class="text-h2 font-semibold text-primary-900">איך תרצו להיכנס?</h2>
+    <p class="mt-2 text-label text-n-500">נוסעים נכנסים ללא הרשמה. מנהלים נדרשים להתחבר.</p>
+
+    <div class="mt-6 flex flex-col gap-3">
+      <!-- Accent = the one high-emphasis CTA on this screen -->
+      <button class="flex w-full items-center justify-between rounded-lg bg-accent-500 px-4 py-3 text-body font-semibold text-white transition hover:brightness-95">
+        <span class="flex items-center gap-2"><span aria-hidden="true">🎫</span> המשך כנוסע</span>
+        <span aria-hidden="true">←</span>
+      </button>
+      <p class="-mt-1 text-caption text-n-400">מעבר ישיר לבחירת טיול ואוטובוס ולמפת המושבים.</p>
+
+      <div class="my-2 flex items-center gap-3" aria-hidden="true">
+        <span class="h-px flex-1 bg-n-100"></span>
+        <span class="text-caption text-n-400">או</span>
+        <span class="h-px flex-1 bg-n-100"></span>
+      </div>
+
+      <button class="flex w-full items-center justify-between rounded-lg border border-n-200 bg-n-0 px-4 py-3 text-body font-medium text-n-700 transition hover:bg-n-50">
+        <span class="flex items-center gap-2"><span aria-hidden="true">🔑</span> כניסת מנהל</span>
+        <span aria-hidden="true">←</span>
+      </button>
+    </div>
+
+    <p class="mt-6 text-center text-label text-n-500">
+      אין לכם חשבון מנהל?
+      <a href="#" class="ms-1 font-medium text-primary-700 underline underline-offset-2 hover:text-primary-900">הרשמה</a>
+    </p>
+  </div>
+
+  <p class="mt-8 max-w-[420px] text-center text-caption text-n-400">
+    חשבון חדש נוצר תמיד עם הרשאת <span class="num">user</span> בלבד. הרשאות ניהול מוענקות על ידי מנהל קיים.
+  </p>
+</main>
+
+
+<!-- ===================== ADMIN LOGIN MODAL (shown open) ===================== -->
+<div class="fixed inset-0 z-50 flex items-center justify-center px-4" style="background:rgba(11,58,71,.55)">
+  <div role="dialog" aria-modal="true" aria-labelledby="login-title"
+       class="w-full max-w-[480px] rounded-xl bg-n-0 p-6 shadow-lg">
+
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 id="login-title" class="text-h2 font-semibold text-primary-900">כניסת מנהל</h2>
+        <p class="mt-1 text-label text-n-500">הזינו את פרטי המנהל שלכם</p>
+      </div>
+      <button aria-label="סגירה" class="rounded-lg px-2 py-1 text-n-400 transition hover:bg-n-50 hover:text-n-700">✕</button>
+    </div>
+
+    <form class="mt-6 flex flex-col gap-4" onsubmit="return false">
+      <div>
+        <label for="username" class="mb-1 block text-label font-medium text-n-700">שם משתמש</label>
+        <input id="username" type="text" value="hila.admin"
+               class="num h-[40px] w-full rounded-lg border border-n-200 bg-n-0 px-3 text-body text-start text-n-900 focus:border-primary-500">
+      </div>
+
+      <!-- Error state: red border + caption message, wired via aria-describedby -->
+      <div>
+        <label for="password" class="mb-1 block text-label font-medium text-n-700">סיסמה</label>
+        <div class="relative">
+          <input id="password" type="password" value="123456" aria-invalid="true" aria-describedby="password-error"
+                 class="num h-[40px] w-full rounded-lg border border-danger-600 bg-n-0 px-3 pe-[76px] text-body text-start text-n-900">
+          <button type="button" class="absolute inset-y-0 end-2 my-auto h-[28px] rounded-lg px-2 text-caption font-medium text-primary-700 hover:bg-primary-100">הצג</button>
+        </div>
+        <p id="password-error" class="mt-1 flex items-center gap-1 text-caption font-medium text-danger-600">
+          <span aria-hidden="true">⚠</span> שם המשתמש או הסיסמה שגויים
+        </p>
+      </div>
+
+      <div class="mt-2 flex items-center justify-end gap-3">
+        <button type="button" class="rounded-lg px-4 py-2 text-label font-medium text-primary-700 transition hover:bg-primary-100">ביטול</button>
+        <button type="submit" class="rounded-lg bg-primary-700 px-4 py-2 text-label font-medium text-white transition hover:bg-primary-900">התחברות</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+</body>
+</html>

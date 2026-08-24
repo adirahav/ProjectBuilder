@@ -2,7 +2,7 @@
 
 Current queue:
 
-- [ ] Scaffold frontend project (Vite + React + TS + Tailwind v4 + Zustand + Lucide React) | scope: frontend
+- [x] Scaffold frontend project (Vite + React + TS + Tailwind v4 + Zustand + Lucide React) | scope: frontend
 - [ ] Scaffold tour-service backend project (package.json, Express, Mongoose, MONGODB_URI) | scope: tour-service
 - [ ] Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT) | scope: user-management-service
 - [ ] Install root/frontend/backend dependencies | scope: none

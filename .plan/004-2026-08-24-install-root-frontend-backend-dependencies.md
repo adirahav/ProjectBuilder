@@ -1,6 +1,6 @@
 # Plan 004 — Install root/frontend/backend dependencies
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-24
 Scope-Agents: none

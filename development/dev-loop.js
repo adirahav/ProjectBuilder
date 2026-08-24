@@ -224,7 +224,7 @@ const RESET = "\x1b[0m"
 
 const AGENT_IDENTITY = {
   "orchestrator": { icon: "👑", color: "\x1b[33m", label: "orchestrator" },
-  "designer":     { icon: "🖌️", color: "\x1b[91m", label: "designer" },
+  "designer":     { icon: "🖌️", color: "\x1b[95m", label: "designer" },
   "frontend":     { icon: "🎨", color: "\x1b[35m", label: "frontend" },
   "qa":           { icon: "🐛", color: "\x1b[32m", label: "qa" },
   "security":     { icon: "🛡️", color: "\x1b[36m", label: "security" },
@@ -692,6 +692,7 @@ async function runDesignerRevision(feedback) {
 
   const stdout = recordCost("designer", "Designer Agent (revision)", rawStdout)
   logLastCost("Designer Agent (revision)")
+  ensureDirFor(DESIGNER_REPORT_PATH)
   writeFileSync(DESIGNER_REPORT_PATH, stdout, "utf-8")
   return true
 }
@@ -1723,12 +1724,24 @@ const BLOCK_REASONS = {
 // to the report, print it in red, and block on user input before retrying
 // this exact step. A crashed/uncertain agent step must never be reported as
 // STATUS: DONE.
+// Callers of runAgent()/runAgentInteractive()/simulateAgent() pass an
+// outputFile path (e.g. docs/agent-reports/designer-agent-report.md) whose
+// directory isn't guaranteed to exist yet — REPORTS_DIR is only created
+// lazily inside the per-task loop, but the Designer agent (Step 0) writes
+// its report BEFORE that loop ever runs. Call this right before any
+// writeFileSync(outputFile, ...) to avoid an ENOENT.
+function ensureDirFor(filePath) {
+  const dir = dirname(filePath)
+  if (dir && dir !== "." && !existsSync(dir)) mkdirSync(dir, { recursive: true })
+}
+
 async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, label, agentKey }) {
   const kind = lastSpawnError?.kind || "FAILED"
   const reason = BLOCK_REASONS[kind] || BLOCK_REASONS.FAILED
   const raw = (lastSpawnError?.raw || "").trim()
 
   const statusPath = `${outputFile}.blocked.md`
+  ensureDirFor(statusPath)
   const statusContent = [
     `# ${label} — BLOCKED`,
     ``,
@@ -1794,6 +1807,7 @@ async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, ag
   const blockedStatusPath = `${outputFile}.blocked.md`
   if (existsSync(blockedStatusPath)) rmSync(blockedStatusPath)
 
+  ensureDirFor(outputFile)
   writeFileSync(outputFile, stdout, "utf-8")
   if (blockedRegex.test(stdout)) {
     printRed(`${label}: STATUS: BLOCKED — the agent found something that must be fixed before continuing.`)
@@ -1877,6 +1891,7 @@ async function runAgentInteractive({ systemPrompt, input, outputFile, doneMarker
 
 function simulateAgent(label, outputFile, doneMarker) {
   const content = `=== ${label.toUpperCase()} REPORT (SIMULATED) ===\n\n${doneMarker}\n`
+  ensureDirFor(outputFile)
   writeFileSync(outputFile, content)
 }
 

@@ -1,0 +1,27 @@
+{
+  "costTask": "Scaffold frontend project (Vite + React + TS + Tailwind v4 + Zustand + Lucide React)",
+  "costLog": [
+    {
+      "role": "orchestrator",
+      "label": "Orchestrator (planning)",
+      "inputTokens": 9,
+      "outputTokens": 6638,
+      "cacheReadTokens": 104921,
+      "costUsd": 0.2543598,
+      "costNis": 0.7610953935600001,
+      "durationS": 86.391
+    },
+    {
+      "role": "frontend",
+      "label": "Frontend Agent",
+      "inputTokens": 2568,
+      "outputTokens": 17480,
+      "cacheReadTokens": 2024975,
+      "costUsd": 1.11863825,
+      "costNis": 3.3471893716500003,
+      "durationS": 493.353
+    }
+  ],
+  "costTotalUsd": 1.37299805,
+  "costTotalNis": 4.1082847652100005
+}

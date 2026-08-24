@@ -1,0 +1,23 @@
+{
+  "tasks": [
+    {
+      "role": "orchestrator",
+      "label": "Orchestrator (planning)",
+      "inputTokens": 9,
+      "outputTokens": 6638,
+      "cacheReadTokens": 104921,
+      "costUsd": 0.2543598,
+      "durationMs": 86391
+    },
+    {
+      "role": "frontend",
+      "label": "Frontend Agent",
+      "inputTokens": 2568,
+      "outputTokens": 17480,
+      "cacheReadTokens": 2024975,
+      "costUsd": 1.11863825,
+      "durationMs": 493353
+    }
+  ],
+  "totalCostUsd": 1.37299805
+}

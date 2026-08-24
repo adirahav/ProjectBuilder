@@ -1,17 +1,17 @@
 {
-  "costTask": "Scaffold tour-service backend project (package.json, Express, Mongoose, MONGODB_URI)",
+  "costTask": "Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT)",
   "costLog": [
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 11,
-      "outputTokens": 8376,
-      "cacheReadTokens": 167027,
-      "costUsd": 0.27388285,
-      "costNis": 0.81951226377,
-      "durationS": 78.498
+      "inputTokens": 5,
+      "outputTokens": 8764,
+      "cacheReadTokens": 71002,
+      "costUsd": 0.21351785000000004,
+      "costNis": 0.6388881107700001,
+      "durationS": 72.899
     }
   ],
-  "costTotalUsd": 0.27388285,
-  "costTotalNis": 0.81951226377
+  "costTotalUsd": 0.21351785000000004,
+  "costTotalNis": 0.6388881107700001
 }

@@ -12,5 +12,12 @@
     "totalCostNis": 0.81951226377,
     "callCount": 1,
     "completedAt": "2026-08-24T17:11:31.392Z"
+  },
+  {
+    "task": "Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT)",
+    "totalCostUsd": 0.21351785000000004,
+    "totalCostNis": 0.6388881107700001,
+    "callCount": 1,
+    "completedAt": "2026-08-24T17:12:59.117Z"
   }
 ]

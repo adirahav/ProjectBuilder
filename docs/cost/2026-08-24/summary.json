@@ -3,12 +3,12 @@
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
-      "inputTokens": 11,
-      "outputTokens": 8376,
-      "cacheReadTokens": 167027,
-      "costUsd": 0.27388285,
-      "durationMs": 78498
+      "inputTokens": 5,
+      "outputTokens": 8764,
+      "cacheReadTokens": 71002,
+      "costUsd": 0.21351785000000004,
+      "durationMs": 72899
     }
   ],
-  "totalCostUsd": 0.27388285
+  "totalCostUsd": 0.21351785000000004
 }

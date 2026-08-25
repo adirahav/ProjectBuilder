@@ -56,7 +56,8 @@ const BASE_URL_ENV_KEYS: Record<ServiceName, string> = {
   'user-management-service': 'VITE_USER_SERVICE_BASE_URL',
 }
 
-const LOGIN_PATH = '/login'
+/** The Gateway (Screen 1) — where the admin login modal lives. */
+const LOGIN_PATH = '/'
 
 /**
  * Resolved at call time rather than module load, so the value always reflects
@@ -131,7 +132,12 @@ async function request<TResponse>(
     throw new NetworkError('Network request failed')
   }
 
-  if (res.status === 401) {
+  // 401 means "session expired" only for a request that actually carried a
+  // session. On a deliberately unauthenticated call (`withAuth: false` — login,
+  // signup) a 401 is the endpoint's own answer, i.e. invalid credentials: it
+  // must fall through to normal error classification so the caller can render it
+  // inline, with no auth wipe and no redirect away from the open modal.
+  if (res.status === 401 && withAuth) {
     await handleSessionExpiry()
     throw new ApiError(401, 'Session expired')
   }

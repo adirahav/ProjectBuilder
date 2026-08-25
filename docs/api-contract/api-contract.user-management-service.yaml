@@ -8,9 +8,10 @@ info:
     frontend calls this base URL directly (env `USER_SERVICE_BASE_URL`, exposed to
     the Vite build as `VITE_USER_SERVICE_BASE_URL`). There is no gateway.
 
-    Scope of this revision: `POST /api/auth/signup` only (ticket ADMINSIG-FE,
-    plan 005). Login (F1) and role promotion (F2b) are separate tickets and are
-    intentionally not specified here yet.
+    Scope of this revision: `POST /api/auth/signup` (ticket ADMINSIG-FE, plan
+    005) and `POST /api/auth/login` (ticket GATEWAYL-FE, plan 006). Role
+    promotion (F2b) is a separate ticket and is intentionally not specified here
+    yet.
 
 servers:
   - url: '{userServiceBaseUrl}'
@@ -111,6 +112,103 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
 
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Authenticate an admin and issue a session JWT
+      operationId: login
+      security: []  # public endpoint — the frontend sends no Authorization header
+      description: >
+        Authenticates the account identified by `email` and returns a signed JWT
+        (PRD F1). This is the "Admin login" entry point on Screen 1 (Gateway);
+        passengers never authenticate at all.
+
+        **Admin-only invariant (plan 006, Open Question 1):** the endpoint MUST
+        succeed only for an account whose `roles` include `admin`. A valid
+        non-admin account (e.g. one created by `POST /api/auth/signup`, which
+        always produces `roles: ["user"]`) MUST be rejected with the same 401 as
+        a wrong password — it MUST NOT receive a token from this endpoint.
+
+        **Uniform failure invariant:** unknown email, wrong password, and valid
+        non-admin account MUST all return an identical 401 body, with the same
+        `message` and the same `code`. Any difference between them — including a
+        measurable timing difference — leaks which accounts exist. The server
+        SHOULD therefore perform a dummy password comparison when the email is
+        unknown so the response time does not distinguish the cases.
+
+        The password MUST NOT be logged, echoed, or included in any response.
+
+        The frontend sends this request with no `Authorization` header
+        (`withAuth: false`), which means its `http.service.ts` deliberately does
+        NOT treat a 401 here as session expiry: no auth wipe, no redirect. The
+        login modal stays open and renders one generic Hebrew message inline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              valid:
+                summary: Valid admin credentials
+                value:
+                  email: hila@example.com
+                  password: Aegean2026
+      responses:
+        '200':
+          description: >
+            Authenticated. Returns the session token and the account. `roles`
+            MUST include `admin`, since no other case reaches this response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              examples:
+                authenticated:
+                  value:
+                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
+                    user:
+                      id: 6a1f0c2e-7d64-4a0b-9f2c-1c9b0d5e8a11
+                      fullName: הילה כהן
+                      email: hila@example.com
+                      roles: [user, admin]
+        '400':
+          description: >
+            Malformed request — a required field is missing or `email` is not a
+            valid address. The response MUST NOT indicate whether the account
+            exists, and MUST NOT echo the submitted password. The frontend
+            renders this with the same generic inline copy as a 401.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                missingField:
+                  value:
+                    message: Email and password are required
+                    code: VALIDATION_FAILED
+        '401':
+          description: >
+            Invalid credentials. Returned identically for an unknown email, a
+            wrong password, and a valid account without the `admin` role — the
+            three cases MUST be indistinguishable to the client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                invalidCredentials:
+                  summary: The only 401 body this endpoint may return
+                  value:
+                    message: Invalid credentials
+                    code: INVALID_CREDENTIALS
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -152,6 +250,46 @@ components:
             least one letter and one digit. Never persisted, logged, or returned.
           example: Aegean2026
 
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: >
+            The login identifier. The PRD calls this "username"; functionally it
+            is the account email, since the `User` model has no separate
+            `username` field (plan 006, Open Question 3). Normalized to lowercase
+            and trimmed by the client; the server MUST re-normalize.
+          example: hila@example.com
+        password:
+          type: string
+          format: password
+          maxLength: 128
+          description: >
+            Plaintext in transit over HTTPS only. No minimum length is enforced
+            on login — the stored hash is the only authority on correctness, and
+            re-applying the signup policy here would lock out accounts created
+            before a policy change. Never logged or returned.
+          example: Aegean2026
+
+    LoginResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: >
+            Signed JWT for the admin session. Persisted by the frontend via
+            `util.service.ts` (`@capacitor/preferences` on native, `localStorage`
+            on web) and attached as `Authorization: Bearer <token>` on subsequent
+            authenticated requests. MUST carry an expiry claim.
+        user:
+          $ref: '#/components/schemas/AuthUser'
+
     AuthUser:
       type: object
       required: [id, fullName, email, roles]
@@ -174,7 +312,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Role'
-          description: Always exactly `["user"]` for an account created via this endpoint.
+          description: >
+            The account's actual permission levels. Always exactly `["user"]`
+            for an account returned by `POST /api/auth/signup`; always contains
+            `admin` for an account returned by `POST /api/auth/login`. The
+            frontend derives its admin flag from this array only — it never
+            infers admin from "the request succeeded".
           example: [user]
       description: The account as returned to the client. Never includes the password hash.
 

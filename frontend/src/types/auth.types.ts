@@ -35,3 +35,31 @@ export type SignupResponse = {
 
 /** Per-field client-side validation errors for the signup form. */
 export type SignupFieldErrors = Partial<Record<keyof SignupPayload, string>>
+
+/**
+ * Request body for `POST /api/auth/login`.
+ *
+ * The PRD calls this "username"; functionally it is the `email` already carried
+ * by the `User` model (plan 006, Open Question 3) — no separate `username`
+ * field exists, so the login identifier is the account email.
+ */
+export type LoginPayload = {
+  email: string
+  password: string
+}
+
+/**
+ * Response body for `POST /api/auth/login`.
+ *
+ * Identical in shape to `SignupResponse`, but the semantics differ: this
+ * endpoint only succeeds for an account whose `roles` include `admin` (plan 006,
+ * Open Question 1), so the returned token IS admin-authorizing. `isAdmin` is
+ * still derived from the returned `roles`, never assumed from "login succeeded".
+ */
+export type LoginResponse = {
+  token: string
+  user: AuthUser
+}
+
+/** Per-field client-side validation errors for the admin login form. */
+export type LoginFieldErrors = Partial<Record<keyof LoginPayload, string>>

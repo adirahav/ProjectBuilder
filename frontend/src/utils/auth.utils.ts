@@ -1,4 +1,10 @@
-import type { Role, SignupFieldErrors, SignupPayload } from '../types/auth.types'
+import type {
+  LoginFieldErrors,
+  LoginPayload,
+  Role,
+  SignupFieldErrors,
+  SignupPayload,
+} from '../types/auth.types'
 
 /**
  * Client-side signup validation (plan 005, Open Question 2).
@@ -54,8 +60,29 @@ export function validateSignup(values: SignupPayload): SignupFieldErrors {
   return errors
 }
 
-export function hasFieldErrors(errors: SignupFieldErrors): boolean {
-  return Object.keys(errors).length > 0
+/**
+ * Client-side login validation (plan 006, Step 4).
+ *
+ * Deliberately weaker than `validateSignup`: login only checks that both fields
+ * are filled and the identifier is a plausible email. It must NOT enforce the
+ * signup password policy — an account created before a policy change would
+ * otherwise be locked out client-side, and echoing the policy back on a login
+ * form leaks nothing useful while blocking legitimate retries.
+ */
+export function validateLogin(values: LoginPayload): LoginFieldErrors {
+  const errors: LoginFieldErrors = {}
+
+  const email = validateEmail(values.email)
+  if (email) errors.email = email
+
+  if (!values.password) errors.password = 'יש להזין סיסמה'
+
+  return errors
+}
+
+/** True when any field carries an error, i.e. the form must not be submitted. */
+export function hasFieldErrors(errors: SignupFieldErrors | LoginFieldErrors): boolean {
+  return Object.values(errors).some(Boolean)
 }
 
 /**

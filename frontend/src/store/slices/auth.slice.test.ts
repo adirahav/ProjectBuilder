@@ -41,12 +41,21 @@ describe('authSlice', () => {
     expect(isAdmin(useStore.getState().currentUser?.roles)).toBe(true)
   })
 
-  it('clears the session back to the signed-out state', () => {
+  it('exposes isAdminSession derived from the returned roles', () => {
     useStore.getState().setSession(USER)
+    expect(useStore.getState().isAdminSession).toBe(false)
+
+    useStore.getState().setSession({ ...USER, roles: ['user', 'admin'] })
+    expect(useStore.getState().isAdminSession).toBe(true)
+  })
+
+  it('clears the session back to the signed-out state', () => {
+    useStore.getState().setSession({ ...USER, roles: ['admin'] })
 
     useStore.getState().clearSession()
 
     expect(useStore.getState().currentUser).toBeNull()
     expect(useStore.getState().isAuthenticated).toBe(false)
+    expect(useStore.getState().isAdminSession).toBe(false)
   })
 })

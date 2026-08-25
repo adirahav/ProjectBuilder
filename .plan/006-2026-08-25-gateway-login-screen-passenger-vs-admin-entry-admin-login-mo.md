@@ -1,6 +1,6 @@
 # Plan 006 — Gateway (Login) Screen: Passenger vs Admin Entry, Admin Login Modal
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-25
 Scope-Agents: frontend, user-management-service, qa, security

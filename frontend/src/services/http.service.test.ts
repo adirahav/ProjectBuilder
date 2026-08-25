@@ -94,7 +94,7 @@ describe('auth header', () => {
 })
 
 describe('error classification', () => {
-  it('clears the token and redirects to login on 401', async () => {
+  it('clears the token and redirects to the gateway on 401 for an authenticated request', async () => {
     await setAuthToken('test.jwt.token')
     fetchMock.mockResolvedValue(jsonResponse(401, { message: 'expired' }))
 
@@ -103,7 +103,26 @@ describe('error classification', () => {
     ).rejects.toBeInstanceOf(ApiError)
 
     await expect(getAuthToken()).resolves.toBeNull()
-    expect(assignMock).toHaveBeenCalledWith('/login')
+    expect(assignMock).toHaveBeenCalledWith('/')
+  })
+
+  it('treats a 401 on a withAuth:false request as invalid credentials, not session expiry', async () => {
+    // Login answers bad credentials with 401. Wiping auth and redirecting there
+    // would close the login modal out from under the user (plan 006).
+    await setAuthToken('existing.jwt.token')
+    fetchMock.mockResolvedValue(
+      jsonResponse(401, { message: 'Invalid credentials', code: 'INVALID_CREDENTIALS' }),
+    )
+
+    const error = await httpService
+      .post('/api/auth/login', {}, { service: 'user-management-service', withAuth: false })
+      .catch((err: unknown) => err)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(401)
+    expect((error as ApiError).code).toBe('INVALID_CREDENTIALS')
+    expect(assignMock).not.toHaveBeenCalled()
+    await expect(getAuthToken()).resolves.toBe('existing.jwt.token')
   })
 
   it('throws a ConflictError, not a generic ApiError, on 409', async () => {

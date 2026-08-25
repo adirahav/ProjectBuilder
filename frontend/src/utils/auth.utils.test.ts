@@ -5,6 +5,7 @@ import {
   validateEmail,
   validateFullName,
   validatePassword,
+  validateLogin,
   validateSignup,
 } from './auth.utils'
 
@@ -90,6 +91,42 @@ describe('validateSignup', () => {
 
     expect(Object.keys(errors).sort()).toEqual(['email', 'fullName', 'password'])
     expect(hasFieldErrors(errors)).toBe(true)
+  })
+})
+
+describe('validateLogin', () => {
+  it('accepts a filled-in credential pair', () => {
+    const errors = validateLogin({ email: 'hila@example.com', password: 'Aegean2026' })
+
+    expect(errors).toEqual({})
+    expect(hasFieldErrors(errors)).toBe(false)
+  })
+
+  it('requires both fields', () => {
+    const errors = validateLogin({ email: '', password: '' })
+
+    expect(errors.email).toBeDefined()
+    expect(errors.password).toBeDefined()
+    expect(hasFieldErrors(errors)).toBe(true)
+  })
+
+  it('rejects a malformed email identifier', () => {
+    expect(validateLogin({ email: 'nope', password: 'Aegean2026' }).email).toBeDefined()
+  })
+
+  it('does not apply the signup password policy, so old passwords can still log in', () => {
+    // A 5-char password would fail validateSignup; login must still submit it
+    // and let the server be the authority on whether it is correct.
+    const errors = validateLogin({ email: 'hila@example.com', password: 'short' })
+
+    expect(errors.password).toBeUndefined()
+    expect(hasFieldErrors(errors)).toBe(false)
+  })
+})
+
+describe('hasFieldErrors', () => {
+  it('ignores keys that were explicitly cleared to undefined', () => {
+    expect(hasFieldErrors({ email: undefined, password: undefined })).toBe(false)
   })
 })
 

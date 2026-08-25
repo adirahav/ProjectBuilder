@@ -33,5 +33,12 @@
     "totalCostNis": 3.5488503363600006,
     "callCount": 2,
     "completedAt": "2026-08-25T11:20:38.526Z"
+  },
+  {
+    "task": "Gateway (login) screen — passenger vs admin entry, admin login modal",
+    "totalCostUsd": 3.3679187499999994,
+    "totalCostNis": 10.077486483749999,
+    "callCount": 4,
+    "completedAt": "2026-08-25T17:35:55.699Z"
   }
 ]

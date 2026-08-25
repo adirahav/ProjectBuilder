@@ -1,23 +1,41 @@
 {
   "tasks": [
     {
+      "role": "orchestrator",
+      "label": "Orchestrator (planning)",
+      "inputTokens": 7,
+      "outputTokens": 3820,
+      "cacheReadTokens": 101980,
+      "costUsd": 0.15575825,
+      "durationMs": 42874
+    },
+    {
       "role": "frontend",
       "label": "Frontend Agent",
-      "inputTokens": 1665,
-      "outputTokens": 14792,
-      "cacheReadTokens": 1296305,
-      "costUsd": 0.86885725,
-      "durationMs": 305232
+      "inputTokens": 5437,
+      "outputTokens": 34435,
+      "cacheReadTokens": 4267809,
+      "costUsd": 2.1508067,
+      "durationMs": 525049
     },
     {
       "role": "qa",
       "label": "QA Agent",
-      "inputTokens": 34,
-      "outputTokens": 5103,
-      "cacheReadTokens": 506236,
-      "costUsd": 0.31717655,
-      "durationMs": 104400
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cacheReadTokens": 0,
+      "costUsd": 0,
+      "durationMs": 0
+    },
+    {
+      "role": "security",
+      "label": "Security Agent",
+      "inputTokens": 80,
+      "outputTokens": 15398,
+      "cacheReadTokens": 1902976,
+      "costUsd": 1.0613537999999998,
+      "durationMs": 222903
     }
   ],
-  "totalCostUsd": 1.1860338000000001
+  "totalCostUsd": 3.3679187499999994
 }

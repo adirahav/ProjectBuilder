@@ -1,6 +1,6 @@
 # Plan 005 — Admin Signup Page
 
-Status: active
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-24
 Scope-Agents: frontend, user-management-service, qa, security

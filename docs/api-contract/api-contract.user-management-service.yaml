@@ -1,0 +1,206 @@
+openapi: 3.0.3
+
+info:
+  title: Hila Tours — user-management-service API
+  version: 1.0.0
+  description: >
+    Auth and admin-account endpoints. Deployed independently on port 4002; the
+    frontend calls this base URL directly (env `USER_SERVICE_BASE_URL`, exposed to
+    the Vite build as `VITE_USER_SERVICE_BASE_URL`). There is no gateway.
+
+    Scope of this revision: `POST /api/auth/signup` only (ticket ADMINSIG-FE,
+    plan 005). Login (F1) and role promotion (F2b) are separate tickets and are
+    intentionally not specified here yet.
+
+servers:
+  - url: '{userServiceBaseUrl}'
+    description: user-management-service base URL
+    variables:
+      userServiceBaseUrl:
+        default: http://localhost:4002
+
+tags:
+  - name: auth
+    description: Account creation and session issuance.
+
+paths:
+  /api/auth/signup:
+    post:
+      tags: [auth]
+      summary: Create a new account
+      operationId: signup
+      security: []  # public endpoint — the frontend sends no Authorization header
+      description: >
+        Creates an account and returns a session JWT.
+
+        **Role invariant (PRD F2b / AC-2):** the account MUST always be created
+        with `roles: ["user"]`. The server MUST ignore any `roles`, `role`, or
+        `isAdmin` field present in the request body — no code path on this
+        endpoint may produce an account with `admin`. The issued token therefore
+        authenticates a plain `user` session and MUST NOT be treated as
+        admin-authorizing.
+
+        The password MUST be hashed (bcrypt/argon2) before persistence and MUST
+        never be returned, logged, or echoed back in any response.
+
+        Email uniqueness MUST be enforced by a unique index at the database
+        level, not only by an application-level pre-check, so concurrent signups
+        with the same email cannot both succeed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+            examples:
+              valid:
+                summary: Valid signup
+                value:
+                  fullName: הילה כהן
+                  email: hila@example.com
+                  password: Aegean2026
+      responses:
+        '201':
+          description: Account created. Returns the session token and the new account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignupResponse'
+              examples:
+                created:
+                  value:
+                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
+                    user:
+                      id: 6a1f0c2e-7d64-4a0b-9f2c-1c9b0d5e8a11
+                      fullName: הילה כהן
+                      email: hila@example.com
+                      roles: [user]
+        '400':
+          description: >
+            Validation failed — a required field is missing, the email is
+            malformed, or the password does not meet the policy (minimum 8
+            characters, at least one letter and one digit). The message MUST NOT
+            echo the submitted password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                weakPassword:
+                  value:
+                    message: Password must be at least 8 characters and contain a letter and a digit
+                    code: VALIDATION_FAILED
+        '409':
+          description: >
+            An account with this email already exists. The frontend surfaces this
+            inline on the email field without navigating away, so the response
+            MUST be distinguishable from a generic 400.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                duplicateEmail:
+                  value:
+                    message: Email already registered
+                    code: EMAIL_TAKEN
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Role:
+      type: string
+      enum: [admin, user]
+      description: >
+        Permission level on the account. `passenger` is not a role — passengers
+        are unauthenticated and are never persisted as accounts.
+
+    SignupRequest:
+      type: object
+      additionalProperties: false
+      required: [fullName, email, password]
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 120
+          example: הילה כהן
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Normalized to lowercase and trimmed by the client; the server MUST re-normalize.
+          example: hila@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+          description: >
+            Plaintext in transit over HTTPS only. Minimum 8 characters with at
+            least one letter and one digit. Never persisted, logged, or returned.
+          example: Aegean2026
+
+    AuthUser:
+      type: object
+      required: [id, fullName, email, roles]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >
+            Client-facing identifier. Mongo's `_id` is internal and MUST NOT
+            appear in any response (.rule/naming-rules.md "External Identity").
+          example: 6a1f0c2e-7d64-4a0b-9f2c-1c9b0d5e8a11
+        fullName:
+          type: string
+          example: הילה כהן
+        email:
+          type: string
+          format: email
+          example: hila@example.com
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+          description: Always exactly `["user"]` for an account created via this endpoint.
+          example: [user]
+      description: The account as returned to the client. Never includes the password hash.
+
+    SignupResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: >
+            Signed JWT for the new `user` session. Persisted by the frontend via
+            `util.service.ts` (`@capacitor/preferences` on native, `localStorage`
+            on web). Carries no admin authorization.
+        user:
+          $ref: '#/components/schemas/AuthUser'
+
+    ApiError:
+      type: object
+      description: >
+        Shared non-2xx payload across both services, consumed by
+        `frontend/src/services/http.service.ts`. The frontend never displays
+        `message` directly — it maps `status`/`code` to hardcoded Hebrew copy.
+      properties:
+        message:
+          type: string
+          description: Developer-facing English description. Must not contain secrets or the submitted password.
+        code:
+          type: string
+          description: Stable machine-readable error code the frontend can branch on.

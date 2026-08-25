@@ -50,15 +50,20 @@ export class NetworkError extends Error {
   }
 }
 
-const BASE_URLS: Record<ServiceName, string | undefined> = {
-  'tour-service': import.meta.env.VITE_TOUR_SERVICE_BASE_URL,
-  'user-management-service': import.meta.env.VITE_USER_SERVICE_BASE_URL,
+/** Env var backing each service's base URL. Never hardcode a URL. */
+const BASE_URL_ENV_KEYS: Record<ServiceName, string> = {
+  'tour-service': 'VITE_TOUR_SERVICE_BASE_URL',
+  'user-management-service': 'VITE_USER_SERVICE_BASE_URL',
 }
 
 const LOGIN_PATH = '/login'
 
+/**
+ * Resolved at call time rather than module load, so the value always reflects
+ * the current environment instead of a snapshot taken at import.
+ */
 function resolveBaseUrl(service: ServiceName): string {
-  const baseUrl = BASE_URLS[service]
+  const baseUrl = import.meta.env[BASE_URL_ENV_KEYS[service]] as string | undefined
   if (!baseUrl) {
     throw new Error(
       `Missing base URL env var for ${service}. Set VITE_TOUR_SERVICE_BASE_URL / VITE_USER_SERVICE_BASE_URL.`,

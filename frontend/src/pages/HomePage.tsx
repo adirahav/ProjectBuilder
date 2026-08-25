@@ -1,4 +1,5 @@
 import { Bus } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 /**
  * Temporary placeholder route for the scaffold. Feature tickets replace this
@@ -14,6 +15,16 @@ export function HomePage() {
         <h1 className="text-h1 text-primary-900">הילה טיולים</h1>
         <p className="text-body text-n-500">
           שלד הפרויקט הוקם בהצלחה. המסכים יתווספו בכרטיסים הבאים.
+        </p>
+        {/* Minimal reachability link until the real Gateway (Screen 1) is built. */}
+        <p className="text-label text-n-500">
+          אין לכם חשבון?
+          <Link
+            to="/signup"
+            className="ms-1 font-medium text-primary-700 underline underline-offset-2 hover:text-primary-900"
+          >
+            הרשמה
+          </Link>
         </p>
       </div>
     </main>

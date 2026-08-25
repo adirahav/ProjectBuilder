@@ -26,5 +26,12 @@
     "totalCostNis": 0.37924698744,
     "callCount": 1,
     "completedAt": "2026-08-24T17:13:56.688Z"
+  },
+  {
+    "task": "Admin signup page",
+    "totalCostUsd": 1.1860338000000001,
+    "totalCostNis": 3.5488503363600006,
+    "callCount": 2,
+    "completedAt": "2026-08-25T11:20:38.526Z"
   }
 ]

@@ -1,6 +1,5 @@
 {
-  "costTask": "Admin signup page",
-  "costLog": [
+  "tasks": [
     {
       "role": "frontend",
       "label": "Frontend Agent",
@@ -8,8 +7,7 @@
       "outputTokens": 14792,
       "cacheReadTokens": 1296305,
       "costUsd": 0.86885725,
-      "costNis": 2.59979466345,
-      "durationS": 305.232
+      "durationMs": 305232
     },
     {
       "role": "qa",
@@ -18,10 +16,8 @@
       "outputTokens": 5103,
       "cacheReadTokens": 506236,
       "costUsd": 0.31717655,
-      "costNis": 0.94905567291,
-      "durationS": 104.4
+      "durationMs": 104400
     }
   ],
-  "costTotalUsd": 1.1860338000000001,
-  "costTotalNis": 3.54885033636
+  "totalCostUsd": 1.1860338000000001
 }

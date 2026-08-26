@@ -147,6 +147,7 @@ The worked example in each template is a starting point, not a contract. If the 
       "autoApprovePlans": false,
       "autoMergeTasks": false,
       "autoApproveDesign": false,
+      "createBranchPerTask": true,
       "linearEnabled": true,
       "designSource": "NONE"
     }
@@ -154,9 +155,10 @@ The worked example in each template is a starting point, not a contract. If the 
     - `autoApprovePlans` — `true` if Approval mode was answered "ungated" (see that section), `false` if "gated". `development/dev-loop.js` also self-adopts this from `.setup-progress.md` on its own first run if this key is still `false`/missing, so getting it right here isn't strictly load-bearing — but don't leave it unset if the answer is already known.
     - `autoMergeTasks` — deliberately **separate** from `autoApprovePlans`, not derived from Approval mode. Always defaults to `false` (always ask before merging a finished task branch into the base branch) unless the user explicitly asks for automatic merging during setup — merging into the branch the human is actually sitting on is a distinct, higher-stakes decision than plan/feature approval, so it never inherits "ungated" implicitly.
     - `autoApproveDesign` — **only meaningful if `designSource` is `"DESIGNER_AGENT"`**; otherwise leave it `false`, it's simply never read. Set from the sub-question asked right after "Designer agent" is chosen in Q9 above — `false` (always stop and wait for terminal APPROVED-or-feedback) unless the user explicitly asked for no-wait. Also deliberately separate from `autoApprovePlans`/`autoMergeTasks` — approving a visual system every future screen has to match is its own decision, not implied by either of the other two.
+    - `createBranchPerTask` — `true` (per-task branch, merged back only after approval — the safer default) unless the user explicitly wants every task committed straight onto the base branch instead (no per-task branch, no merge-approval step — useful for a batch of small/related tasks where per-task branching is more friction than value). This used to be asked fresh on every single `dev-loop.js` run instead of living here — that turned out to be more annoying in practice (the same question, every run) than useful, so it's now a normal setup-time setting like the others. Only ask about it during setup if the user brings it up; otherwise leave the default.
     - `linearEnabled` — `true`/`false` matching whether Linear is the issue tracker (Q9).
     - `designSource` — `"FIGMA"` / `"AISTUDIO"` / `"DESIGNER_AGENT"` / `"NONE"` matching Q9's design-source branch exactly, not left as a placeholder. `"DESIGNER_AGENT"` is what makes `development/dev-loop.js` actually launch `agents/designer/CLAUDE.md` once, automatically, before the first backlog task — get this value right or that step silently never runs.
-    This file is plain, committed JSON — deliberately not an env file, since none of these four values are secrets or read by the product's own runtime code, only by the orchestrator script.
+    This file is plain, committed JSON — deliberately not an env file, since none of these five values are secrets or read by the product's own runtime code, only by the orchestrator script.
 
 ### On `docs/api-contract/*.yaml`
 These files are not part of the template scaffolding at all — no phase above touches them. They're a normal **build artifact**: per `agents/frontend/CLAUDE.md`, the Frontend Agent writes one `docs/api-contract/api-contract.<service-name>.yaml` per service as a byproduct of implementing each real feature ticket, only for the service(s) that ticket touches. Once `agents/frontend/CLAUDE.md` (Phase C) is correctly filled with the new project's real service names, the existing reference-project contract files under `docs/api-contract/` can simply be deleted — they will be regenerated automatically the first time a ticket reaches the Frontend Agent. Do not attempt to pre-generate them during setup.

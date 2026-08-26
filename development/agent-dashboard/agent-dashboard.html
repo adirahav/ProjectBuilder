@@ -69,7 +69,19 @@
   }
   .node .icon { font-size: 30px; line-height: 1; }
   .node .icon-img { width: 92px; height: 92px; border-radius: 50%; object-fit: cover; display: block; filter: brightness(1.25) contrast(1.1) saturate(1.1); }
-  .node .name { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: center; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: absolute; bottom: 10px; color: aliceblue;}
+  /* The name label curves along the bottom rim of the circular portrait
+     (a 0-100 square viewBox arc, see makeNode()'s comment) instead of
+     sitting on a flat line — same idea for every node size, since the SVG
+     viewBox scales proportionally with whatever pixel box it renders into. */
+  .node .name-arc { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .node .name-arc text {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
+    fill: aliceblue;
+    paint-order: stroke;
+    stroke: rgba(0, 0, 0, 0.6);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
   .node.center { width: 128px; height: 128px; margin-left: -64px; margin-top: -64px; }
   .node.center .icon { font-size: 42px; }
   .node.center .icon-img { width: 124px; height: 124px; }
@@ -82,19 +94,25 @@
     width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 3px;
     background: radial-gradient(circle at 32% 30%, rgba(59, 130, 246, 0.24), var(--panel) 72%);
   }
-  .node.satellite .icon-img { width: 20px; height: 20px; margin-bottom: 1px; }
+  .node.satellite .icon-img { width: 50px; height: 50px; margin-bottom: 1px; }
   /* Extra attribute selector to out-specificity the generic idle-border rule
      below (.node[data-agent]) — satellites keep their own static tint even
      while idle, instead of falling back to the plain gray border. */
   .node.satellite[data-agent] { border-color: rgba(59, 130, 246, 0.45); }
-  .node.satellite .name {
-    font-size: 7.5px; line-height: 1.15; font-weight: 700; letter-spacing: 0.01em;
-    color: #eaf2ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-    /* Overriding the base .node .name rule's nowrap/ellipsis — satellites
-       need real 2-line wrapping (via the explicit <br> in ringLabel above),
-       not a single-line ellipsis that mangles mid-word. */
-    max-width: 46px; white-space: normal; margin-top: 0; overflow: visible; text-overflow: clip;
+  /* Mini-service label sits BELOW the circle (outside the portrait), not
+     overlaid on top of it — the base .name-arc rule fills/overlays the
+     whole node, so satellites need their own smaller box positioned just
+     under it instead. Fixed pixel width (not 100%) since the satellite
+     circle itself is only 52px — the label plate is deliberately wider than
+     the circle so a real service name has room to read. */
+  .node.satellite .name-arc {
+    inset: auto; left: 50%; top: 100%;
+    width: 140px; height: 36px;
+    margin-top: -28px;
+    transform: translateX(-50%);
+    overflow: visible;
   }
+  .node.satellite .name-arc text { font-size: 10px; }
 
   .node.active {
     transform: scale(1.12);
@@ -123,18 +141,40 @@
     50% { filter: brightness(1.35); }
   }
 
-  #sidebar {
-    grid-column: 2; grid-row: 1;
+  /* Right side: LIVE STATUS is always visible at top (not a tab — it's the
+     one thing you always want in view), followed by a tabbed area (Cost /
+     Live App / Design) that gets the rest of the column's height — so the
+     app/design preview iframe is no longer squeezed into small leftover
+     space under a fixed status+history stack. */
+  #right-panel {
+    grid-column: 2; grid-row: 1 / span 2;
     display: flex; flex-direction: column;
+    min-height: 0;
     padding: 20px 24px;
-    overflow: hidden;
   }
+  #right-tabs {
+    display: flex; gap: 6px;
+    margin: 16px 0 14px;
+    flex-shrink: 0;
+  }
+  .right-tab {
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 6px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .right-tab.active { color: var(--text); border-color: var(--orchestrator); box-shadow: 0 0 10px rgba(240, 180, 41, 0.25); }
+  .right-tab-panel { display: none; flex-direction: column; min-height: 0; flex: 1; }
+  .right-tab-panel.active { display: flex; }
   #status-card {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 18px 20px;
-    margin-bottom: 16px;
+    flex-shrink: 0;
   }
   #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
@@ -160,14 +200,26 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 14px 16px;
-    margin-bottom: 16px;
     overflow: hidden;
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
   }
-  #history-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; }
-  /* Capped height with its own scrollbar — a growing task list must never
-     eat into the live-app iframe's space below (#iframe-wrap takes whatever
-     vertical room #sidebar's siblings leave it). */
-  #history-list { max-height: 100px; overflow-y: auto; font-size: 12px; }
+  #history-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; flex-shrink: 0; }
+  #cost-summary {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 10px 12px; margin-bottom: 12px;
+    border-radius: 10px;
+    background: rgba(240, 180, 41, 0.08);
+    border: 1px solid rgba(240, 180, 41, 0.25);
+    font-size: 12px; color: var(--dim);
+    flex-shrink: 0;
+  }
+  #cost-summary:empty { display: none; }
+  #cost-summary-total { font-size: 18px; font-weight: 700; color: var(--orchestrator); }
+  /* The Cost tab now has the whole tab panel's height to work with (not a
+     cramped 100px sliver above the iframe like before) — so its own
+     scrollbar only kicks in once the history genuinely outgrows that. */
+  #history-list { flex: 1; min-height: 0; overflow-y: auto; font-size: 12px; }
   #history-table { width: 100%; border-collapse: collapse; }
   #history-table th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
   #history-table th:last-child, #history-table td:last-child { text-align: right; }
@@ -184,17 +236,12 @@
   #active-thinking { animation: thinkingPulse 3.2s ease-in-out infinite; }
   @keyframes thinkingPulse { 0%, 100% { color: var(--dim); } 50% { color: #35353f; } }
 
-  #iframe-wrap {
-    grid-column: 2; grid-row: 2;
-    padding: 0 24px 20px;
-    display: flex; flex-direction: column;
-    flex: 1; min-height: 0;
-  }
-  #iframe-wrap .label {
+  .panel-header {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px;
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    flex-shrink: 0;
   }
-  #iframe-refresh {
+  .panel-refresh {
     font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: normal;
     padding: 3px 10px;
     border-radius: 12px;
@@ -203,8 +250,16 @@
     color: var(--text);
     cursor: pointer;
   }
-  #iframe-refresh:hover { border-color: var(--orchestrator); }
-  #app-frame {
+  .panel-refresh:hover { border-color: var(--orchestrator); }
+  #mockup-select {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  .panel-frame {
     flex: 1; min-height: 0;
     width: 100%;
     border: 1px solid var(--border);
@@ -244,7 +299,7 @@
     </div>
   </div>
 
-  <div id="sidebar">
+  <div id="right-panel">
     <div id="status-card">
       <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span> <span id="status-task-name"></span></div>
       <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/images/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
@@ -253,23 +308,40 @@
       <div class="updated" id="active-updated"></div>
     </div>
 
-    <div id="history-card">
-      <div class="label">📜 Task History</div>
-      <div id="history-list">
-        <table id="history-table">
-          <thead><tr><th>Task</th><th>USD</th></tr></thead>
-          <tbody id="history-tbody"></tbody>
-        </table>
+    <div id="right-tabs">
+      <button class="right-tab active" id="tab-cost" data-panel="panel-cost">📜 Cost</button>
+      <button class="right-tab" id="tab-liveapp" data-panel="panel-liveapp">🌐 Live App</button>
+      <button class="right-tab" id="tab-design" data-panel="panel-design" style="display:none">🖌️ Design</button>
+    </div>
+
+    <div class="right-tab-panel active" id="panel-cost">
+      <div id="history-card">
+        <div class="label">📜 Task History</div>
+        <div id="cost-summary"></div>
+        <div id="history-list">
+          <table id="history-table">
+            <thead><tr><th>Task</th><th>USD</th></tr></thead>
+            <tbody id="history-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
-  </div>
 
-  <div id="iframe-wrap">
-    <div class="label">
-      🌐 Live app — http://localhost:5173
-      <button id="iframe-refresh" title="Reload the preview">↻ Refresh</button>
+    <div class="right-tab-panel" id="panel-liveapp">
+      <div class="panel-header">
+        http://localhost:5173
+        <button id="iframe-refresh" class="panel-refresh" title="Reload the preview">↻ Refresh</button>
+      </div>
+      <iframe class="panel-frame" id="app-frame" src="http://localhost:5173" title="Live app preview"></iframe>
     </div>
-    <iframe id="app-frame" src="http://localhost:5173" title="Live app preview"></iframe>
+
+    <div class="right-tab-panel" id="panel-design">
+      <div class="panel-header">
+        <select id="mockup-select"></select>
+        <button id="mockup-refresh" class="panel-refresh" title="Reload the preview">↻ Refresh</button>
+      </div>
+      <iframe class="panel-frame" id="mockup-frame" title="Design mockup preview"></iframe>
+    </div>
   </div>
 </div>
 
@@ -315,7 +387,13 @@ const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png
 // to CSS auto-wrap instead, a long single word wrapped mid-letter into an
 // illegible ellipsis. Keys without a hyphen render on one line as-is.
 function serviceRingLabel(key) {
-  return key.includes("-") ? key.replace("-", "-<br>") : key;
+  // Break at the LAST hyphen, not the first — "user-management-service"
+  // should read "user-management" / "service", not "user-" / "management-
+  // service". Splitting at the first hyphen instead orphans a bare "user-"
+  // on its own line and buries the actual last word ("service") in the
+  // middle of line two.
+  const lastDash = key.lastIndexOf("-");
+  return lastDash === -1 ? key : `${key.slice(0, lastDash)}<br>${key.slice(lastDash + 1)}`;
 }
 
 // Populated once the real per-project service list is fetched — see
@@ -536,6 +614,49 @@ document.getElementById("iframe-refresh").addEventListener("click", async () => 
   btn.textContent = "↻ Refresh";
 });
 
+// Right-side tab bar (Cost / Live App / Design) — LIVE STATUS above it stays
+// visible regardless of which tab is selected. Each tab's panel gets the
+// full remaining column height instead of a fixed status+history stack
+// squeezing the iframe into leftover space.
+document.querySelectorAll(".right-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".right-tab").forEach((b) => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".right-tab-panel").forEach((p) => p.classList.toggle("active", p.id === btn.dataset.panel));
+  });
+});
+
+// Design-mockup preview — lets the human review the Designer agent's output
+// right inside the dashboard instead of hunting down and opening each
+// docs/design/mockups/*.html file manually. The Design tab stays hidden
+// entirely when the project isn't using the Designer agent / has no
+// mockups yet — see initDesignMockups() below.
+document.getElementById("mockup-select").addEventListener("change", (e) => {
+  document.getElementById("mockup-frame").src = `/docs/design/mockups/${e.target.value}`;
+});
+document.getElementById("mockup-refresh").addEventListener("click", () => {
+  const frame = document.getElementById("mockup-frame");
+  frame.src = frame.src;
+});
+
+async function initDesignMockups() {
+  try {
+    const res = await fetch("/design-mockups.json", { cache: "no-store" });
+    const data = await res.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+    if (!files.length) return;
+    const select = document.getElementById("mockup-select");
+    select.innerHTML = files
+      .map((f) => `<option value="${f}">${f.replace(/\.html$/, "")}</option>`)
+      .join("");
+    document.getElementById("mockup-frame").src = `/docs/design/mockups/${files[0]}`;
+    document.getElementById("tab-design").style.display = "";
+  } catch {
+    // Dashboard server not reachable yet — leave the Design tab hidden;
+    // nothing to retry here, poll()'s own cadence isn't relevant to a
+    // one-time file listing like this.
+  }
+}
+
 const ring = document.getElementById("ring");
 const beams = document.getElementById("beams");
 
@@ -557,6 +678,17 @@ function pointAt(cx, cy, radiusPct, angleDeg) {
   return { x: cx + radiusPct * Math.cos(rad), y: cy + radiusPct * Math.sin(rad) };
 }
 
+// Every node's name now curves along the bottom rim of its own circular
+// portrait — like a badge/seal label — instead of sitting on a flat line.
+// The arc path is defined in a 0-100 square viewBox, so it scales correctly
+// for every node size (center/primary/satellite) without needing a
+// per-size variant: SVG maps that viewBox onto whatever pixel box the
+// element actually renders at, and a fixed user-unit font-size scales
+// proportionally right along with it.
+function escapeXml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+
 function makeNode(agent, pos, isCenter, isSatellite) {
   const el = document.createElement("div");
   el.className = "node" + (isCenter ? " center" : "") + (isSatellite ? " satellite" : "");
@@ -568,7 +700,38 @@ function makeNode(agent, pos, isCenter, isSatellite) {
     : agent.icon
       ? `<div class="icon">${agent.icon}</div>`
       : "";
-  el.innerHTML = `${iconHtml}<div class="name">${agent.ringLabel || agent.name}</div>`;
+  const arcId = `name-arc-path-${agent.key}`;
+  // Primary/center nodes: label curves along the bottom rim, overlaid ON the
+  // portrait (viewBox matches the node's own 0-100 square) — single line.
+  //
+  // Mini-service satellites: the circle is tiny (52px) and several sit close
+  // together in a fan — a label overlaid on the portrait there is nearly
+  // unreadable, so it renders BELOW the circle instead, as two stacked
+  // curved lines (splitting on ringLabel's own first-hyphen <br>, e.g.
+  // "user-" / "management-service") rather than one cramped line — a real
+  // service name doesn't fit legibly on a single short arc no matter how
+  // wide the plate gets. Both arcs share the same tight radius (a
+  // pronounced bow, not the earlier near-flat curve) and `overflow="visible"`
+  // (both here and in CSS) lets a still-too-long line spill past the
+  // plate's edges instead of being hard-clipped mid-word.
+  const nameSvg = isSatellite
+    ? (() => {
+        const [line1, line2] = (agent.ringLabel || agent.name).split(/<br>\s*/).map((s) => escapeXml(s || ""))
+        const arcId2 = `${arcId}-2`
+        return `
+    <svg class="name-arc" viewBox="0 0 140 36" overflow="visible">
+      <path id="${arcId}" d="M8,20 A90,90 0 0 0 132,20" fill="none"></path>
+      <path id="${arcId2}" d="M8,34 A90,90 0 0 0 132,34" fill="none"></path>
+      <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${line1}</textPath></text>
+      ${line2 ? `<text><textPath href="#${arcId2}" startOffset="50%" text-anchor="middle">${line2}</textPath></text>` : ""}
+    </svg>`
+      })()
+    : `
+    <svg class="name-arc" viewBox="0 0 100 100">
+      <path id="${arcId}" d="M10,80 A80,80 0 0 0 90,80" fill="none"></path>
+      <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${escapeXml(agent.ringLabel || agent.name)}</textPath></text>
+    </svg>`;
+  el.innerHTML = `${iconHtml}${nameSvg}`;
   ring.appendChild(el);
   return el;
 }
@@ -754,14 +917,24 @@ async function poll() {
   try {
     const historyRes = await fetch("/docs/cost/task-history.json", { cache: "no-store" });
     const history = historyRes.ok ? await historyRes.json() : [];
-    renderHistory(Array.isArray(history) ? history.slice(-30).reverse() : []);
+    renderHistory(Array.isArray(history) ? history : []);
   } catch {
     // Files not written yet (nothing completed this run) — leave whatever
     // was last rendered (or the initial empty state) as-is.
   }
 }
 
-function renderHistory(history) {
+function renderHistory(fullHistory) {
+  // Total is summed over the FULL history, not just the 30 rows the table
+  // actually shows below — otherwise the total would silently under-report
+  // once a project has completed more than 30 tasks.
+  const totalUsd = fullHistory.reduce((sum, h) => sum + (h.totalCostUsd || 0), 0);
+  const summaryEl = document.getElementById("cost-summary");
+  summaryEl.innerHTML = fullHistory.length
+    ? `<span>${fullHistory.length} task${fullHistory.length === 1 ? "" : "s"} completed</span><span id="cost-summary-total">$${totalUsd.toFixed(4)}</span>`
+    : "";
+
+  const history = fullHistory.slice(-30).reverse();
   const tbody = document.getElementById("history-tbody");
   if (!history.length) {
     tbody.innerHTML = '<tr><td colspan="2" id="history-empty">No completed tasks yet</td></tr>';
@@ -780,6 +953,7 @@ initDashboard().finally(() => {
   poll();
   setInterval(poll, 1000);
 });
+initDesignMockups();
 </script>
 </body>
 </html>

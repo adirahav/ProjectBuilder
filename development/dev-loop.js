@@ -3,14 +3,19 @@
  * Dev Loop Orchestrator
  *
  * This repo is a monorepo: `frontend/` + `backend/`, with one subfolder per
- * backend service (currently `api-gateway`, `booking-service`,
- * `user-service`, `notification-service` — discovered at runtime from
- * each backend/<service>/package.json, see `discoverBackendServices()` below, not
- * hardcoded here). All backend services are built and run via
- * `agents/backend/CLAUDE.md` (one shared prompt, parameterized per service).
- * There is no external design source — the Frontend Agent designs the UI
- * itself per `.rule/style-rules.md`. There is no issue tracker; task approval
- * happens entirely through local plan files and terminal/chat approval gates.
+ * backend service — discovered at runtime from each backend/<service>/
+ * package.json, see `discoverBackendServices()` below, not hardcoded here.
+ * All backend services are built and run via `agents/backend/CLAUDE.md` (one
+ * shared prompt, parameterized per service). Design source depends on
+ * orchestrator.config.json's `designSource`: `"DESIGNER_AGENT"` runs the
+ * Designer agent once, before the first backlog task, to establish the
+ * visual system and key mockups the Frontend Agent then builds screens
+ * against; `"FIGMA"`/`"AISTUDIO"` point at an existing filesystem export
+ * instead; `"NONE"` means the Frontend Agent designs the UI itself per
+ * `.rule/style-rules.md`. Issue tracking (Linear) is optional per
+ * orchestrator.config.json's `linearEnabled` — when off, task approval
+ * happens entirely through local plan files and terminal/chat approval
+ * gates.
  *
  * Loop per backlog item:
  *   1) Pick next task from .plan/000-backlog.md
@@ -143,6 +148,20 @@ const AUTO_APPROVE_DESIGN = process.env.AUTO_APPROVE_DESIGN != null || getArg("-
   ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_DESIGN || getArg("--auto-approve-design"))
   : Boolean(orchestratorConfig.autoApproveDesign)
 
+// Whether every task gets its own git branch (merged back only after human
+// approval) or commits straight onto the base branch. Used to ask fresh on
+// every single run — that turned out to be more annoying than useful in
+// practice (a human had to answer the same question every time she started
+// the loop). Now a normal orchestrator.config.json setting like the other
+// gates above: set once, applies to every run until changed. Default (the
+// key absent entirely) is `true` — per-task branches, the original/existing
+// behavior — since that's the safer choice for anyone who hasn't set an
+// opinion either way. A CLI flag/env var can still override it for a
+// one-off run without touching the config file.
+const CREATE_BRANCH_PER_TASK = process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
+  ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
+  : orchestratorConfig.createBranchPerTask !== false
+
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
 const COST_DIR = "docs/cost"
@@ -163,17 +182,53 @@ const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
 
-// Backend services are discovered from backend/*/package.json instead of
-// hardcoded — a project with a different set of services (more, fewer,
-// different names) just works, no code edit needed. Sorted for a stable,
-// reproducible order (port/ticket-code assignment below depends on it).
-// Falls back to [] before any backend service has been scaffolded yet.
+// Non-service scope keywords the backlog's `scope:` field can also contain —
+// never real backend-service keys, so scanBacklogForServiceKeys() below must
+// exclude them or every task would spuriously "discover" a fake service.
+const NON_SERVICE_SCOPE_KEYWORDS = new Set(["frontend", "qa", "security", "none"])
+
+// The FIRST scaffold task for a given service names it in the backlog's own
+// `scope:` field before backend/<service>/ exists on disk at all — relying
+// solely on directory-scanning is a chicken-and-egg bug: BACKEND_SERVICE_KEYS
+// is computed once at startup, so a not-yet-scaffolded service's own scaffold
+// task never finds itself in that list, the per-service launch loop below
+// has nothing to iterate for it, and the task silently completes as DONE
+// with the backend agent never having run at all (confirmed happening for
+// real — see chat history). Scanning every backlog line's `scope:` field
+// (not just unchecked ones — a service already marked done still needs to
+// stay discoverable after a restart) and unioning with the directory scan
+// closes that gap: any scope token that isn't a known non-service keyword is
+// treated as a real backend-service key, whether or not its directory
+// exists yet.
+function scanBacklogForServiceKeys() {
+  if (!existsSync(BACKLOG_FILE)) return []
+  const content = readFileSync(BACKLOG_FILE, "utf-8")
+  const keys = new Set()
+  for (const line of content.split("\n")) {
+    const m = line.match(/scope:\s*([^|]+)/i)
+    if (!m) continue
+    for (const token of m[1].split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
+      if (!NON_SERVICE_SCOPE_KEYWORDS.has(token)) keys.add(token)
+    }
+  }
+  return [...keys]
+}
+
+// Backend services are discovered from backend/*/package.json (already-
+// scaffolded services) UNIONED with every service key ever named in the
+// backlog's `scope:` field (see scanBacklogForServiceKeys() above) — so a
+// service's own first scaffold task can actually launch the backend agent
+// for it, not just every task after it already exists on disk. Sorted for a
+// stable, reproducible order (port/ticket-code assignment below depends on
+// it). Falls back to [] before any backend service has been scaffolded AND
+// no backlog task mentions one yet.
 function discoverBackendServices() {
-  if (!existsSync("backend")) return []
-  return readdirSync("backend", { withFileTypes: true })
-    .filter((e) => e.isDirectory() && existsSync(`backend/${e.name}/package.json`))
-    .map((e) => e.name)
-    .sort()
+  const onDisk = existsSync("backend")
+    ? readdirSync("backend", { withFileTypes: true })
+        .filter((e) => e.isDirectory() && existsSync(`backend/${e.name}/package.json`))
+        .map((e) => e.name)
+    : []
+  return [...new Set([...onDisk, ...scanBacklogForServiceKeys()])].sort()
 }
 
 // kebab-case service key -> camelCase property name, used to key the
@@ -182,8 +237,13 @@ function camelKey(kebabKey) {
   return kebabKey.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
 }
 
-const BACKEND_SERVICE_KEYS = discoverBackendServices()
-const ALL_AGENT_KEYS = ["orchestrator", "designer", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
+// `let`, not `const` — refreshBackendServiceKeys() (defined below, after
+// API_CONTRACTS/BACKEND_PORTS/AGENT_IDENTITY exist to extend) reassigns this
+// as new backend services are discovered mid-run, so a long dev-loop.js
+// session self-heals without needing a restart every time a service becomes
+// known (scaffolded on disk, or newly named in the backlog's `scope:`).
+let BACKEND_SERVICE_KEYS = discoverBackendServices()
+let ALL_AGENT_KEYS = ["orchestrator", "designer", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -736,17 +796,42 @@ async function reviewDesignUntilApproved() {
   }
 }
 
+// Returns a promise that resolves once the server has either started
+// listening or failed to — callers await this before printing/asking
+// anything else. Without it, .listen()'s callback fires asynchronously and
+// can land in the middle of the very next interactive prompt (the
+// branch-per-task question), interleaving the "AGENT DASHBOARD" banner with
+// an already-displayed readline prompt and making it look like the terminal
+// is stuck or re-asking, even though the prompt itself is still live and
+// still accepting the answer already typed.
 function startDashboardServer() {
   const dashboardPath = `${DASHBOARD_DIR}/agent-dashboard.html`
   const assetsDir = `${DASHBOARD_DIR}/assets`
 
   const server = http.createServer((req, res) => {
+    // Lets the dashboard show the Designer agent's mockups in-page (a select
+    // of screen names + an iframe pointed at /docs/design/mockups/<file> via
+    // the generic /docs/** route below) instead of the human having to open
+    // each .html file manually. Empty list (dir doesn't exist yet, or this
+    // project isn't using the Designer agent) just means the panel stays
+    // hidden client-side — this route never errors for that case.
+    if (req.url === "/design-mockups.json") {
+      const mockupsDir = "docs/design/mockups"
+      const files = existsSync(mockupsDir)
+        ? readdirSync(mockupsDir).filter((f) => f.endsWith(".html")).sort()
+        : []
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ files }))
+      return
+    }
+
     if (req.url === "/status.json") {
-      // `services` is injected fresh from the in-memory discovery result on
-      // every request (not just written once to the file) — the dashboard
-      // needs the CURRENT project's backend service list, and this is the
-      // one place both the "file missing yet" default and the persisted
-      // status object are guaranteed to pass through.
+      // `services` is injected fresh on every request — refreshBackendServiceKeys()
+      // re-scans (disk + backlog `scope:`) right here, not just once at
+      // startup, so a service that gets scaffolded (or newly named in the
+      // backlog) mid-session appears on the ring within a second, no
+      // dev-loop.js restart needed.
+      refreshBackendServiceKeys()
       const base = existsSync(AGENT_STATUS_PATH)
         ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
         : { message: "", category: null, keys: [], task: "", taskProgress: null, updatedAt: null, lastEvent: null }
@@ -796,7 +881,7 @@ function startDashboardServer() {
         return
       }
       const ext = fullPath.split(".").pop().toLowerCase()
-      const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8" }
+      const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8", html: "text/html; charset=utf-8" }
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
       res.end(readFileSync(fullPath))
       return
@@ -832,34 +917,36 @@ function startDashboardServer() {
     res.end(readFileSync(dashboardPath, "utf-8"))
   })
 
-  // Without this, a failed .listen() (e.g. the port already held by a
-  // zombie process from a previous interrupted run) emits an unhandled
-  // 'error' event, which Node treats as an uncaught exception and crashes
-  // the whole script — silently, with no clear message pointing at the
-  // dashboard as the cause.
-  server.on("error", (e) => {
-    warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
-    if (e.code === "EADDRINUSE") {
-      warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
-    }
-  })
+  return new Promise((resolveStarted) => {
+    // Without this, a failed .listen() (e.g. the port already held by a
+    // zombie process from a previous interrupted run) emits an unhandled
+    // 'error' event, which Node treats as an uncaught exception and crashes
+    // the whole script — silently, with no clear message pointing at the
+    // dashboard as the cause.
+    server.on("error", (e) => {
+      warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
+      if (e.code === "EADDRINUSE") {
+        warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
+      }
+      resolveStarted(null)
+    })
 
-  server.listen(DASHBOARD_PORT, () => {
-    const url = `http://localhost:${DASHBOARD_PORT}/`
-    banner(`AGENT DASHBOARD — ${url}`)
-    log(`If it didn't open automatically, open this URL yourself: ${url}`)
-    const openCmd =
-      process.platform === "win32" ? `start "" "${url}"` :
-      process.platform === "darwin" ? `open "${url}"` :
-      `xdg-open "${url}"`
-    try {
-      execSync(openCmd, { stdio: "ignore" })
-    } catch (e) {
-      warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
-    }
+    server.listen(DASHBOARD_PORT, () => {
+      const url = `http://localhost:${DASHBOARD_PORT}/`
+      banner(`AGENT DASHBOARD — ${url}`)
+      log(`If it didn't open automatically, open this URL yourself: ${url}`)
+      const openCmd =
+        process.platform === "win32" ? `start "" "${url}"` :
+        process.platform === "darwin" ? `open "${url}"` :
+        `xdg-open "${url}"`
+      try {
+        execSync(openCmd, { stdio: "ignore" })
+      } catch (e) {
+        warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
+      }
+      resolveStarted(server)
+    })
   })
-
-  return server
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -938,38 +1025,16 @@ function checkPrerequisites() {
   }
 }
 
-// Whether to branch per task at all is asked fresh EVERY run (not a fixed
-// orchestrator.config.json setting like the other gates) — the whole point
-// is that the right answer genuinely varies session to session (a batch of
-// small/related tasks vs. real feature work needing its own review/merge
-// step), not something worth locking in once during setup. A CLI flag/env
-// var can still skip the prompt for a non-interactive/automated run.
-async function resolveCreateBranchPerTask() {
-  const rawOverride = process.env.CREATE_BRANCH_PER_TASK ?? getArg("--create-branch-per-task")
-  if (rawOverride != null) {
-    const value = /^(1|true|yes)$/i.test(rawOverride)
-    log(`Branch-per-task: ${value ? "on" : "off"} (from CLI/env override — not asked).`)
-    return value
-  }
-  const answer = await askUserInput(
-    "Create a separate git branch per task this run, merged back only after your approval? " +
-      "(Y = yes, per-task branch — the usual behavior; n = commit every task directly onto the base branch, no per-task branch or merge step) [Y/n]: ",
-  )
-  const normalized = answer.trim().toLowerCase()
-  return normalized !== "n" && normalized !== "no"
-}
-
 async function main() {
   checkPrerequisites()
   acquireLock()
-  startDashboardServer()
+  await startDashboardServer()
   ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
 
   banner("DEV LOOP ORCHESTRATOR")
   emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
-  const CREATE_BRANCH_PER_TASK = await resolveCreateBranchPerTask()
   log(
     `Base branch: '${BASE_BRANCH}'` +
       (CREATE_BRANCH_PER_TASK
@@ -1008,6 +1073,11 @@ async function main() {
     currentTaskTitle = task.title
     currentTaskProgress = getBacklogProgress(task)
     emitEvent("picking-next-task", null, task.title)
+    // Re-scan for backend services before dispatching this task's agents —
+    // catches a service scaffolded by a previous task in THIS run, or a
+    // human hand-editing the backlog's `scope:` field mid-session, without
+    // needing a restart. See refreshBackendServiceKeys()'s own comment.
+    refreshBackendServiceKeys()
 
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })
 
@@ -1523,18 +1593,43 @@ function makeReportPaths(slug, ticketIds) {
   return paths
 }
 
-const API_CONTRACTS = Object.fromEntries(
+let API_CONTRACTS = Object.fromEntries(
   BACKEND_SERVICE_KEYS.map((key) => [camelKey(key), `docs/api-contract/api-contract.${key}.yaml`])
 )
 
 // Sequential ports starting at 4000, in the same stable sorted order as
-// BACKEND_SERVICE_KEYS — adding a new service later appends at the end of
-// that sort order in most cases, but an insertion earlier in the alphabet
-// will shift everything after it. Re-run once after adding a service to
-// confirm the assignment still matches what's in each service's .env.
-const BACKEND_PORTS = Object.fromEntries(
+// BACKEND_SERVICE_KEYS at the time this was built. refreshBackendServiceKeys()
+// below only ever APPENDS a port for a genuinely new key — it never
+// recomputes existing assignments from scratch, so an already-running
+// service's port never shifts out from under it mid-session.
+let BACKEND_PORTS = Object.fromEntries(
   BACKEND_SERVICE_KEYS.map((key, i) => [camelKey(key), 4000 + i])
 )
+
+// Picks up backend services that became known SINCE this process started —
+// scaffolded on disk by a task that just ran, or newly named in a `scope:`
+// field a human added to the backlog mid-session — without requiring a
+// dev-loop.js restart. Only ever grows the known set (existing keys' ports/
+// contracts/identities are never touched), and is a cheap no-op read+diff
+// when nothing changed. Call before anything that iterates
+// BACKEND_SERVICE_KEYS to dispatch/describe work (the per-task backend
+// launch loop) and from the dashboard's /status.json handler so the ring
+// itself stays live too.
+function refreshBackendServiceKeys() {
+  const fresh = discoverBackendServices()
+  const newKeys = fresh.filter((k) => !BACKEND_SERVICE_KEYS.includes(k))
+  if (newKeys.length === 0) return false
+  for (const key of newKeys) {
+    const ck = camelKey(key)
+    API_CONTRACTS[ck] = `docs/api-contract/api-contract.${key}.yaml`
+    BACKEND_PORTS[ck] = 4000 + Object.keys(BACKEND_PORTS).length
+    AGENT_IDENTITY[key] = { icon: "🔧", color: "\x1b[34m", label: ` ${key}` }
+  }
+  BACKEND_SERVICE_KEYS = fresh
+  ALL_AGENT_KEYS = ["orchestrator", "designer", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
+  log(`Discovered new backend service(s): ${newKeys.join(", ")} — picked up without a restart.`)
+  return true
+}
 
 // ─── Claude planning ──────────────────────────────────────────────────────────
 
@@ -2170,7 +2265,7 @@ Deliver ${task.title} in the existing product.
 ${BACKEND_SERVICE_KEYS.map((key) => `- backend/${key} (only if in scope): npm --prefix backend/${key} run test`).join("\n")}
 
 ## Risks
-- TimeSlot concurrency (booking-service) is the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
+- Concurrency-sensitive writes to any contested/shared entity are the highest-risk area — see .rule/database-rules.md and .rule/testing-rules.md.
 - Existing tests may fail due to unrelated baseline issues.
 
 ## Rollout Order
@@ -2408,6 +2503,34 @@ function localEnvPath(dir) {
 // Cosmetic, per-service keys (PORT, FRONTEND_ORIGIN, expiry durations) are
 // fine to trust from each service's own scaffold default, no prompt needed.
 const ALWAYS_CONFIRM_KEY_PATTERN = /URI|SECRET|CONNECTION|PASSWORD|_KEY$/i
+
+// A MongoDB connection string with no database-name path segment (e.g.
+// "mongodb+srv://user:pass@cluster0.mongodb.net/" — nothing between the
+// last "/" and an optional "?query") doesn't error at connect time; the
+// driver just silently connects to a database literally named "test"
+// instead of the project's own database. That's exactly the kind of
+// "technically accepted, quietly wrong" value the placeholder-rejection
+// loop below exists to prevent for other keys — this catches the one shape
+// that loop can't, since an empty-but-present db-name segment is still a
+// non-empty, non-placeholder string.
+function mongoUriMissingDbName(uri) {
+  if (!/^mongodb(\+srv)?:\/\//i.test(uri)) return false // not a Mongo URI at all — nothing to check
+  const afterScheme = uri.replace(/^mongodb(\+srv)?:\/\//i, "")
+  const afterAuth = afterScheme.includes("@") ? afterScheme.slice(afterScheme.indexOf("@") + 1) : afterScheme
+  const pathPart = afterAuth.split("?")[0]
+  const slashIndex = pathPart.indexOf("/")
+  const dbName = slashIndex === -1 ? "" : pathPart.slice(slashIndex + 1)
+  return dbName.trim() === ""
+}
+
+// Pulls a suggested db name out of the scaffold's own placeholder value
+// (e.g. "mongodb://localhost:27017/hila-tours" -> "hila-tours") for the
+// warning message below, so the example shown is this project's real name,
+// not a generic stand-in.
+function suggestedDbNameFrom(placeholderUri) {
+  const match = placeholderUri.match(/\/([^/?]+)(\?.*)?$/)
+  return match ? match[1] : "your-db-name"
+}
 const SHARED_BACKEND_DIR = "backend"
 // Fixed filename, not the per-environment "<prefix>.<NODE_ENV>" pattern each
 // service's own local file uses — this one file is the single place shared
@@ -2509,7 +2632,13 @@ async function ensureBackendEnv(serviceDir) {
       // placeholder (e.g. a localhost connection string) is exactly the
       // value that must never be silently accepted as real.
       let answer = ""
-      while (!answer.trim() || answer.trim() === defaultValue) {
+      while (!answer.trim() || answer.trim() === defaultValue || mongoUriMissingDbName(answer.trim())) {
+        if (answer.trim() && mongoUriMissingDbName(answer.trim())) {
+          warn(
+            `That connection string has no database name in its path — MongoDB will silently connect to a database literally named "test" instead of this project's own database. ` +
+              `Add a database name before any "?" (e.g. ".../${suggestedDbNameFrom(defaultValue)}") and re-enter.`,
+          )
+        }
         answer = await askUserInput(
           `>>> ${key}  (REQUIRED, real value — the scaffold placeholder "${defaultValue}" will NOT be accepted): `,
         )

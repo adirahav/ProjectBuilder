@@ -107,8 +107,8 @@
      the circle so a real service name has room to read. */
   .node.satellite .name-arc {
     inset: auto; left: 50%; top: 100%;
-    width: 140px; height: 46px;
-    margin-top: -4px;
+    width: 140px; height: 36px;
+    margin-top: -28px;
     transform: translateX(-50%);
     overflow: visible;
   }
@@ -205,6 +205,17 @@
     display: flex; flex-direction: column;
   }
   #history-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 8px; flex-shrink: 0; }
+  #cost-summary {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 10px 12px; margin-bottom: 12px;
+    border-radius: 10px;
+    background: rgba(240, 180, 41, 0.08);
+    border: 1px solid rgba(240, 180, 41, 0.25);
+    font-size: 12px; color: var(--dim);
+    flex-shrink: 0;
+  }
+  #cost-summary:empty { display: none; }
+  #cost-summary-total { font-size: 18px; font-weight: 700; color: var(--orchestrator); }
   /* The Cost tab now has the whole tab panel's height to work with (not a
      cramped 100px sliver above the iframe like before) — so its own
      scrollbar only kicks in once the history genuinely outgrows that. */
@@ -306,6 +317,7 @@
     <div class="right-tab-panel active" id="panel-cost">
       <div id="history-card">
         <div class="label">📜 Task History</div>
+        <div id="cost-summary"></div>
         <div id="history-list">
           <table id="history-table">
             <thead><tr><th>Task</th><th>USD</th></tr></thead>
@@ -375,7 +387,13 @@ const CENTER = { key: "orchestrator", icon: "👑", img: "orchestrator-agent.png
 // to CSS auto-wrap instead, a long single word wrapped mid-letter into an
 // illegible ellipsis. Keys without a hyphen render on one line as-is.
 function serviceRingLabel(key) {
-  return key.includes("-") ? key.replace("-", "-<br>") : key;
+  // Break at the LAST hyphen, not the first — "user-management-service"
+  // should read "user-management" / "service", not "user-" / "management-
+  // service". Splitting at the first hyphen instead orphans a bare "user-"
+  // on its own line and buries the actual last word ("service") in the
+  // middle of line two.
+  const lastDash = key.lastIndexOf("-");
+  return lastDash === -1 ? key : `${key.slice(0, lastDash)}<br>${key.slice(lastDash + 1)}`;
 }
 
 // Populated once the real per-project service list is fetched — see
@@ -701,9 +719,9 @@ function makeNode(agent, pos, isCenter, isSatellite) {
         const [line1, line2] = (agent.ringLabel || agent.name).split(/<br>\s*/).map((s) => escapeXml(s || ""))
         const arcId2 = `${arcId}-2`
         return `
-    <svg class="name-arc" viewBox="0 0 140 46" overflow="visible">
-      <path id="${arcId}" d="M8,22 A90,90 0 0 0 132,22" fill="none"></path>
-      <path id="${arcId2}" d="M8,44 A90,90 0 0 0 132,44" fill="none"></path>
+    <svg class="name-arc" viewBox="0 0 140 36" overflow="visible">
+      <path id="${arcId}" d="M8,20 A90,90 0 0 0 132,20" fill="none"></path>
+      <path id="${arcId2}" d="M8,34 A90,90 0 0 0 132,34" fill="none"></path>
       <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${line1}</textPath></text>
       ${line2 ? `<text><textPath href="#${arcId2}" startOffset="50%" text-anchor="middle">${line2}</textPath></text>` : ""}
     </svg>`
@@ -899,14 +917,24 @@ async function poll() {
   try {
     const historyRes = await fetch("/docs/cost/task-history.json", { cache: "no-store" });
     const history = historyRes.ok ? await historyRes.json() : [];
-    renderHistory(Array.isArray(history) ? history.slice(-30).reverse() : []);
+    renderHistory(Array.isArray(history) ? history : []);
   } catch {
     // Files not written yet (nothing completed this run) — leave whatever
     // was last rendered (or the initial empty state) as-is.
   }
 }
 
-function renderHistory(history) {
+function renderHistory(fullHistory) {
+  // Total is summed over the FULL history, not just the 30 rows the table
+  // actually shows below — otherwise the total would silently under-report
+  // once a project has completed more than 30 tasks.
+  const totalUsd = fullHistory.reduce((sum, h) => sum + (h.totalCostUsd || 0), 0);
+  const summaryEl = document.getElementById("cost-summary");
+  summaryEl.innerHTML = fullHistory.length
+    ? `<span>${fullHistory.length} task${fullHistory.length === 1 ? "" : "s"} completed</span><span id="cost-summary-total">$${totalUsd.toFixed(4)}</span>`
+    : "";
+
+  const history = fullHistory.slice(-30).reverse();
   const tbody = document.getElementById("history-tbody");
   if (!history.length) {
     tbody.innerHTML = '<tr><td colspan="2" id="history-empty">No completed tasks yet</td></tr>';

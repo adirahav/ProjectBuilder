@@ -1,6 +1,6 @@
 {
   "autoApprovePlans": true,
-  "autoMergeTasks": false,
+  "autoMergeTasks": true,
   "autoApproveDesign": false,
   "createBranchPerTask": true,
   "linearEnabled": false,

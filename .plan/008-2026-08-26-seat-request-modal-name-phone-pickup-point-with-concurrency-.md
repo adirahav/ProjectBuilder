@@ -1,6 +1,6 @@
 # Plan 008 — Seat-Request Modal (Name, Phone, Pickup Point) with Concurrency-Safe Request Handling
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-26
 Scope-Agents: frontend, tour-service, qa, security

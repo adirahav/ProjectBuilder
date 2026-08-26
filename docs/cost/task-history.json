@@ -40,5 +40,12 @@
     "totalCostNis": 10.077486483749999,
     "callCount": 4,
     "completedAt": "2026-08-25T17:35:55.699Z"
+  },
+  {
+    "task": "Seat-request modal (name, phone, pickup point) with concurrency-safe request handling",
+    "totalCostUsd": 2.5291823,
+    "totalCostNis": 7.52229399666,
+    "callCount": 5,
+    "completedAt": "2026-08-26T20:47:48.297Z"
   }
 ]

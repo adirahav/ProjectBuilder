@@ -1,6 +1,5 @@
 {
-  "costTask": "Seat-request modal (name, phone, pickup point) with concurrency-safe request handling",
-  "costLog": [
+  "tasks": [
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
@@ -8,8 +7,7 @@
       "outputTokens": 8310,
       "cacheReadTokens": 152807,
       "costUsd": 0.33145785,
-      "costNis": 0.98582193747,
-      "durationS": 100.537
+      "durationMs": 100537
     },
     {
       "role": "frontend",
@@ -18,8 +16,7 @@
       "outputTokens": 7452,
       "cacheReadTokens": 873824,
       "costUsd": 0.62308895,
-      "costNis": 1.85319115509,
-      "durationS": 520.873
+      "durationMs": 520873
     },
     {
       "role": "tour-service",
@@ -28,8 +25,7 @@
       "outputTokens": 3327,
       "cacheReadTokens": 278416,
       "costUsd": 0.25596205,
-      "costNis": 0.76128232911,
-      "durationS": 124.446
+      "durationMs": 124446
     },
     {
       "role": "qa",
@@ -38,8 +34,7 @@
       "outputTokens": 3099,
       "cacheReadTokens": 304397,
       "costUsd": 0.19727109999999998,
-      "costNis": 0.58672370562,
-      "durationS": 159.389
+      "durationMs": 159389
     },
     {
       "role": "security",
@@ -48,10 +43,8 @@
       "outputTokens": 20185,
       "cacheReadTokens": 2010607,
       "costUsd": 1.12140235,
-      "costNis": 3.3352748693700005,
-      "durationS": 371.579
+      "durationMs": 371579
     }
   ],
-  "costTotalUsd": 2.5291823,
-  "costTotalNis": 7.52229399666
+  "totalCostUsd": 2.5291823
 }

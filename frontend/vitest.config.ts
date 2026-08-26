@@ -25,5 +25,17 @@ export default defineConfig({
      */
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    /**
+     * Same contention, one level down. The timeouts above bound a test once its
+     * worker is alive, but the pool has its own deadline for a forked worker to
+     * finish booting and respond. Letting Vitest spawn one fork per core makes
+     * every fork boot a jsdom environment simultaneously; on a loaded machine
+     * enough of them miss that deadline that the run dies with
+     * "Timeout waiting for worker to respond" before a single assertion runs.
+     * Capping the pool keeps the suite green and, because the forks no longer
+     * starve each other during startup, it also finishes faster than the
+     * uncapped default. Raise this only if the suite grows enough to need it.
+     */
+    maxWorkers: 2,
   },
 })

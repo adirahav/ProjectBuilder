@@ -1,0 +1,668 @@
+openapi: 3.0.3
+
+info:
+  title: Hila Tours — tour-service API
+  version: 1.0.0
+  description: >
+    Tour, bus, and seat endpoints. Deployed independently on port 4001; the
+    frontend calls this base URL directly (env `TOUR_SERVICE_BASE_URL`, exposed
+    to the Vite build as `VITE_TOUR_SERVICE_BASE_URL`). There is no gateway.
+
+    Scope of this revision: the Passenger View (Screen 3, ticket PASSENGE-FE,
+    plan 007) — `GET /api/tours`, `GET /api/tours/{tourId}/buses`,
+    `GET /api/buses/{busId}/seats` (F3), and `POST /api/seats/bookings` (F4/F5).
+
+    **Every endpoint in this revision is public and unauthenticated.** The PRD
+    states the passenger flow has "no auth step", so the frontend sends these
+    requests with `withAuth: false` and no `Authorization` header. The admin
+    seat actions (approve / cancel / reserve / assign / swap) and Tour/Bus/
+    BusType CRUD are separate tickets and are intentionally not specified here
+    yet — when they land they MUST be admin-authenticated, and they MUST NOT
+    reuse these public paths.
+
+    **PII boundary (plan 007 §Risks):** a seat booking captures the passenger's
+    full name and phone number. Because the seat map is a public surface, the
+    seat objects returned by this revision's endpoints MUST NOT contain any
+    passenger identity fields — not even for the passenger who just booked.
+    Passenger details are write-only here and are readable only through the
+    future authenticated admin endpoints. The server MUST NOT log raw name or
+    phone values.
+
+servers:
+  - url: '{tourServiceBaseUrl}'
+    description: tour-service base URL
+    variables:
+      tourServiceBaseUrl:
+        default: http://localhost:4001
+
+tags:
+  - name: tours
+    description: Read access to tours and their buses, powering the passenger selector.
+  - name: seats
+    description: Seat map reads and passenger seat requests.
+
+paths:
+  /api/tours:
+    get:
+      tags: [tours]
+      summary: List selectable tours
+      operationId: listTours
+      security: []  # public endpoint — the frontend sends no Authorization header
+      description: >
+        Returns the tours a passenger may pick from, populating the first step of
+        the Passenger View selector.
+
+        Soft-deleted tours (`deletedAt` set) MUST be excluded server-side and
+        MUST never reach the client — the client has no delete flag to filter on
+        (.rule/database-rules.md).
+
+        An empty list is a valid, successful result (`200` with `tours: []`), not
+        a 404 — the frontend renders its own empty state for it.
+
+        Tours SHOULD be returned sorted by `startDate` ascending, so the selector
+        ordering is stable and does not depend on insertion order.
+      responses:
+        '200':
+          description: The selectable tours. May be empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToursResponse'
+              examples:
+                populated:
+                  value:
+                    tours:
+                      - id: 3f8a1b20-5c4d-4e11-9a7f-2b6c8d0e1f33
+                        name: הגליל העליון
+                        startDate: '2026-09-14'
+                        endDate: '2026-09-16'
+                      - id: 8c2d4e60-1a9b-4f22-b3c1-7d5e9a0f4b12
+                        name: מכתש רמון
+                        startDate: '2026-10-02'
+                        endDate: null
+                empty:
+                  summary: No tours defined yet — still a 200
+                  value:
+                    tours: []
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/tours/{tourId}/buses:
+    get:
+      tags: [tours]
+      summary: List the buses belonging to one tour
+      operationId: listBusesByTour
+      security: []  # public endpoint — the frontend sends no Authorization header
+      description: >
+        Returns the buses attached to `tourId`, populating the second step of the
+        Passenger View selector once a tour is chosen.
+
+        Each bus carries its own embedded `pickupPoints` list (plan 007, Open
+        Question 4) — there is no separate pickup-point collection.
+
+        A tour with no buses returns `200` with `buses: []`. `404` is reserved
+        for a `tourId` that does not exist (or is soft-deleted), which the
+        frontend treats as a load failure rather than an empty state.
+      parameters:
+        - $ref: '#/components/parameters/TourId'
+      responses:
+        '200':
+          description: The tour's buses. May be empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusesResponse'
+              examples:
+                populated:
+                  value:
+                    buses:
+                      - id: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                        tourId: 3f8a1b20-5c4d-4e11-9a7f-2b6c8d0e1f33
+                        name: אוטובוס 1
+                        seatCount: 50
+                        pickupPoints:
+                          - תחנה מרכזית תל אביב
+                          - צומת גלילות
+                          - חיפה — חוף הכרמל
+                empty:
+                  summary: Tour exists but has no buses yet — still a 200
+                  value:
+                    buses: []
+        '404':
+          description: >
+            No tour with this id (or it is soft-deleted). Distinct from an empty
+            bus list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                notFound:
+                  value:
+                    message: Tour not found
+                    code: TOUR_NOT_FOUND
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/buses/{busId}/seats:
+    get:
+      tags: [seats]
+      summary: Get a bus's seat map with current statuses (F3)
+      operationId: getSeatMap
+      security: []  # public endpoint — the frontend sends no Authorization header
+      description: >
+        Returns every seat on the bus with its current status, plus the bus-level
+        layout metadata and `pickupPoints` needed to draw the map and populate
+        the seat-request modal — all in one response, so the modal's pickup list
+        is always as fresh as the statuses shown beside it.
+
+        **This response is the sole source of truth for seat state (PRD NFR).**
+        The frontend never derives, caches optimistically, or mutates a status on
+        its own; it re-fetches this endpoint after every seat action, whether that
+        action succeeded, conflicted, or failed. Responses SHOULD therefore be
+        sent with `Cache-Control: no-store`.
+
+        **PII:** seat objects MUST NOT include `fullName`, `phone`, or
+        `pickupPoint`, even for seats in `pending` or `taken`. A passenger must
+        be able to see that a seat is occupied without learning who occupies it.
+
+        Layout metadata (`aisleAfterColumn`, `doorRow`, `backRow`) drives the
+        rendered arrangement, so a bus with a different template renders
+        correctly with no frontend change. Omit or null a field to disable that
+        affordance.
+
+        A bus with no seats defined returns `200` with `seats: []`; the frontend
+        renders an empty state for it.
+      parameters:
+        - $ref: '#/components/parameters/BusId'
+      responses:
+        '200':
+          description: The bus's layout, pickup points, and all seats with current statuses.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatMapResponse'
+              examples:
+                populated:
+                  value:
+                    bus:
+                      id: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                      name: אוטובוס 1
+                      seatCount: 50
+                      pickupPoints:
+                        - תחנה מרכזית תל אביב
+                        - צומת גלילות
+                        - חיפה — חוף הכרמל
+                      aisleAfterColumn: 2
+                      doorRow: 3
+                      backRow: 13
+                    seats:
+                      - id: 5d1c8e77-4b2a-4d90-8e63-0a7f1c9b2d44
+                        busId: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                        label: '1'
+                        row: 1
+                        column: 1
+                        status: available
+                      - id: 9a3f2c11-6e5d-4b07-b2f4-8c1d0e6a5b39
+                        busId: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                        label: '2'
+                        row: 1
+                        column: 2
+                        status: pending
+                      - id: c7b4e802-3d19-4a55-9f0c-6b2e8d4a1f77
+                        busId: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                        label: '3'
+                        row: 1
+                        column: 3
+                        status: taken
+        '404':
+          description: No bus with this id (or it is soft-deleted).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                notFound:
+                  value:
+                    message: Bus not found
+                    code: BUS_NOT_FOUND
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /api/seats/bookings:
+    post:
+      tags: [seats]
+      summary: Request an available seat (F4/F5)
+      operationId: createSeatBooking
+      security: []  # public endpoint — the frontend sends no Authorization header
+      description: >
+        The passenger `request` action: claims an `available` seat and moves it
+        to `pending`, storing the passenger's name, phone, and chosen pickup
+        point for the admin to approve later. `pending` is the only status this
+        endpoint may produce — it MUST NOT create a `taken` seat directly, since
+        confirmation is an admin action (PRD F4).
+
+        **Atomicity invariant (PRD F5 / AC-6 — the critical requirement of this
+        contract):** the status check and the write MUST happen in a single
+        atomic conditional database update — e.g. a `findOneAndUpdate` whose
+        filter requires `status: "available"` and whose update sets
+        `status: "pending"` plus the passenger fields. A read-then-write in
+        application code is NOT acceptable: it allows two concurrent requests to
+        both observe `available` and both succeed.
+
+        When two requests for the same seat arrive simultaneously, **exactly one
+        MUST receive 201 and the other MUST receive 409** — the conditional
+        update matching zero documents is what produces the 409. The loser MUST
+        cause no state mutation whatsoever, and MUST NOT overwrite the winner's
+        passenger details.
+
+        A request against a seat already in `pending`, `taken`, or `reserved`
+        returns the same 409 — "not available" is one case, however it arose.
+
+        **PII:** `fullName` and `phone` are accepted here and persisted, but MUST
+        NOT be echoed in the response, and MUST NOT appear in server logs or
+        error messages. The response returns only the seat's public shape.
+
+        `pickupPoint` MUST be validated server-side against the owning bus's
+        `pickupPoints` list; a value not in that list is a 400, not a silent
+        accept.
+
+        The frontend re-fetches `GET /api/buses/{busId}/seats` after every
+        outcome of this call — 201, 409, and 5xx alike — so no response here
+        needs to carry a full refreshed map.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeatBookingRequest'
+            examples:
+              valid:
+                summary: Valid seat request
+                value:
+                  seatId: 5d1c8e77-4b2a-4d90-8e63-0a7f1c9b2d44
+                  fullName: דנה לוי
+                  phone: '0524471903'
+                  pickupPoint: צומת גלילות
+      responses:
+        '201':
+          description: >
+            The seat was claimed. Returns the seat as the server now holds it,
+            with `status: "pending"`. Passenger fields are deliberately absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatBookingResponse'
+              examples:
+                created:
+                  value:
+                    seat:
+                      id: 5d1c8e77-4b2a-4d90-8e63-0a7f1c9b2d44
+                      busId: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                      label: '1'
+                      row: 1
+                      column: 1
+                      status: pending
+        '400':
+          description: >
+            Validation failed — a required field is missing, `phone` is not a
+            valid Israeli number (9–10 digits beginning with `0`, separators
+            already stripped by the client), or `pickupPoint` is not one of the
+            owning bus's `pickupPoints`. The message MUST NOT echo the submitted
+            name or phone.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                unknownPickupPoint:
+                  value:
+                    message: pickupPoint is not a valid pickup point for this bus
+                    code: VALIDATION_FAILED
+        '404':
+          description: No seat with this `seatId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                notFound:
+                  value:
+                    message: Seat not found
+                    code: SEAT_NOT_FOUND
+        '409':
+          description: >
+            The seat is no longer `available` — it was claimed by someone else
+            (lost race), or was already `pending`/`taken`/`reserved`.
+
+            **This is an expected outcome under normal concurrent use, not a
+            server fault.** `http.service.ts` classifies it as its own
+            `ConflictError`, and the frontend shows a distinct Hebrew message
+            ("המושב הזה כבר נתפס — בחרו מושב אחר") and refreshes the seat map so
+            the seat's real state becomes visible. No state was mutated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                seatTaken:
+                  value:
+                    message: Seat is no longer available
+                    code: SEAT_TAKEN
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Declared for the future admin-only endpoints of this service. No endpoint
+        in this revision uses it — the passenger flow is entirely public.
+
+  parameters:
+    TourId:
+      name: tourId
+      in: path
+      required: true
+      description: Client-facing tour id. Mongo's `_id` is internal and is never used here.
+      schema:
+        type: string
+        format: uuid
+      example: 3f8a1b20-5c4d-4e11-9a7f-2b6c8d0e1f33
+
+    BusId:
+      name: busId
+      in: path
+      required: true
+      description: Client-facing bus id. Mongo's `_id` is internal and is never used here.
+      schema:
+        type: string
+        format: uuid
+      example: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+
+  schemas:
+    SeatStatus:
+      type: string
+      enum: [available, pending, taken, reserved]
+      description: >
+        The four — and only four — seat statuses (PRD, .rule/naming-rules.md).
+        No alternate casing and no synonyms: these exact strings are used
+        identically in the UI, this API, and the database. The frontend maps each
+        to a distinct color, Lucide icon, and Hebrew label, so status is never
+        conveyed by color alone (PRD AC-3/AC-17).
+
+    Tour:
+      type: object
+      required: [id, name, startDate]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >
+            Client-facing identifier. Mongo's `_id` is internal and MUST NOT
+            appear in any response (.rule/naming-rules.md "External Identity").
+          example: 3f8a1b20-5c4d-4e11-9a7f-2b6c8d0e1f33
+        name:
+          type: string
+          example: הגליל העליון
+        startDate:
+          type: string
+          format: date
+          description: ISO-8601 date (`YYYY-MM-DD`) the tour departs.
+          example: '2026-09-14'
+        endDate:
+          type: string
+          format: date
+          nullable: true
+          description: ISO-8601 date the tour returns. `null`/omitted for a same-day tour.
+          example: '2026-09-16'
+      description: >
+        A scheduled trip — never `trip`/`event`/`journey` (.rule/naming-rules.md).
+        Only the fields the passenger selector needs are modeled; the admin CRUD
+        ticket (Tab 4b) extends this rather than redefining it. The soft-delete
+        flag is server-internal and never serialized.
+
+    ToursResponse:
+      type: object
+      required: [tours]
+      properties:
+        tours:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tour'
+
+    Bus:
+      type: object
+      required: [id, tourId, name, seatCount, pickupPoints]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+        tourId:
+          type: string
+          format: uuid
+          description: The tour this bus belongs to.
+          example: 3f8a1b20-5c4d-4e11-9a7f-2b6c8d0e1f33
+        name:
+          type: string
+          example: אוטובוס 1
+        seatCount:
+          type: integer
+          minimum: 1
+          description: Total seats on the bus. Shown beside the map as a summary.
+          example: 50
+        pickupPoints:
+          $ref: '#/components/schemas/PickupPoints'
+      description: >
+        A vehicle belonging to a tour — never `vehicle`/`coach`
+        (.rule/naming-rules.md).
+
+    BusesResponse:
+      type: object
+      required: [buses]
+      properties:
+        buses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bus'
+
+    PickupPoints:
+      type: array
+      items:
+        type: string
+      description: >
+        Embedded list of pickup-point names on the bus document (plan 007, Open
+        Question 4) — there is no separate collection. This list is exactly what
+        populates the seat-request modal's dropdown, and is the allowed-value set
+        the server validates `pickupPoint` against on booking. May be empty, in
+        which case the frontend disables the dropdown.
+      example:
+        - תחנה מרכזית תל אביב
+        - צומת גלילות
+        - חיפה — חוף הכרמל
+
+    BusSeatLayout:
+      type: object
+      required: [id, name, seatCount, pickupPoints]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+        name:
+          type: string
+          example: אוטובוס 1
+        seatCount:
+          type: integer
+          minimum: 1
+          example: 50
+        pickupPoints:
+          $ref: '#/components/schemas/PickupPoints'
+        aisleAfterColumn:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: >
+            The aisle gap is drawn after this column. `null`/omitted renders the
+            seats as a single block with no aisle.
+          example: 2
+        doorRow:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >
+            Row containing the boarding door; the door graphic occupies the space
+            where that row's missing seats would be. `null`/omitted draws no door.
+          example: 3
+        backRow:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >
+            Full-width rear bench row. It spans the aisle, so no aisle gap is
+            drawn in it regardless of `aisleAfterColumn`. `null`/omitted means no
+            special rear row.
+          example: 13
+      description: >
+        Bus-level layout metadata returned alongside the seats, so the map can be
+        drawn without a second request.
+
+    Seat:
+      type: object
+      required: [id, busId, label, row, column, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Client-facing seat identifier; the value sent back as `seatId` when booking.
+          example: 5d1c8e77-4b2a-4d90-8e63-0a7f1c9b2d44
+        busId:
+          type: string
+          format: uuid
+          description: >
+            The owning bus. The frontend uses this to drop a late response that
+            belongs to a bus the passenger has since switched away from.
+          example: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+        label:
+          type: string
+          description: >
+            Human-facing seat number, rendered LTR-isolated inside the RTL
+            layout. A string rather than a number, so labels like `12A` remain
+            valid without a schema change.
+          example: '17'
+        row:
+          type: integer
+          minimum: 1
+          description: 1-based grid row used to lay the map out.
+          example: 5
+        column:
+          type: integer
+          minimum: 1
+          description: 1-based grid column within the row.
+          example: 2
+        status:
+          $ref: '#/components/schemas/SeatStatus'
+      description: >
+        A single seat position on a bus, in its **public** shape.
+
+        Passenger identity (`fullName`, `phone`, `pickupPoint`) is deliberately
+        NOT part of this schema: the passenger seat map is unauthenticated, so
+        the server must never send one passenger's PII to another. The
+        authenticated admin seat-management ticket defines its own richer shape.
+
+    SeatMapResponse:
+      type: object
+      required: [bus, seats]
+      properties:
+        bus:
+          $ref: '#/components/schemas/BusSeatLayout'
+        seats:
+          type: array
+          items:
+            $ref: '#/components/schemas/Seat'
+          description: Every seat on the bus with its current status. May be empty.
+
+    SeatBookingRequest:
+      type: object
+      additionalProperties: false
+      required: [seatId, fullName, phone, pickupPoint]
+      properties:
+        seatId:
+          type: string
+          format: uuid
+          description: >
+            The seat to claim. The bus is derived server-side from the seat — the
+            client does not send `busId`, so it cannot assert a mismatched pair.
+          example: 5d1c8e77-4b2a-4d90-8e63-0a7f1c9b2d44
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 120
+          description: >
+            Passenger's full name. PII — persisted, but never returned, logged,
+            or echoed in an error message.
+          example: דנה לוי
+        phone:
+          type: string
+          description: >
+            Passenger's phone number. The client normalizes it before sending —
+            spaces, dashes, parentheses and dots are stripped — so the server
+            receives digits only, in Israeli local format: 9–10 digits beginning
+            with `0`. The server MUST re-validate rather than trust the client.
+            PII — persisted, but never returned or logged.
+          pattern: '^0\d{8,9}$'
+          example: '0524471903'
+        pickupPoint:
+          type: string
+          description: >
+            One of the owning bus's `pickupPoints`. MUST be validated server-side
+            against that list; an unlisted value is a 400.
+          example: צומת גלילות
+
+    SeatBookingResponse:
+      type: object
+      required: [seat]
+      properties:
+        seat:
+          allOf:
+            - $ref: '#/components/schemas/Seat'
+          description: >
+            The seat as the server now holds it, with `status: "pending"`. The
+            frontend writes exactly this back into its store and never infers the
+            new status itself. Carries no passenger fields.
+
+    ApiError:
+      type: object
+      description: >
+        Shared non-2xx payload across both services, consumed by
+        `frontend/src/services/http.service.ts`. The frontend never displays
+        `message` directly — it maps `status`/`code` to hardcoded Hebrew copy.
+      properties:
+        message:
+          type: string
+          description: >
+            Developer-facing English description. MUST NOT contain secrets or
+            passenger PII (name/phone).
+        code:
+          type: string
+          description: Stable machine-readable error code the frontend can branch on.

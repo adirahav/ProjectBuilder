@@ -2,6 +2,7 @@
   "autoApprovePlans": true,
   "autoMergeTasks": false,
   "autoApproveDesign": false,
+  "createBranchPerTask": true,
   "linearEnabled": false,
   "designSource": "DESIGNER_AGENT"
 }

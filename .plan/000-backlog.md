@@ -8,7 +8,7 @@ Current queue:
 - [x] Install root/frontend/backend dependencies | scope: none
 - [x] Admin signup page | scope: frontend,user-management-service,qa | url: /signup
 - [x] Gateway (login) screen — passenger vs admin entry, admin login modal | scope: frontend,user-management-service,qa,security | url: /
-- [ ] Passenger view — tour/bus selector + interactive seat map | scope: frontend,tour-service,qa | url: /tours
+- [x] Passenger view — tour/bus selector + interactive seat map | scope: frontend,tour-service,qa | url: /tours
 - [ ] Seat-request modal (name, phone, pickup point) with concurrency-safe request handling | scope: frontend,tour-service,qa,security | url: /tours
 - [ ] Admin dashboard shell with 3 tabs (Seat Management, Tours & Buses, Passenger Manifest Report) | scope: frontend,qa,security | url: /admin
 - [ ] Admin dashboard — Seat Management tab (approve/cancel/toggle-reserve quick actions) | scope: frontend,tour-service,qa,security | url: /admin

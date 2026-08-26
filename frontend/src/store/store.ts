@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import { createAuthSlice, type AuthSlice } from './slices/auth.slice'
+import { createBusSlice, type BusSlice } from './slices/bus.slice'
+import { createSeatSlice, type SeatSlice } from './slices/seat.slice'
+import { createTourSlice, type TourSlice } from './slices/tour.slice'
 
 /**
  * The single global Zustand store, assembled from one slice per feature
@@ -13,7 +16,7 @@ import { createAuthSlice, type AuthSlice } from './slices/auth.slice'
  */
 
 /** Union of every slice's state. Feature tickets intersect their slice type in. */
-export type StoreState = AuthSlice
+export type StoreState = AuthSlice & TourSlice & BusSlice & SeatSlice
 
 /**
  * Signature every slice creator must use, so slices can read/write across the
@@ -26,4 +29,7 @@ export type SliceCreator<TSlice> = (
 
 export const useStore = create<StoreState>()((set, get) => ({
   ...createAuthSlice(set, get),
+  ...createTourSlice(set, get),
+  ...createBusSlice(set, get),
+  ...createSeatSlice(set, get),
 }))

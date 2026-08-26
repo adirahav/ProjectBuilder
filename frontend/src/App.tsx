@@ -19,8 +19,9 @@ export default function App() {
         {/* Screen 1 — Gateway. Also where http.service.ts sends an expired session. */}
         <Route path="/" element={<GatewayPage />} />
         <Route path="/signup" element={<SignupPage />} />
-        {/* Screens 3 and 4 — placeholders until their own tickets land. */}
+        {/* Screen 3 — Passenger View. Unauthenticated by design (PRD). */}
         <Route path="/tours" element={<ToursPage />} />
+        {/* Screen 4 — placeholder until its own ticket lands. */}
         <Route path="/admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

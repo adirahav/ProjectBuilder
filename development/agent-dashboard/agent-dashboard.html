@@ -69,7 +69,19 @@
   }
   .node .icon { font-size: 30px; line-height: 1; }
   .node .icon-img { width: 92px; height: 92px; border-radius: 50%; object-fit: cover; display: block; filter: brightness(1.25) contrast(1.1) saturate(1.1); }
-  .node .name { font-size: 10px; color: var(--dim); margin-top: 4px; text-align: center; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: absolute; bottom: 10px; color: aliceblue;}
+  /* The name label curves along the bottom rim of the circular portrait
+     (a 0-100 square viewBox arc, see makeNode()'s comment) instead of
+     sitting on a flat line — same idea for every node size, since the SVG
+     viewBox scales proportionally with whatever pixel box it renders into. */
+  .node .name-arc { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .node .name-arc text {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
+    fill: aliceblue;
+    paint-order: stroke;
+    stroke: rgba(0, 0, 0, 0.6);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
   .node.center { width: 128px; height: 128px; margin-left: -64px; margin-top: -64px; }
   .node.center .icon { font-size: 42px; }
   .node.center .icon-img { width: 124px; height: 124px; }
@@ -82,19 +94,25 @@
     width: 52px; height: 52px; margin-left: -26px; margin-top: -26px; padding: 3px;
     background: radial-gradient(circle at 32% 30%, rgba(59, 130, 246, 0.24), var(--panel) 72%);
   }
-  .node.satellite .icon-img { width: 20px; height: 20px; margin-bottom: 1px; }
+  .node.satellite .icon-img { width: 50px; height: 50px; margin-bottom: 1px; }
   /* Extra attribute selector to out-specificity the generic idle-border rule
      below (.node[data-agent]) — satellites keep their own static tint even
      while idle, instead of falling back to the plain gray border. */
   .node.satellite[data-agent] { border-color: rgba(59, 130, 246, 0.45); }
-  .node.satellite .name {
-    font-size: 7.5px; line-height: 1.15; font-weight: 700; letter-spacing: 0.01em;
-    color: #eaf2ff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-    /* Overriding the base .node .name rule's nowrap/ellipsis — satellites
-       need real 2-line wrapping (via the explicit <br> in ringLabel above),
-       not a single-line ellipsis that mangles mid-word. */
-    max-width: 46px; white-space: normal; margin-top: 0; overflow: visible; text-overflow: clip;
+  /* Mini-service label sits BELOW the circle (outside the portrait), not
+     overlaid on top of it — the base .name-arc rule fills/overlays the
+     whole node, so satellites need their own smaller box positioned just
+     under it instead. Fixed pixel width (not 100%) since the satellite
+     circle itself is only 52px — the label plate is deliberately wider than
+     the circle so a real service name has room to read. */
+  .node.satellite .name-arc {
+    inset: auto; left: 50%; top: 100%;
+    width: 140px; height: 46px;
+    margin-top: -4px;
+    transform: translateX(-50%);
+    overflow: visible;
   }
+  .node.satellite .name-arc text { font-size: 10px; }
 
   .node.active {
     transform: scale(1.12);
@@ -642,6 +660,17 @@ function pointAt(cx, cy, radiusPct, angleDeg) {
   return { x: cx + radiusPct * Math.cos(rad), y: cy + radiusPct * Math.sin(rad) };
 }
 
+// Every node's name now curves along the bottom rim of its own circular
+// portrait — like a badge/seal label — instead of sitting on a flat line.
+// The arc path is defined in a 0-100 square viewBox, so it scales correctly
+// for every node size (center/primary/satellite) without needing a
+// per-size variant: SVG maps that viewBox onto whatever pixel box the
+// element actually renders at, and a fixed user-unit font-size scales
+// proportionally right along with it.
+function escapeXml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+
 function makeNode(agent, pos, isCenter, isSatellite) {
   const el = document.createElement("div");
   el.className = "node" + (isCenter ? " center" : "") + (isSatellite ? " satellite" : "");
@@ -653,7 +682,38 @@ function makeNode(agent, pos, isCenter, isSatellite) {
     : agent.icon
       ? `<div class="icon">${agent.icon}</div>`
       : "";
-  el.innerHTML = `${iconHtml}<div class="name">${agent.ringLabel || agent.name}</div>`;
+  const arcId = `name-arc-path-${agent.key}`;
+  // Primary/center nodes: label curves along the bottom rim, overlaid ON the
+  // portrait (viewBox matches the node's own 0-100 square) — single line.
+  //
+  // Mini-service satellites: the circle is tiny (52px) and several sit close
+  // together in a fan — a label overlaid on the portrait there is nearly
+  // unreadable, so it renders BELOW the circle instead, as two stacked
+  // curved lines (splitting on ringLabel's own first-hyphen <br>, e.g.
+  // "user-" / "management-service") rather than one cramped line — a real
+  // service name doesn't fit legibly on a single short arc no matter how
+  // wide the plate gets. Both arcs share the same tight radius (a
+  // pronounced bow, not the earlier near-flat curve) and `overflow="visible"`
+  // (both here and in CSS) lets a still-too-long line spill past the
+  // plate's edges instead of being hard-clipped mid-word.
+  const nameSvg = isSatellite
+    ? (() => {
+        const [line1, line2] = (agent.ringLabel || agent.name).split(/<br>\s*/).map((s) => escapeXml(s || ""))
+        const arcId2 = `${arcId}-2`
+        return `
+    <svg class="name-arc" viewBox="0 0 140 46" overflow="visible">
+      <path id="${arcId}" d="M8,22 A90,90 0 0 0 132,22" fill="none"></path>
+      <path id="${arcId2}" d="M8,44 A90,90 0 0 0 132,44" fill="none"></path>
+      <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${line1}</textPath></text>
+      ${line2 ? `<text><textPath href="#${arcId2}" startOffset="50%" text-anchor="middle">${line2}</textPath></text>` : ""}
+    </svg>`
+      })()
+    : `
+    <svg class="name-arc" viewBox="0 0 100 100">
+      <path id="${arcId}" d="M10,80 A80,80 0 0 0 90,80" fill="none"></path>
+      <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${escapeXml(agent.ringLabel || agent.name)}</textPath></text>
+    </svg>`;
+  el.innerHTML = `${iconHtml}${nameSvg}`;
   ring.appendChild(el);
   return el;
 }

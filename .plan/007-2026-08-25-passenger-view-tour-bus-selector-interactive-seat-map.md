@@ -1,6 +1,6 @@
 # Plan 007 — Passenger View: Tour/Bus Selector + Interactive Seat Map
 
-Status: active
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-25
 Scope-Agents: frontend, tour-service, qa, security

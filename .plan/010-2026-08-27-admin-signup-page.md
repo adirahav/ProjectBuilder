@@ -1,6 +1,6 @@
 # Plan 010 — Admin Signup Page
 
-Status: draft
+Status: active
 Owner: orchestrator
 Last updated: 2026-08-27
 Scope-Agents: frontend, user-management-service, qa, security

@@ -1,0 +1,33 @@
+{
+  "slug": "admin-signup-page",
+  "planPath": ".plan/010-2026-08-27-admin-signup-page.md",
+  "approved": true,
+  "tickets": {
+    "frontend": {
+      "id": "ADMINSIG-FE"
+    },
+    "qa": {
+      "id": "ADMINSIG-QA"
+    },
+    "security": {
+      "id": "ADMINSIG-SEC"
+    },
+    "tourService": {
+      "id": "ADMINSIG-TOUR"
+    },
+    "userManagementService": {
+      "id": "ADMINSIG-USER"
+    },
+    "userManagementServicect + ts + tailwind v4 + zustand + lucide react)": {
+      "id": "ADMINSIG-USER"
+    }
+  },
+  "reports": {
+    "fe": "docs/agent-reports/2026-08-27-ADMINSIG-FE-admin-signup-page-frontend.md",
+    "qa": "docs/agent-reports/2026-08-27-ADMINSIG-QA-admin-signup-page-qa.md",
+    "security": "docs/agent-reports/2026-08-27-ADMINSIG-SEC-admin-signup-page-security.md",
+    "tourService": "docs/agent-reports/2026-08-27-ADMINSIG-TOUR-admin-signup-page-tour-service.md",
+    "userManagementService": "docs/agent-reports/2026-08-27-ADMINSIG-USER-admin-signup-page-user-management-service.md",
+    "userManagementServicect + ts + tailwind v4 + zustand + lucide react)": "docs/agent-reports/2026-08-27-ADMINSIG-USER-admin-signup-page-user-management-servicect + ts + tailwind v4 + zustand + lucide react).md"
+  }
+}

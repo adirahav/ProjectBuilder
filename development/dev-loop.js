@@ -181,53 +181,40 @@ const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
 
-// Non-service scope keywords the backlog's `scope:` field can also contain —
-// never real backend-service keys, so scanBacklogForServiceKeys() below must
-// exclude them or every task would spuriously "discover" a fake service.
-const NON_SERVICE_SCOPE_KEYWORDS = new Set(["frontend", "qa", "security", "none"])
-
-// The FIRST scaffold task for a given service names it in the backlog's own
-// `scope:` field before backend/<service>/ exists on disk at all — relying
+// The FIRST scaffold task for a given service needs to launch the Backend
+// Agent for it BEFORE backend/<service>/ exists on disk at all — relying
 // solely on directory-scanning is a chicken-and-egg bug: BACKEND_SERVICE_KEYS
-// is computed once at startup, so a not-yet-scaffolded service's own scaffold
-// task never finds itself in that list, the per-service launch loop below
-// has nothing to iterate for it, and the task silently completes as DONE
-// with the backend agent never having run at all (confirmed happening for
-// real — see chat history). Scanning every backlog line's `scope:` field
-// (not just unchecked ones — a service already marked done still needs to
-// stay discoverable after a restart) and unioning with the directory scan
-// closes that gap: any scope token that isn't a known non-service keyword is
-// treated as a real backend-service key, whether or not its directory
-// exists yet.
-function scanBacklogForServiceKeys() {
-  if (!existsSync(BACKLOG_FILE)) return []
-  const content = readFileSync(BACKLOG_FILE, "utf-8")
-  const keys = new Set()
-  for (const line of content.split("\n")) {
-    const m = line.match(/scope:\s*([^|]+)/i)
-    if (!m) continue
-    for (const token of m[1].split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
-      if (!NON_SERVICE_SCOPE_KEYWORDS.has(token)) keys.add(token)
-    }
-  }
-  return [...keys]
+// would be empty at that point, the per-service launch loop below would have
+// nothing to iterate for it, and the task would silently complete as DONE
+// with the backend agent never having run (confirmed happening for real —
+// see chat history).
+//
+// This used to be solved by scanning the backlog file's own `scope:` fields
+// for service-looking tokens — but that meant trusting free-form prose a
+// human (or an agent) can and did corrupt, which briefly invented a fake
+// backend service out of scrambled text and put a garbage node on the
+// dashboard ring (also seen for real — see chat history). `backendServices`
+// in orchestrator.config.json is the fix: an explicit, structured array set
+// once during project setup (development/NEW-PROJECT-SETUP-PROMPT.md) —
+// nothing here parses arbitrary text to guess at it.
+function configuredBackendServices() {
+  return Array.isArray(orchestratorConfig.backendServices) ? orchestratorConfig.backendServices : []
 }
 
 // Backend services are discovered from backend/*/package.json (already-
-// scaffolded services) UNIONED with every service key ever named in the
-// backlog's `scope:` field (see scanBacklogForServiceKeys() above) — so a
-// service's own first scaffold task can actually launch the backend agent
-// for it, not just every task after it already exists on disk. Sorted for a
-// stable, reproducible order (port/ticket-code assignment below depends on
-// it). Falls back to [] before any backend service has been scaffolded AND
-// no backlog task mentions one yet.
+// scaffolded services) UNIONED with orchestrator.config.json's
+// `backendServices` (the project's full intended list, set once at setup —
+// see configuredBackendServices() above). Sorted for a stable, reproducible
+// order (port/ticket-code assignment below depends on it). Falls back to []
+// only if `backendServices` was never configured AND nothing's scaffolded
+// yet — at that point this project isn't multi-agent/has no backend at all.
 function discoverBackendServices() {
   const onDisk = existsSync("backend")
     ? readdirSync("backend", { withFileTypes: true })
         .filter((e) => e.isDirectory() && existsSync(`backend/${e.name}/package.json`))
         .map((e) => e.name)
     : []
-  return [...new Set([...onDisk, ...scanBacklogForServiceKeys()])].sort()
+  return [...new Set([...onDisk, ...configuredBackendServices()])].sort()
 }
 
 // kebab-case service key -> camelCase property name, used to key the
@@ -838,8 +825,39 @@ function startDashboardServer() {
       // docs/cost/last-task.json and docs/cost/task-history.json directly via
       // the generic /docs/** static route below, so their shape can change
       // without ever touching this route's code again.
+      // `awaitingInput` comes straight from the in-memory pendingHumanInput —
+      // it can't live in the status FILE (its `respond` callback isn't
+      // serializable), so this is the one field on this route that reflects
+      // live process state instead of whatever was last written to disk.
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
+      res.end(JSON.stringify({
+        ...base,
+        services: BACKEND_SERVICE_KEYS,
+        awaitingInput: pendingHumanInput ? { prompt: pendingHumanInput.prompt } : null,
+      }))
+      return
+    }
+
+    // The dashboard's "waiting for you" box POSTs here — either a real typed
+    // answer/feedback, or an empty body for "just press Enter." Whichever of
+    // (this route / the terminal's own readline prompt) resolves first wins;
+    // the other is a no-op since pendingHumanInput.respond() self-guards
+    // against firing twice (see askUserInput()).
+    if (req.url === "/respond" && req.method === "POST") {
+      let body = ""
+      req.on("data", (chunk) => { body += chunk })
+      req.on("end", () => {
+        if (!pendingHumanInput) {
+          res.writeHead(409, { "Content-Type": "application/json" })
+          res.end(JSON.stringify({ error: "Nothing is waiting for input right now." }))
+          return
+        }
+        let text = ""
+        try { text = JSON.parse(body || "{}").text ?? "" } catch { /* treat as empty */ }
+        pendingHumanInput.respond(text)
+        res.writeHead(204)
+        res.end()
+      })
       return
     }
 
@@ -1825,10 +1843,19 @@ function ensureDirFor(filePath) {
   if (dir && dir !== "." && !existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
+// Pulls "1:30pm (Asia/Jerusalem)" out of the CLI's own "You've hit your
+// session limit · resets 1:30pm (Asia/Jerusalem)" line, so the dashboard can
+// show it without the human having to go dig through terminal scrollback.
+function extractSessionLimitReset(text) {
+  const m = text && text.match(/resets?\s+(\d{1,2}:\d{2}\s*(?:am|pm)(?:\s*\([^)]*\))?)/i)
+  return m ? m[1] : null
+}
+
 async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, label, agentKey }) {
   const kind = lastSpawnError?.kind || "FAILED"
-  const reason = BLOCK_REASONS[kind] || BLOCK_REASONS.FAILED
   const raw = (lastSpawnError?.raw || "").trim()
+  const resetsAt = kind === "SESSION_LIMIT" ? extractSessionLimitReset(raw) : null
+  const reason = (BLOCK_REASONS[kind] || BLOCK_REASONS.FAILED) + (resetsAt ? ` Resets ${resetsAt}.` : "")
 
   const statusPath = `${outputFile}.blocked.md`
   ensureDirFor(statusPath)
@@ -1851,7 +1878,25 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
   printRed(`Status written to: ${statusPath}`)
   emitEvent(kind === "SESSION_LIMIT" ? "session-limit" : "attention-needed", agentKey, reason)
 
+  // A structured field (not just the free-text `message`, which the very
+  // next routine output line will overwrite) so the dashboard can show a
+  // stable "resets at X" banner for as long as this block is actually
+  // active — cleared right below once the human responds and the retry
+  // actually starts.
+  if (kind === "SESSION_LIMIT") {
+    const status = readStatus()
+    status.sessionLimit = { resetsAt, since: new Date().toISOString() }
+    writeStatus(status)
+  }
+
   await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `)
+
+  const status = readStatus()
+  if (status.sessionLimit) {
+    delete status.sessionLimit
+    writeStatus(status)
+  }
+
   return runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey })
 }
 
@@ -2660,14 +2705,27 @@ async function ensureBackendEnv(serviceDir) {
   log(`Wrote ${devPath}`)
 }
 
+// Set only while a real terminal prompt is outstanding — lets the dashboard
+// (via POST /respond, see startDashboardServer()) answer the SAME prompt
+// from the browser instead of only the terminal. Whichever side answers
+// first wins; `settle`'s own guard makes the loser's call a no-op rather
+// than a double-resolve.
+let pendingHumanInput = null
+
 function askUserInput(prompt) {
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout })
-    rl.question(prompt, (answer) => {
+    let settled = false
+    const settle = (answer) => {
+      if (settled) return
+      settled = true
+      pendingHumanInput = null
       process.stdout.write(RESET)
       rl.close()
       resolve(answer)
-    })
+    }
+    pendingHumanInput = { prompt, respond: settle }
+    rl.question(prompt, settle)
     process.stdout.write("\x1b[91m")
   })
 }

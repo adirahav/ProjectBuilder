@@ -183,6 +183,54 @@
   #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; margin-bottom:2.0em }
   #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
 
+  #session-limit-banner {
+    margin-top: 12px; padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(240, 180, 41, 0.12);
+    border: 1px solid rgba(240, 180, 41, 0.35);
+    color: var(--orchestrator);
+    font-size: 13px; font-weight: 600;
+  }
+  #session-limit-banner:empty { display: none; }
+
+  /* Lets a human answer the terminal's blocking prompt (session-limit retry,
+     design-review APPROVED/feedback, etc.) from the dashboard instead of
+     having to switch to the terminal window — a plain text field plus two
+     buttons: send real feedback, or just the equivalent of pressing Enter.
+     Hidden by default; shown only while /status.json reports awaitingInput. */
+  #respond-box {
+    display: none;
+    margin-top: 12px; padding: 12px;
+    border-radius: 10px;
+    background: rgba(240, 180, 41, 0.08);
+    border: 1px solid rgba(240, 180, 41, 0.3);
+  }
+  #respond-box.active { display: block; }
+  #respond-prompt { font-size: 12px; color: var(--text); margin-bottom: 8px; line-height: 1.5; white-space: pre-wrap; }
+  #respond-controls { display: flex; gap: 6px; }
+  #respond-text {
+    flex: 1; min-width: 0;
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  #respond-text:focus { outline: none; border-color: var(--orchestrator); }
+  #respond-send, #respond-enter {
+    font-size: 12px; font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #respond-send:hover, #respond-enter:hover { border-color: var(--orchestrator); }
+  #respond-send:disabled, #respond-enter:disabled { opacity: 0.5; cursor: default; }
+
   .progress-badge {
     display: inline-block;
     font-size: 10px; font-weight: 700; letter-spacing: normal; text-transform: none;
@@ -306,6 +354,15 @@
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
+      <div id="session-limit-banner"></div>
+      <div id="respond-box">
+        <div id="respond-prompt"></div>
+        <div id="respond-controls">
+          <input type="text" id="respond-text" placeholder="Type feedback/notes (optional)…" autocomplete="off">
+          <button id="respond-send">Send</button>
+          <button id="respond-enter" title="Same as pressing Enter in the terminal with no text">↵ Just Enter</button>
+        </div>
+      </div>
     </div>
 
     <div id="right-tabs">
@@ -590,6 +647,41 @@ soundToggleBtn.addEventListener("click", () => {
     unlock.volume = 0;
     unlock.play().catch(() => {});
   }
+});
+
+// Answers dev-loop.js's currently-blocking terminal prompt from here — POSTs
+// to /respond, which resolves the SAME pendingHumanInput the terminal's own
+// readline is waiting on (see dev-loop.js's askUserInput()). Empty text is a
+// legitimate answer (equivalent to bare Enter), so this always sends
+// whatever it's given rather than treating "" as "don't send."
+async function sendRespond(text) {
+  const sendBtn = document.getElementById("respond-send");
+  const enterBtn = document.getElementById("respond-enter");
+  sendBtn.disabled = true;
+  enterBtn.disabled = true;
+  try {
+    await fetch("/respond", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    document.getElementById("respond-text").value = "";
+  } catch {
+    // Dashboard server hiccup — the terminal prompt is still live and can
+    // still be answered directly there; nothing more to do here.
+  } finally {
+    sendBtn.disabled = false;
+    enterBtn.disabled = false;
+  }
+}
+document.getElementById("respond-send").addEventListener("click", () => {
+  sendRespond(document.getElementById("respond-text").value);
+});
+document.getElementById("respond-enter").addEventListener("click", () => {
+  sendRespond("");
+});
+document.getElementById("respond-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendRespond(e.target.value);
 });
 
 document.getElementById("iframe-refresh").addEventListener("click", async () => {
@@ -885,6 +977,36 @@ async function poll() {
       : "";
     document.getElementById("status-progress").textContent = progressText;
     document.getElementById("status-task-name").textContent = data.task || "";
+
+    // Session-limit reset time — a stable banner (not the volatile `message`
+    // line, which the very next routine output line overwrites) that stays
+    // up for as long as dev-loop.js reports this field, i.e. until the human
+    // actually responds and the retry begins (see blockAndRetry() in
+    // dev-loop.js).
+    document.getElementById("session-limit-banner").textContent =
+      data.sessionLimit && data.sessionLimit.resetsAt ? `⏳ Session limit hit — resets ${data.sessionLimit.resetsAt}` : "";
+
+    // "Waiting for you" box — lets a human answer dev-loop.js's blocking
+    // terminal prompt (session-limit retry, design-review APPROVED/feedback,
+    // plan approval, ...) from here instead of switching to the terminal.
+    // Only touches the prompt text / visibility when the prompt itself
+    // actually changes, so a draft the human is mid-typing never gets wiped
+    // out by the next 1-second poll.
+    const respondBox = document.getElementById("respond-box");
+    const respondPrompt = document.getElementById("respond-prompt");
+    if (data.awaitingInput) {
+      respondBox.classList.add("active");
+      if (respondPrompt.dataset.prompt !== data.awaitingInput.prompt) {
+        respondPrompt.dataset.prompt = data.awaitingInput.prompt;
+        respondPrompt.textContent = data.awaitingInput.prompt;
+      }
+    } else {
+      respondBox.classList.remove("active");
+      if (respondPrompt.dataset.prompt) {
+        respondPrompt.dataset.prompt = "";
+        document.getElementById("respond-text").value = "";
+      }
+    }
 
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely

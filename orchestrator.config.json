@@ -3,6 +3,7 @@
   "autoMergeTasks": true,
   "autoApproveDesign": false,
   "createBranchPerTask": true,
+  "backendServices": ["tour-service", "user-management-service"],
   "linearEnabled": false,
   "designSource": "DESIGNER_AGENT"
 }

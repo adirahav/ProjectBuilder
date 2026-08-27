@@ -125,12 +125,68 @@ function ensureWorkspace(visibleFolderPath) {
   return { workspacePath, isFirstRun }
 }
 
+// Presence of .setup-progress.md is the same signal development/dev-loop.js
+// itself uses (see its adoptApprovalModeFromSetup()) to tell "this project
+// has already been through the interview" apart from "fresh template,
+// still full of {{PLACEHOLDER}} markers, needs the setup Q&A run first."
+function isProjectConfigured(workspacePath) {
+  return fs.existsSync(path.join(workspacePath, ".setup-progress.md"))
+}
+
 ipcMain.handle("pick-project-folder", async () => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory", "createDirectory"] })
   if (result.canceled || result.filePaths.length === 0) return null
   const folderPath = result.filePaths[0]
   const check = validateProjectFolder(folderPath)
-  return { path: folderPath, ...check }
+  if (!check.valid) return { path: folderPath, ...check }
+
+  const { workspacePath } = ensureWorkspace(folderPath)
+  return { path: folderPath, valid: true, workspacePath, setupNeeded: !isProjectConfigured(workspacePath) }
+})
+
+// On Windows, `claude` is a .cmd shim — spawning it directly (no shell)
+// intermittently fails to resolve on PATH, the same reason
+// development/dev-loop.js's own spawnClaude() always goes through a shell
+// on win32. Mirrored here rather than reusing that function directly, since
+// this runs BEFORE dev-loop.js exists anywhere writable (the setup
+// interview happens pre-workspace-configured).
+function runClaudeTurn(workspacePath, args, inputText) {
+  return new Promise((resolve) => {
+    const quoted = args.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
+    const child =
+      process.platform === "win32"
+        ? spawn(["claude", ...quoted].join(" "), { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: true })
+        : spawn("claude", args, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: false })
+
+    let out = ""
+    let err = ""
+    child.stdout.on("data", (d) => { out += d.toString() })
+    child.stderr.on("data", (d) => { err += d.toString() })
+    child.on("close", (code) => resolve({ out: out.trim(), err: err.trim(), code }))
+    child.on("error", (e) => resolve({ out: "", err: e.message, code: -1 }))
+    child.stdin.write(inputText)
+    child.stdin.end()
+  })
+}
+
+// First turn of the setup interview — establishes a real Claude Code
+// session in workspacePath (development/NEW-PROJECT-SETUP-PROMPT.md is the
+// system prompt) that `setup-chat-send` below continues via `--continue`.
+// This is the ONLY place the human-facing side of onboarding happens —
+// nothing about dev-loop.js, agents, or the template is ever named to them;
+// the chat is just "tell me about your app."
+ipcMain.handle("setup-chat-start", async (event, workspacePath) => {
+  const result = await runClaudeTurn(
+    workspacePath,
+    ["--print", "--system-prompt", "development/NEW-PROJECT-SETUP-PROMPT.md"],
+    "Let's begin. Start with Part 1's questions.",
+  )
+  return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
+})
+
+ipcMain.handle("setup-chat-send", async (event, { workspacePath, message }) => {
+  const result = await runClaudeTurn(workspacePath, ["--print", "--continue"], message)
+  return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })
 
 ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
@@ -148,7 +204,12 @@ ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
   devLoopProcess = spawn("node", ["development/dev-loop.js"], {
     cwd: workspacePath,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
+    // DEV_LOOP_NO_AUTO_OPEN: this window's own <webview> already shows the
+    // dashboard (see onDashboardUrl below) — without this, dev-loop.js also
+    // pops the same page open in the system's default browser, which is
+    // exactly the "why is Chrome opening" confusion this flag exists to
+    // avoid entirely.
+    env: { ...process.env, DEV_LOOP_NO_AUTO_OPEN: "1" },
   })
 
   let dashboardUrlSent = false

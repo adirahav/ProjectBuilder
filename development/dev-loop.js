@@ -964,15 +964,24 @@ function startDashboardServer() {
     server.listen(DASHBOARD_PORT, () => {
       const url = `http://localhost:${DASHBOARD_PORT}/`
       banner(`AGENT DASHBOARD — ${url}`)
-      log(`If it didn't open automatically, open this URL yourself: ${url}`)
-      const openCmd =
-        process.platform === "win32" ? `start "" "${url}"` :
-        process.platform === "darwin" ? `open "${url}"` :
-        `xdg-open "${url}"`
-      try {
-        execSync(openCmd, { stdio: "ignore" })
-      } catch (e) {
-        warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
+      // A host that already embeds this dashboard itself (the Electron
+      // desktop shell's own <webview>, see electron/main.js) sets this so a
+      // second copy doesn't also pop open in the system's default browser —
+      // there's nothing to open a real browser tab FOR in that case, the
+      // human is already looking at this exact page.
+      if (process.env.DEV_LOOP_NO_AUTO_OPEN) {
+        log(`Dashboard ready at: ${url}`)
+      } else {
+        log(`If it didn't open automatically, open this URL yourself: ${url}`)
+        const openCmd =
+          process.platform === "win32" ? `start "" "${url}"` :
+          process.platform === "darwin" ? `open "${url}"` :
+          `xdg-open "${url}"`
+        try {
+          execSync(openCmd, { stdio: "ignore" })
+        } catch (e) {
+          warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
+        }
       }
       resolveStarted(server)
     })

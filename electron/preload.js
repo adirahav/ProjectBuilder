@@ -10,4 +10,6 @@ contextBridge.exposeInMainWorld("devLoop", {
   onDashboardUrl: (callback) => ipcRenderer.on("dev-loop-dashboard-url", (_event, url) => callback(url)),
   onExit: (callback) => ipcRenderer.on("dev-loop-exit", (_event, code) => callback(code)),
   getMongodStatus: () => ipcRenderer.invoke("get-mongod-status"),
+  startSetupChat: (workspacePath) => ipcRenderer.invoke("setup-chat-start", workspacePath),
+  sendSetupChatMessage: (workspacePath, message) => ipcRenderer.invoke("setup-chat-send", { workspacePath, message }),
 })

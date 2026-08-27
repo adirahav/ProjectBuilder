@@ -171,10 +171,19 @@ const CLAUDE_TURN_TIMEOUT_MS = 90 * 1000
 
 function runClaudeTurn(workspacePath, args, inputText) {
   return new Promise((resolve) => {
+    const commandString = ["claude", ...args.map(quoteArgForCmd)].join(" ")
+    // Prints straight to the terminal `npm start` is running in — this is
+    // the fastest way to tell "child never spawned" apart from "spawned but
+    // hung" apart from "IPC never even reached main.js" while debugging
+    // live, without needing DevTools open.
+    console.log(`[setup-chat] spawning in ${workspacePath}: ${commandString}`)
+
     const child =
       process.platform === "win32"
-        ? spawn(["claude", ...args.map(quoteArgForCmd)].join(" "), { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: true })
+        ? spawn(commandString, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: true })
         : spawn("claude", args, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: false })
+
+    console.log(`[setup-chat] spawned, pid=${child.pid}`)
 
     let out = ""
     let err = ""
@@ -183,17 +192,19 @@ function runClaudeTurn(workspacePath, args, inputText) {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      console.log(`[setup-chat] settled: code=${result.code} out.length=${result.out.length} err=${result.err.slice(0, 300)}`)
       resolve(result)
     }
     const timer = setTimeout(() => {
+      console.log(`[setup-chat] TIMEOUT firing, killing pid=${child.pid}`)
       child.kill()
       settle({ out: "", err: `Timed out after ${CLAUDE_TURN_TIMEOUT_MS / 1000}s with no response. Raw output so far: ${out || "(none)"} / stderr: ${err || "(none)"}`, code: -1 })
     }, CLAUDE_TURN_TIMEOUT_MS)
 
-    child.stdout.on("data", (d) => { out += d.toString() })
-    child.stderr.on("data", (d) => { err += d.toString() })
+    child.stdout.on("data", (d) => { out += d.toString(); console.log(`[setup-chat] stdout chunk: ${d.toString().slice(0, 200)}`) })
+    child.stderr.on("data", (d) => { err += d.toString(); console.log(`[setup-chat] stderr chunk: ${d.toString().slice(0, 200)}`) })
     child.on("close", (code) => settle({ out: out.trim(), err: err.trim(), code }))
-    child.on("error", (e) => settle({ out: "", err: e.message, code: -1 }))
+    child.on("error", (e) => { console.log(`[setup-chat] spawn error event: ${e.message}`); settle({ out: "", err: e.message, code: -1 }) })
     child.stdin.write(inputText)
     child.stdin.end()
   })

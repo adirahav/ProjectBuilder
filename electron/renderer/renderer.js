@@ -60,11 +60,21 @@ pickBtnMain.addEventListener("click", async () => {
     const thinkingEl = addChatMessage("thinking", "…")
     chatSendBtn.disabled = true
     chatContinueBtn.disabled = true
-    const reply = await window.devLoop.startSetupChat(selectedWorkspacePath)
-    thinkingEl.remove()
-    chatSendBtn.disabled = false
-    chatContinueBtn.disabled = false
-    addChatMessage("assistant", reply.error ? `Something went wrong: ${reply.error}` : reply.text)
+    try {
+      const reply = await window.devLoop.startSetupChat(selectedWorkspacePath)
+      thinkingEl.remove()
+      addChatMessage("assistant", reply.error ? `Something went wrong: ${reply.error}` : reply.text)
+    } catch (e) {
+      // An IPC call that throws in main.js otherwise rejects silently here
+      // and leaves the "…" placeholder stuck forever with no visible cause
+      // — this is exactly the failure mode this catch exists to rule out.
+      thinkingEl.remove()
+      console.error(e)
+      addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
+    } finally {
+      chatSendBtn.disabled = false
+      chatContinueBtn.disabled = false
+    }
   } else {
     goToStep(2)
   }
@@ -88,11 +98,18 @@ async function sendChatMessage() {
   chatSendBtn.disabled = true
   chatContinueBtn.disabled = true
   const thinkingEl = addChatMessage("thinking", "…")
-  const reply = await window.devLoop.sendSetupChatMessage(selectedWorkspacePath, text)
-  thinkingEl.remove()
-  chatSendBtn.disabled = false
-  chatContinueBtn.disabled = false
-  addChatMessage("assistant", reply.error ? `Something went wrong: ${reply.error}` : reply.text)
+  try {
+    const reply = await window.devLoop.sendSetupChatMessage(selectedWorkspacePath, text)
+    thinkingEl.remove()
+    addChatMessage("assistant", reply.error ? `Something went wrong: ${reply.error}` : reply.text)
+  } catch (e) {
+    thinkingEl.remove()
+    console.error(e)
+    addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
+  } finally {
+    chatSendBtn.disabled = false
+    chatContinueBtn.disabled = false
+  }
 }
 chatSendBtn.addEventListener("click", sendChatMessage)
 chatInputEl.addEventListener("keydown", (e) => {

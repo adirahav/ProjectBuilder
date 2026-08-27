@@ -7,10 +7,11 @@ import type { Tour } from '../../types/tour.types'
  * Written by `tour.service.ts` after an API response — components must not
  * duplicate that update after calling the service (.rule/coding-rules.md).
  *
- * Selecting a tour cascades: the bus list, the bus selection, and the seat map
- * all belong to the previously selected tour, so they are cleared here in the
- * same `set` call. Doing it anywhere else would leave one render in which the
- * map on screen belongs to a tour the user is no longer looking at.
+ * Selecting a tour cascades: the bus list, the bus selection, the seat map, and
+ * the admin manifest all belong to the previously selected tour, so they are
+ * cleared here in the same `set` call. Doing it anywhere else would leave one
+ * render in which the map on screen belongs to a tour the user is no longer
+ * looking at — and, for the manifest, one render of another bus's passenger PII.
  */
 export type TourSlice = {
   tours: Tour[]
@@ -31,5 +32,6 @@ export const createTourSlice: SliceCreator<TourSlice> = (set) => ({
       buses: [],
       selectedBusId: null,
       seatMap: null,
+      manifest: null,
     }),
 })

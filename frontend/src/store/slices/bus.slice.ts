@@ -7,9 +7,10 @@ import type { Bus } from '../../types/bus.types'
  * Written by `bus.service.ts` after an API response — components must not
  * duplicate that update after calling the service (.rule/coding-rules.md).
  *
- * Changing the bus clears the seat map for the same reason `selectTour` clears
- * the bus list: a stale map belonging to another bus must never be on screen,
- * even for a single render.
+ * Changing the bus clears the seat map and the admin manifest for the same
+ * reason `selectTour` clears the bus list: stale data belonging to another bus
+ * must never be on screen, even for a single render — and the manifest's
+ * passenger PII in particular must not outlive the bus it describes.
  */
 export type BusSlice = {
   buses: Bus[]
@@ -24,5 +25,5 @@ export const createBusSlice: SliceCreator<BusSlice> = (set) => ({
 
   setBuses: (buses) => set({ buses }),
 
-  selectBus: (busId) => set({ selectedBusId: busId, seatMap: null }),
+  selectBus: (busId) => set({ selectedBusId: busId, seatMap: null, manifest: null }),
 })

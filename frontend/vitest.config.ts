@@ -32,10 +32,15 @@ export default defineConfig({
      * every fork boot a jsdom environment simultaneously; on a loaded machine
      * enough of them miss that deadline that the run dies with
      * "Timeout waiting for worker to respond" before a single assertion runs.
-     * Capping the pool keeps the suite green and, because the forks no longer
-     * starve each other during startup, it also finishes faster than the
-     * uncapped default. Raise this only if the suite grows enough to need it.
+     *
+     * This was capped at 2, which held until plan 009 added the admin-dashboard
+     * suite: at 13 test files, two concurrent jsdom boots were again enough to
+     * miss the deadline and report worker-start errors alongside a fully passing
+     * run. Serialising the pool removes the contention entirely. It costs little
+     * — the run is dominated by per-file jsdom setup, which happens once per file
+     * either way — and it buys a deterministic suite, which .rule/testing-rules.md
+     * ("no flaky tests in mainline branches") values more than wall-clock time.
      */
-    maxWorkers: 2,
+    maxWorkers: 1,
   },
 })

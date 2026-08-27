@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, Bus, Loader2, RefreshCw } from 'lucide-react'
+import { Bus } from 'lucide-react'
 import { toast } from 'sonner'
-import { SeatLegend } from '../components/passenger/SeatLegend'
-import { SeatMap } from '../components/passenger/SeatMap'
+import { SeatLegend } from '../components/common/SeatLegend'
+import { SeatMap } from '../components/common/SeatMap'
+import { EmptyPanel, ErrorPanel, LoadingPanel } from '../components/common/StatePanel'
 import { SeatRequestModal } from '../components/passenger/SeatRequestModal'
-import { TourBusSelector } from '../components/passenger/TourBusSelector'
+import { TourBusSelector } from '../components/common/TourBusSelector'
 import { ConflictError, NetworkError } from '../services/http.service'
 import { seatService } from '../services/seat.service'
 import { useStore } from '../store/store'
@@ -162,7 +163,7 @@ export function ToursPage() {
           {!selectedBusId ? (
             <EmptyPanel message="בחרו טיול ואוטובוס כדי לראות את מפת המושבים." />
           ) : isLoadingSeatMap && !seatMap ? (
-            <LoadingPanel />
+            <LoadingPanel message="טוען את מפת המושבים…" />
           ) : seatMapError && !seatMap ? (
             <ErrorPanel
               message={seatMapError}
@@ -197,49 +198,6 @@ export function ToursPage() {
           setSubmitError(undefined)
         }}
       />
-    </div>
-  )
-}
-
-function LoadingPanel() {
-  return (
-    <p
-      role="status"
-      className="flex items-center justify-center gap-2 rounded-xl border border-n-100 bg-n-0 p-6 text-label text-n-500 shadow-sm"
-    >
-      <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-      טוען את מפת המושבים…
-    </p>
-  )
-}
-
-function EmptyPanel({ message }: { message: string }) {
-  return (
-    <p className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-n-200 bg-n-0 p-6 text-label text-n-500">
-      <ArrowRight aria-hidden="true" className="size-4 text-n-400" />
-      {message}
-    </p>
-  )
-}
-
-function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div
-      role="alert"
-      className="flex flex-col items-center gap-3 rounded-xl border border-n-100 bg-n-0 p-6 text-center shadow-sm"
-    >
-      <span className="flex size-10 items-center justify-center rounded-full bg-danger-50 text-danger-600">
-        <AlertTriangle aria-hidden="true" className="size-5" />
-      </span>
-      <p className="text-label text-n-700">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="flex h-10 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-4 text-label font-medium text-n-700 transition hover:bg-n-50"
-      >
-        <RefreshCw aria-hidden="true" className="size-4" />
-        נסו שוב
-      </button>
     </div>
   )
 }

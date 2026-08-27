@@ -20,27 +20,35 @@ import {
  * button drops out of the tab order entirely, which would hide most of the bus
  * from a keyboard or screen-reader user. It stays focusable and announced, and
  * simply does nothing when activated.
+ *
+ * Shared by the passenger view (Screen 3) and the admin Seat Management tab
+ * (Screen 4a, plan 009). The admin tab renders it without `onSelect`, which
+ * makes every seat inert and drops the "לחצו לשליחת בקשה" call to action from
+ * the accessible name — a read-only view must not announce an action it cannot
+ * perform.
  */
 type SeatButtonProps = {
   seat: Seat
-  onSelect: (seat: Seat) => void
+  /** Omitted in read-only (admin) mode — every seat then renders inert. */
+  onSelect?: (seat: Seat) => void
   /** Suppresses interaction while a request is in flight. */
   isBusy?: boolean
 }
 
 export function SeatButton({ seat, onSelect, isBusy = false }: SeatButtonProps) {
-  const isRequestable = isSeatRequestable(seat)
+  const isInteractive = Boolean(onSelect)
+  const isRequestable = isInteractive && isSeatRequestable(seat)
   const Icon = seatStatusIcons[seat.status]
 
   return (
     <button
       type="button"
       onClick={() => {
-        if (!isRequestable || isBusy) return
+        if (!onSelect || !isRequestable || isBusy) return
         onSelect(seat)
       }}
       aria-disabled={!isRequestable || isBusy}
-      aria-label={formatSeatAriaLabel(seat)}
+      aria-label={formatSeatAriaLabel(seat, isInteractive)}
       className={cn(
         'flex size-11 shrink-0 flex-col items-center justify-center gap-px rounded-lg border-2',
         'text-caption font-semibold transition duration-300 ease-out',

@@ -56,6 +56,12 @@ function createWindow() {
     },
   })
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"))
+  // Renderer-side console.error/console.log lands right in this panel —
+  // in dev mode there's no other way to see it without manually opening
+  // DevTools every run, and a silently-thrown/rejected renderer error is
+  // exactly what was indistinguishable from a genuine backend hang while
+  // debugging the setup chat (see chat history).
+  if (!app.isPackaged) mainWindow.webContents.openDevTools()
 }
 
 // Any folder the human can browse to is acceptable — a brand-new empty one
@@ -297,7 +303,25 @@ ipcMain.handle("stop-dev-loop", () => {
   return { stopped: true }
 })
 
-app.whenReady().then(createWindow)
+// Without this, running `npm start` again while an earlier instance is
+// still alive opens a SECOND window/process pair — easy to do by accident,
+// and then it's genuinely ambiguous which window matches which terminal's
+// log output (exactly what happened debugging the setup chat — see chat
+// history). Losing the lock means another instance already holds it; quit
+// immediately instead of spawning a confusing duplicate.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  app.whenReady().then(createWindow)
+}
 
 app.on("window-all-closed", () => {
   if (devLoopProcess) devLoopProcess.kill()

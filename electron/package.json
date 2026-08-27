@@ -1,0 +1,13 @@
+{
+  "name": "dev-loop-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell for dev-loop.js — pick a project folder, run the orchestrator, view its dashboard in a native window.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}

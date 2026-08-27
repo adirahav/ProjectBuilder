@@ -175,17 +175,27 @@ function runClaudeTurn(workspacePath, args, inputText) {
 // This is the ONLY place the human-facing side of onboarding happens —
 // nothing about dev-loop.js, agents, or the template is ever named to them;
 // the chat is just "tell me about your app."
+// --permission-mode bypassPermissions is not optional here — without it,
+// the moment Claude tries to actually read/write a file (which the setup
+// interview does constantly, per its own instructions), the CLI blocks
+// waiting for an interactive y/n permission prompt that can never arrive
+// over a plain piped stdin/stdout — the process just hangs forever with no
+// error, which is exactly what silently happened before this was added
+// (dev-loop.js's own spawnClaude() already learned this lesson — see
+// CLAUDE_PERMISSION_MODE — this mirrors it instead of re-discovering it).
+const SETUP_CHAT_ARGS = ["--print", "--permission-mode", "bypassPermissions"]
+
 ipcMain.handle("setup-chat-start", async (event, workspacePath) => {
   const result = await runClaudeTurn(
     workspacePath,
-    ["--print", "--system-prompt", "development/NEW-PROJECT-SETUP-PROMPT.md"],
+    [...SETUP_CHAT_ARGS, "--system-prompt", "development/NEW-PROJECT-SETUP-PROMPT.md"],
     "Let's begin. Start with Part 1's questions.",
   )
   return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })
 
 ipcMain.handle("setup-chat-send", async (event, { workspacePath, message }) => {
-  const result = await runClaudeTurn(workspacePath, ["--print", "--continue"], message)
+  const result = await runClaudeTurn(workspacePath, [...SETUP_CHAT_ARGS, "--continue"], message)
   return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })
 

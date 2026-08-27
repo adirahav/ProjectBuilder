@@ -121,6 +121,14 @@ adoptApprovalModeFromSetup()
 
 const orchestratorConfig = loadOrchestratorConfig()
 
+// Entirely optional — a human can run this against a plain directory with no
+// git repo at all (no version control, or managed outside git). When false,
+// every git-specific concept (branch-per-task, auto-commit, merge-approval)
+// is skipped outright: agents just write files straight onto disk and the
+// loop moves on to the next task. Checked once, at load time, since whether
+// a repo exists here isn't expected to change mid-run.
+const GIT_ENABLED = existsSync(".git")
+
 // When true, the plan-review gate never stops to wait on a human — it
 // accepts the orchestrator's own "- Recommended: ..." answer on every Open
 // Question and proceeds automatically. Questions are still asked/answered IN
@@ -158,9 +166,13 @@ const AUTO_APPROVE_DESIGN = process.env.AUTO_APPROVE_DESIGN != null || getArg("-
 // behavior — since that's the safer choice for anyone who hasn't set an
 // opinion either way. A CLI flag/env var can still override it for a
 // one-off run without touching the config file.
-const CREATE_BRANCH_PER_TASK = process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
-  ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
-  : orchestratorConfig.createBranchPerTask !== false
+// Meaningless with no git repo at all — forced off regardless of config/CLI
+// overrides, since there's nothing to branch.
+const CREATE_BRANCH_PER_TASK = GIT_ENABLED && (
+  process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
+    ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
+    : orchestratorConfig.createBranchPerTask !== false
+)
 
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
@@ -182,53 +194,40 @@ const STATE_DIR = "docs/task-state"
 
 let USD_TO_NIS = 3.7
 
-// Non-service scope keywords the backlog's `scope:` field can also contain —
-// never real backend-service keys, so scanBacklogForServiceKeys() below must
-// exclude them or every task would spuriously "discover" a fake service.
-const NON_SERVICE_SCOPE_KEYWORDS = new Set(["frontend", "qa", "security", "none"])
-
-// The FIRST scaffold task for a given service names it in the backlog's own
-// `scope:` field before backend/<service>/ exists on disk at all — relying
+// The FIRST scaffold task for a given service needs to launch the Backend
+// Agent for it BEFORE backend/<service>/ exists on disk at all — relying
 // solely on directory-scanning is a chicken-and-egg bug: BACKEND_SERVICE_KEYS
-// is computed once at startup, so a not-yet-scaffolded service's own scaffold
-// task never finds itself in that list, the per-service launch loop below
-// has nothing to iterate for it, and the task silently completes as DONE
-// with the backend agent never having run at all (confirmed happening for
-// real — see chat history). Scanning every backlog line's `scope:` field
-// (not just unchecked ones — a service already marked done still needs to
-// stay discoverable after a restart) and unioning with the directory scan
-// closes that gap: any scope token that isn't a known non-service keyword is
-// treated as a real backend-service key, whether or not its directory
-// exists yet.
-function scanBacklogForServiceKeys() {
-  if (!existsSync(BACKLOG_FILE)) return []
-  const content = readFileSync(BACKLOG_FILE, "utf-8")
-  const keys = new Set()
-  for (const line of content.split("\n")) {
-    const m = line.match(/scope:\s*([^|]+)/i)
-    if (!m) continue
-    for (const token of m[1].split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
-      if (!NON_SERVICE_SCOPE_KEYWORDS.has(token)) keys.add(token)
-    }
-  }
-  return [...keys]
+// would be empty at that point, the per-service launch loop below would have
+// nothing to iterate for it, and the task would silently complete as DONE
+// with the backend agent never having run (confirmed happening for real —
+// see chat history).
+//
+// This used to be solved by scanning the backlog file's own `scope:` fields
+// for service-looking tokens — but that meant trusting free-form prose a
+// human (or an agent) can and did corrupt, which briefly invented a fake
+// backend service out of scrambled text and put a garbage node on the
+// dashboard ring (also seen for real — see chat history). `backendServices`
+// in orchestrator.config.json is the fix: an explicit, structured array set
+// once during project setup (development/NEW-PROJECT-SETUP-PROMPT.md) —
+// nothing here parses arbitrary text to guess at it.
+function configuredBackendServices() {
+  return Array.isArray(orchestratorConfig.backendServices) ? orchestratorConfig.backendServices : []
 }
 
 // Backend services are discovered from backend/*/package.json (already-
-// scaffolded services) UNIONED with every service key ever named in the
-// backlog's `scope:` field (see scanBacklogForServiceKeys() above) — so a
-// service's own first scaffold task can actually launch the backend agent
-// for it, not just every task after it already exists on disk. Sorted for a
-// stable, reproducible order (port/ticket-code assignment below depends on
-// it). Falls back to [] before any backend service has been scaffolded AND
-// no backlog task mentions one yet.
+// scaffolded services) UNIONED with orchestrator.config.json's
+// `backendServices` (the project's full intended list, set once at setup —
+// see configuredBackendServices() above). Sorted for a stable, reproducible
+// order (port/ticket-code assignment below depends on it). Falls back to []
+// only if `backendServices` was never configured AND nothing's scaffolded
+// yet — at that point this project isn't multi-agent/has no backend at all.
 function discoverBackendServices() {
   const onDisk = existsSync("backend")
     ? readdirSync("backend", { withFileTypes: true })
         .filter((e) => e.isDirectory() && existsSync(`backend/${e.name}/package.json`))
         .map((e) => e.name)
     : []
-  return [...new Set([...onDisk, ...scanBacklogForServiceKeys()])].sort()
+  return [...new Set([...onDisk, ...configuredBackendServices()])].sort()
 }
 
 // kebab-case service key -> camelCase property name, used to key the
@@ -839,8 +838,39 @@ function startDashboardServer() {
       // docs/cost/last-task.json and docs/cost/task-history.json directly via
       // the generic /docs/** static route below, so their shape can change
       // without ever touching this route's code again.
+      // `awaitingInput` comes straight from the in-memory pendingHumanInput —
+      // it can't live in the status FILE (its `respond` callback isn't
+      // serializable), so this is the one field on this route that reflects
+      // live process state instead of whatever was last written to disk.
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
-      res.end(JSON.stringify({ ...base, services: BACKEND_SERVICE_KEYS }))
+      res.end(JSON.stringify({
+        ...base,
+        services: BACKEND_SERVICE_KEYS,
+        awaitingInput: pendingHumanInput ? { prompt: pendingHumanInput.prompt, expectsText: pendingHumanInput.expectsText } : null,
+      }))
+      return
+    }
+
+    // The dashboard's "waiting for you" box POSTs here — either a real typed
+    // answer/feedback, or an empty body for "just press Enter." Whichever of
+    // (this route / the terminal's own readline prompt) resolves first wins;
+    // the other is a no-op since pendingHumanInput.respond() self-guards
+    // against firing twice (see askUserInput()).
+    if (req.url === "/respond" && req.method === "POST") {
+      let body = ""
+      req.on("data", (chunk) => { body += chunk })
+      req.on("end", () => {
+        if (!pendingHumanInput) {
+          res.writeHead(409, { "Content-Type": "application/json" })
+          res.end(JSON.stringify({ error: "Nothing is waiting for input right now." }))
+          return
+        }
+        let text = ""
+        try { text = JSON.parse(body || "{}").text ?? "" } catch { /* treat as empty */ }
+        pendingHumanInput.respond(text)
+        res.writeHead(204)
+        res.end()
+      })
       return
     }
 
@@ -1008,12 +1038,16 @@ function checkPrerequisites() {
     process.exit(1)
   }
 
-  try {
-    execSync("git --version", { stdio: "ignore" })
-  } catch {
-    printRed("git is not installed or not on PATH — this script runs real git commands (branch, commit, merge).")
-    printRed("Install git, then rerun.")
-    process.exit(1)
+  if (GIT_ENABLED) {
+    try {
+      execSync("git --version", { stdio: "ignore" })
+    } catch {
+      printRed("git is not installed or not on PATH — this script runs real git commands (branch, commit, merge).")
+      printRed("Install git, then rerun.")
+      process.exit(1)
+    }
+  } else {
+    warn("No .git found at the repo root — running without version control. Agents will write files straight to disk; nothing gets branched, committed, or merged automatically. (Run 'git init' first if that's not what you want.)")
   }
 
   try {
@@ -1036,10 +1070,12 @@ async function main() {
 
   const BASE_BRANCH = getBaseBranch()
   log(
-    `Base branch: '${BASE_BRANCH}'` +
-      (CREATE_BRANCH_PER_TASK
-        ? " — every task branches from here and merges back here, only after your approval."
-        : " — tasks commit directly onto this branch, no per-task branch/merge this run.")
+    GIT_ENABLED
+      ? `Base branch: '${BASE_BRANCH}'` +
+          (CREATE_BRANCH_PER_TASK
+            ? " — every task branches from here and merges back here, only after your approval."
+            : " — tasks commit directly onto this branch, no per-task branch/merge this run.")
+      : "No git repo — agents write files straight to disk, nothing gets branched/committed/merged."
   )
 
   USD_TO_NIS = await fetchUsdToNis()
@@ -1111,7 +1147,7 @@ async function main() {
     const branchName = CREATE_BRANCH_PER_TASK ? `${BASE_BRANCH}-tasks/${task.slug}` : BASE_BRANCH
     if (CREATE_BRANCH_PER_TASK) {
       createGitBranch(branchName, BASE_BRANCH)
-    } else if (execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim() !== BASE_BRANCH) {
+    } else if (GIT_ENABLED && execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim() !== BASE_BRANCH) {
       // Only relevant right after a run with branching ON left a task branch
       // checked out — get back onto the base branch before working directly
       // on it this time.
@@ -1410,7 +1446,7 @@ async function runTaskCommand(task) {
     printRed(`Command failed: ${task.cmd}`)
     printRed(err.message)
     emitEvent("attention-needed", null, `Command failed: ${task.cmd}`)
-    await askUserInput(`Fix the issue above, then press Enter to retry this command: `)
+    await askUserInput(`Fix the issue above, then press Enter to retry this command: `, { expectsText: false })
     return runTaskCommand(task)
   }
 }
@@ -1434,6 +1470,7 @@ function openChangedFilesInEditor() {
     }
   }
   if (!codeCliAvailable) return
+  if (!GIT_ENABLED) return // nothing was committed to diff against — see commitTaskChanges()
 
   let changedFiles
   try {
@@ -1826,10 +1863,19 @@ function ensureDirFor(filePath) {
   if (dir && dir !== "." && !existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
+// Pulls "1:30pm (Asia/Jerusalem)" out of the CLI's own "You've hit your
+// session limit · resets 1:30pm (Asia/Jerusalem)" line, so the dashboard can
+// show it without the human having to go dig through terminal scrollback.
+function extractSessionLimitReset(text) {
+  const m = text && text.match(/resets?\s+(\d{1,2}:\d{2}\s*(?:am|pm)(?:\s*\([^)]*\))?)/i)
+  return m ? m[1] : null
+}
+
 async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, label, agentKey }) {
   const kind = lastSpawnError?.kind || "FAILED"
-  const reason = BLOCK_REASONS[kind] || BLOCK_REASONS.FAILED
   const raw = (lastSpawnError?.raw || "").trim()
+  const resetsAt = kind === "SESSION_LIMIT" ? extractSessionLimitReset(raw) : null
+  const reason = (BLOCK_REASONS[kind] || BLOCK_REASONS.FAILED) + (resetsAt ? ` Resets ${resetsAt}.` : "")
 
   const statusPath = `${outputFile}.blocked.md`
   ensureDirFor(statusPath)
@@ -1852,7 +1898,25 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
   printRed(`Status written to: ${statusPath}`)
   emitEvent(kind === "SESSION_LIMIT" ? "session-limit" : "attention-needed", agentKey, reason)
 
-  await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `)
+  // A structured field (not just the free-text `message`, which the very
+  // next routine output line will overwrite) so the dashboard can show a
+  // stable "resets at X" banner for as long as this block is actually
+  // active — cleared right below once the human responds and the retry
+  // actually starts.
+  if (kind === "SESSION_LIMIT") {
+    const status = readStatus()
+    status.sessionLimit = { resetsAt, since: new Date().toISOString() }
+    writeStatus(status)
+  }
+
+  await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `, { expectsText: false })
+
+  const status = readStatus()
+  if (status.sessionLimit) {
+    delete status.sessionLimit
+    writeStatus(status)
+  }
+
   return runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey })
 }
 
@@ -2287,6 +2351,7 @@ ${BACKEND_SERVICE_KEYS.map((key) => `- backend/${key} (only if in scope): npm --
 // loop refuses to run against it at all, since an unattended per-task merge
 // loop is exactly the kind of thing that should never target main directly.
 function getBaseBranch() {
+  if (!GIT_ENABLED) return "no-git"
   const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim()
   if (branch === "main" || branch === "master") {
     printRed(`Refusing to run: current branch is '${branch}'. main/master is sacred — dev-loop.js never branches from or merges into it.`)
@@ -2329,6 +2394,7 @@ function createGitBranch(branch, baseBranch) {
 // into this commit step, so a crash between the two never leaves an
 // unreviewed merge sitting on the base branch.
 function commitTaskChanges(task, branch) {
+  if (!GIT_ENABLED) return
   try {
     execSync("git add -A", { stdio: "inherit" })
     const status = execSync("git status --porcelain", { encoding: "utf-8" })
@@ -2363,6 +2429,7 @@ function commitTaskChanges(task, branch) {
 // for this, it's pure bookkeeping), so the working tree is guaranteed clean
 // before the loop's next iteration tries to check out a new task branch.
 function commitCostArtifacts(task, baseBranch) {
+  if (!GIT_ENABLED) return
   try {
     const status = execSync("git status --porcelain", { encoding: "utf-8" })
     if (!status.trim()) return
@@ -2661,14 +2728,34 @@ async function ensureBackendEnv(serviceDir) {
   log(`Wrote ${devPath}`)
 }
 
-function askUserInput(prompt) {
+// Set only while a real terminal prompt is outstanding — lets the dashboard
+// (via POST /respond, see startDashboardServer()) answer the SAME prompt
+// from the browser instead of only the terminal. Whichever side answers
+// first wins; `settle`'s own guard makes the loser's call a no-op rather
+// than a double-resolve.
+let pendingHumanInput = null
+
+// `expectsText` tells the dashboard whether to show a text field at all.
+// Most prompts genuinely want typed content (feedback, "APPROVED", a real
+// config value) — those default to true. The couple of "fix it, then press
+// Enter to retry exactly where it stopped" prompts (blockAndRetry, failed
+// shell command) never read the answer text at all, just that *something*
+// was pressed — showing an empty textbox next to a confusingly-named "Just
+// Enter" button there was genuinely misleading, not just ugly.
+function askUserInput(prompt, { expectsText = true } = {}) {
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout })
-    rl.question(prompt, (answer) => {
+    let settled = false
+    const settle = (answer) => {
+      if (settled) return
+      settled = true
+      pendingHumanInput = null
       process.stdout.write(RESET)
       rl.close()
       resolve(answer)
-    })
+    }
+    pendingHumanInput = { prompt, expectsText, respond: settle }
+    rl.question(prompt, settle)
     process.stdout.write("\x1b[91m")
   })
 }

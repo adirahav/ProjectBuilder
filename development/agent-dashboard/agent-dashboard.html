@@ -32,10 +32,18 @@
     height: 100vh;
     gap: 0;
   }
+  /* A grid track's default minimum is its content's min-content width, not
+     0 — so "1fr 1fr" alone isn't actually a rigid 50/50: wide content on
+     one side (a long task title, a wide history row) can silently grow that
+     column and squeeze the other one narrower. min-width: 0 on both grid
+     children removes that implicit floor, so the 50/50 split holds no
+     matter what either side's content does (it wraps/scrolls/clips inside
+     its own half instead). */
   #stage {
     position: relative;
     grid-column: 1;
     grid-row: 1 / span 2;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -150,6 +158,7 @@
     grid-column: 2; grid-row: 1 / span 2;
     display: flex; flex-direction: column;
     min-height: 0;
+    min-width: 0;
     padding: 20px 24px;
   }
   #right-tabs {
@@ -176,12 +185,76 @@
     padding: 18px 20px;
     flex-shrink: 0;
   }
-  #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* padding-right reserves room for #sound-toggle, a `position: fixed`
+     element that floats on top of this line (z-index 50) instead of taking
+     up space in normal document flow — without this, the label's own
+     nowrap/ellipsis truncation has no idea the button is there, so it
+     renders text right up to the card's real edge and the button just
+     visually covers/cuts off whatever ends up underneath it. */
+  #status-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 170px; }
   #status-card .agent-line { font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
   .sidebar-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
   #status-card .message { margin-top: 10px; font-size: 14px; color: var(--text); line-height: 1.5; }
   #status-card .thinking { margin-top: 8px; font-size: 13px; font-style: italic; color: var(--dim); min-height: 1.2em; margin-bottom:2.0em }
   #status-card .updated { margin-top: 10px; font-size: 11px; color: var(--dim); }
+
+  #session-limit-banner {
+    margin-top: 12px; padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(240, 180, 41, 0.12);
+    border: 1px solid rgba(240, 180, 41, 0.35);
+    color: var(--orchestrator);
+    font-size: 13px; font-weight: 600;
+  }
+  #session-limit-banner:empty { display: none; }
+
+  /* Lets a human answer the terminal's blocking prompt (session-limit retry,
+     design-review APPROVED/feedback, etc.) from the dashboard instead of
+     having to switch to the terminal window. Two distinct modes, driven by
+     /status.json's awaitingInput.expectsText (see askUserInput() in
+     dev-loop.js) — NOT always both a textbox and a button: a "fix it, then
+     press Enter to retry exactly where it stopped" prompt never reads the
+     answer text at all, so showing an empty textbox next to it was actively
+     misleading (looked like typing something would matter, when only the
+     press itself does). `.text-mode`/`.enter-mode` on #respond-box (set in
+     poll(), see below) toggle which controls are visible; hidden entirely
+     until /status.json reports awaitingInput at all. */
+  #respond-box {
+    display: none;
+    margin-top: 12px; padding: 12px;
+    border-radius: 10px;
+    background: rgba(240, 180, 41, 0.08);
+    border: 1px solid rgba(240, 180, 41, 0.3);
+  }
+  #respond-box.active { display: block; }
+  #respond-box:not(.text-mode) #respond-text,
+  #respond-box:not(.text-mode) #respond-send { display: none; }
+  #respond-box:not(.enter-mode) #respond-continue { display: none; }
+  #respond-prompt { font-size: 12px; color: var(--text); margin-bottom: 8px; line-height: 1.5; white-space: pre-wrap; }
+  #respond-controls { display: flex; gap: 6px; }
+  #respond-text {
+    flex: 1; min-width: 0;
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  #respond-text:focus { outline: none; border-color: var(--orchestrator); }
+  #respond-send, #respond-continue {
+    font-size: 12px; font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #respond-continue { flex: 1; color: var(--orchestrator); border-color: rgba(240, 180, 41, 0.4); }
+  #respond-send:hover, #respond-continue:hover { border-color: var(--orchestrator); }
+  #respond-send:disabled, #respond-continue:disabled { opacity: 0.5; cursor: default; }
 
   .progress-badge {
     display: inline-block;
@@ -306,6 +379,15 @@
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
+      <div id="session-limit-banner"></div>
+      <div id="respond-box">
+        <div id="respond-prompt"></div>
+        <div id="respond-controls">
+          <input type="text" id="respond-text" placeholder="Type feedback/notes…" autocomplete="off">
+          <button id="respond-send">Send</button>
+          <button id="respond-continue">▶ Continue</button>
+        </div>
+      </div>
     </div>
 
     <div id="right-tabs">
@@ -592,6 +674,41 @@ soundToggleBtn.addEventListener("click", () => {
   }
 });
 
+// Answers dev-loop.js's currently-blocking terminal prompt from here — POSTs
+// to /respond, which resolves the SAME pendingHumanInput the terminal's own
+// readline is waiting on (see dev-loop.js's askUserInput()). Empty text is a
+// legitimate answer (equivalent to bare Enter), so this always sends
+// whatever it's given rather than treating "" as "don't send."
+async function sendRespond(text) {
+  const sendBtn = document.getElementById("respond-send");
+  const continueBtn = document.getElementById("respond-continue");
+  sendBtn.disabled = true;
+  continueBtn.disabled = true;
+  try {
+    await fetch("/respond", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    document.getElementById("respond-text").value = "";
+  } catch {
+    // Dashboard server hiccup — the terminal prompt is still live and can
+    // still be answered directly there; nothing more to do here.
+  } finally {
+    sendBtn.disabled = false;
+    continueBtn.disabled = false;
+  }
+}
+document.getElementById("respond-send").addEventListener("click", () => {
+  sendRespond(document.getElementById("respond-text").value);
+});
+document.getElementById("respond-continue").addEventListener("click", () => {
+  sendRespond("");
+});
+document.getElementById("respond-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendRespond(e.target.value);
+});
+
 document.getElementById("iframe-refresh").addEventListener("click", async () => {
   const btn = document.getElementById("iframe-refresh");
   const frame = document.getElementById("app-frame");
@@ -720,15 +837,14 @@ function makeNode(agent, pos, isCenter, isSatellite) {
         const arcId2 = `${arcId}-2`
         return `
     <svg class="name-arc" viewBox="0 0 140 36" overflow="visible">
-      <path id="${arcId}" d="M8,20 A90,90 0 0 0 132,20" fill="none"></path>
-      <path id="${arcId2}" d="M8,34 A90,90 0 0 0 132,34" fill="none"></path>
+      <path id="${arcId}" d="M8,-20 A80,160 0 0 0 132,-20" fill="none"></path>
       <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${line1}</textPath></text>
       ${line2 ? `<text><textPath href="#${arcId2}" startOffset="50%" text-anchor="middle">${line2}</textPath></text>` : ""}
     </svg>`
       })()
     : `
     <svg class="name-arc" viewBox="0 0 100 100">
-      <path id="${arcId}" d="M10,80 A80,80 0 0 0 90,80" fill="none"></path>
+      <path id="${arcId}" d="M10,80 A80,120 0 0 0 90,80" fill="none"></path>
       <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${escapeXml(agent.ringLabel || agent.name)}</textPath></text>
     </svg>`;
   el.innerHTML = `${iconHtml}${nameSvg}`;
@@ -885,6 +1001,41 @@ async function poll() {
       : "";
     document.getElementById("status-progress").textContent = progressText;
     document.getElementById("status-task-name").textContent = data.task || "";
+
+    // Session-limit reset time — a stable banner (not the volatile `message`
+    // line, which the very next routine output line overwrites) that stays
+    // up for as long as dev-loop.js reports this field, i.e. until the human
+    // actually responds and the retry begins (see blockAndRetry() in
+    // dev-loop.js).
+    document.getElementById("session-limit-banner").textContent =
+      data.sessionLimit && data.sessionLimit.resetsAt ? `⏳ Session limit hit — resets ${data.sessionLimit.resetsAt}` : "";
+
+    // "Waiting for you" box — lets a human answer dev-loop.js's blocking
+    // terminal prompt (session-limit retry, design-review APPROVED/feedback,
+    // plan approval, ...) from here instead of switching to the terminal.
+    // Only touches the prompt text / visibility when the prompt itself
+    // actually changes, so a draft the human is mid-typing never gets wiped
+    // out by the next 1-second poll.
+    const respondBox = document.getElementById("respond-box");
+    const respondPrompt = document.getElementById("respond-prompt");
+    if (data.awaitingInput) {
+      respondBox.classList.add("active");
+      // expectsText === false is the "press Enter to retry, text is never
+      // read" case (see askUserInput() in dev-loop.js) — show only the
+      // Continue button, no textbox, so it's not implying typing matters.
+      respondBox.classList.toggle("text-mode", data.awaitingInput.expectsText !== false);
+      respondBox.classList.toggle("enter-mode", data.awaitingInput.expectsText === false);
+      if (respondPrompt.dataset.prompt !== data.awaitingInput.prompt) {
+        respondPrompt.dataset.prompt = data.awaitingInput.prompt;
+        respondPrompt.textContent = data.awaitingInput.prompt;
+      }
+    } else {
+      respondBox.classList.remove("active", "text-mode", "enter-mode");
+      if (respondPrompt.dataset.prompt) {
+        respondPrompt.dataset.prompt = "";
+        document.getElementById("respond-text").value = "";
+      }
+    }
 
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
     // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely

@@ -32,10 +32,18 @@
     height: 100vh;
     gap: 0;
   }
+  /* A grid track's default minimum is its content's min-content width, not
+     0 — so "1fr 1fr" alone isn't actually a rigid 50/50: wide content on
+     one side (a long task title, a wide history row) can silently grow that
+     column and squeeze the other one narrower. min-width: 0 on both grid
+     children removes that implicit floor, so the 50/50 split holds no
+     matter what either side's content does (it wraps/scrolls/clips inside
+     its own half instead). */
   #stage {
     position: relative;
     grid-column: 1;
     grid-row: 1 / span 2;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -150,6 +158,7 @@
     grid-column: 2; grid-row: 1 / span 2;
     display: flex; flex-direction: column;
     min-height: 0;
+    min-width: 0;
     padding: 20px 24px;
   }
   #right-tabs {
@@ -812,15 +821,14 @@ function makeNode(agent, pos, isCenter, isSatellite) {
         const arcId2 = `${arcId}-2`
         return `
     <svg class="name-arc" viewBox="0 0 140 36" overflow="visible">
-      <path id="${arcId}" d="M8,20 A90,90 0 0 0 132,20" fill="none"></path>
-      <path id="${arcId2}" d="M8,34 A90,90 0 0 0 132,34" fill="none"></path>
+      <path id="${arcId}" d="M8,40 A120,160 0 0 0 132,40" fill="none"></path>
       <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${line1}</textPath></text>
       ${line2 ? `<text><textPath href="#${arcId2}" startOffset="50%" text-anchor="middle">${line2}</textPath></text>` : ""}
     </svg>`
       })()
     : `
     <svg class="name-arc" viewBox="0 0 100 100">
-      <path id="${arcId}" d="M10,80 A80,80 0 0 0 90,80" fill="none"></path>
+      <path id="${arcId}" d="M10,80 A80,120 0 0 0 90,80" fill="none"></path>
       <text><textPath href="#${arcId}" startOffset="50%" text-anchor="middle">${escapeXml(agent.ringLabel || agent.name)}</textPath></text>
     </svg>`;
   el.innerHTML = `${iconHtml}${nameSvg}`;

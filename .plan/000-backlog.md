@@ -6,7 +6,7 @@ Current queue:
 - [x] Scaffold tour-service backend project (package.json, Express, Mongoose, MONGODB_URI) | scope: tour-service
 - [x] Scaffold user-management-service backend project (package.json, Express, Mongoose, MONGODB_URI, JWT) | scope: user-management-service
 - [x] Install root/frontend/backend dependencies | scope: none
-- [ ] Scaffold user-management-service backend for real + implement admin signup endpoint (previous scaffold/signup tasks were marked done but the service was never actually built on disk — see plan 010) | scope: frontend,user-management-service,qa,security | url: /signup
+- [x] Scaffold user-management-service backend for real + implement admin signup endpoint (previous scaffold/signup tasks were marked done but the service was never actually built on disk — see plan 010) | scope: frontend,user-management-service,qa,security | url: /signup
 - [x] Gateway (login) screen — passenger vs admin entry, admin login modal | scope: frontend,user-management-service,qa,security | url: /
 - [x] Passenger view — tour/bus selector + interactive seat map | scope: frontend,tour-service,qa | url: /tours
 - [x] Seat-request modal (name, phone, pickup point) with concurrency-safe request handling | scope: frontend,tour-service,qa,security | url: /tours

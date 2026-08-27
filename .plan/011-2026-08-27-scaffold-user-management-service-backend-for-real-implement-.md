@@ -1,6 +1,6 @@
 # Plan 011 — Scaffold user-management-service backend for real + implement admin signup endpoint
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-27
 Scope-Agents: frontend, user-management-service, qa, security

@@ -10,9 +10,11 @@ info:
 
     Scope of this revision: the Passenger View (Screen 3, ticket PASSENGE-FE,
     plan 007) — `GET /api/tours`, `GET /api/tours/{tourId}/buses`,
-    `GET /api/buses/{busId}/seats` (F3), and `POST /api/seats/bookings` (F4/F5).
+    `GET /api/buses/{busId}/seats` (F3), and `POST /api/seats/bookings` (F4/F5)
+    — plus the Admin Dashboard's Passenger Manifest tab (Screen 4c, ticket
+    ADMINDAS-FE, plan 009): `GET /api/buses/{busId}/manifest` (F15).
 
-    **Every endpoint in this revision is public and unauthenticated.** The PRD
+    **Every passenger-flow endpoint here is public and unauthenticated.** The PRD
     states the passenger flow has "no auth step", so the frontend sends these
     requests with `withAuth: false` and no `Authorization` header. The admin
     seat actions (approve / cancel / reserve / assign / swap) and Tour/Bus/
@@ -20,13 +22,20 @@ info:
     yet — when they land they MUST be admin-authenticated, and they MUST NOT
     reuse these public paths.
 
-    **PII boundary (plan 007 §Risks):** a seat booking captures the passenger's
-    full name and phone number. Because the seat map is a public surface, the
-    seat objects returned by this revision's endpoints MUST NOT contain any
-    passenger identity fields — not even for the passenger who just booked.
-    Passenger details are write-only here and are readable only through the
-    future authenticated admin endpoints. The server MUST NOT log raw name or
-    phone values.
+    `GET /api/buses/{busId}/manifest` is the **one exception**: it is
+    admin-authenticated and is the first route in this service to require a
+    valid admin JWT. If this service has no JWT verification middleware yet, one
+    must be added, verifying tokens with the same secret/algorithm
+    `user-management-service` signs with.
+
+    **PII boundary (plan 007 §Risks, plan 008 audit, plan 009 §Risks):** a seat
+    booking captures the passenger's full name and phone number. Because the seat
+    map is a public surface, the seat objects returned by every *public* endpoint
+    here MUST NOT contain any passenger identity fields — not even for the
+    passenger who just booked. Those details are write-only on the public
+    surface and are readable **only** through the admin-gated manifest route
+    below. The server MUST NOT log raw name or phone values from any route,
+    including the manifest one.
 
 servers:
   - url: '{tourServiceBaseUrl}'
@@ -40,6 +49,10 @@ tags:
     description: Read access to tours and their buses, powering the passenger selector.
   - name: seats
     description: Seat map reads and passenger seat requests.
+  - name: manifest
+    description: >
+      Admin-only passenger manifest. The only route group in this service that
+      returns passenger PII.
 
 paths:
   /api/tours:
@@ -241,6 +254,138 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
 
+  /api/buses/{busId}/manifest:
+    get:
+      tags: [manifest]
+      summary: Get the full passenger manifest for a bus — admin only (F15)
+      operationId: getBusManifest
+      security:
+        - bearerAuth: []
+      description: >
+        Returns one row per seat on the bus, **including passenger identity**
+        (`fullName`, `phone`, `pickupPoint`) for seats that are occupied. This
+        backs the Admin Dashboard's Passenger Manifest tab (Screen 4c), which
+        renders the rows in a filterable, searchable table and can copy them as a
+        shareable text report (F16, client-side only — no endpoint).
+
+        **This is deliberately a different endpoint from
+        `GET /api/buses/{busId}/seats`, not a richer mode of it.** The public
+        seat-map route must keep returning PII-free `Seat` objects; do not add a
+        query parameter or a conditional branch that lets the public path emit
+        passenger fields for an authenticated caller. Two paths with two
+        different response shapes is what makes the PII boundary auditable.
+
+        **Authorization (PRD NFR / plan 009 §Risks):** the caller MUST present a
+        valid, unexpired JWT whose `roles` include `admin`. A missing or
+        malformed/expired token is `401`; a well-formed token for a `user`-only
+        account is `403`. This check MUST be enforced server-side on every
+        request — the frontend's `AdminRoute` guard is a UX affordance in client
+        memory and is NOT a security boundary. A regression here leaks every
+        passenger's name and phone number for a bus, so this route requires
+        explicit tests for the missing/invalid/expired/non-admin cases.
+
+        **Logging:** as everywhere else in this service, `fullName` and `phone`
+        MUST NOT appear in server logs, error messages, or traces — log the
+        `busId` and a row count instead.
+
+        Responses SHOULD be sent with `Cache-Control: no-store`: this payload is
+        PII and must not be retained by an intermediary or the browser cache.
+
+        A bus with no seats defined returns `200` with `rows: []`; the frontend
+        renders an empty state for it. Rows SHOULD be returned for every seat,
+        including `available` ones (with the passenger fields omitted or
+        `null`), so the manifest can report free seats without a second request.
+      parameters:
+        - $ref: '#/components/parameters/BusId'
+      responses:
+        '200':
+          description: >
+            One row per seat, with passenger details on the occupied ones. May be
+            empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestResponse'
+              examples:
+                populated:
+                  value:
+                    bus:
+                      id: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                      name: אוטובוס 1
+                      seatCount: 50
+                    rows:
+                      - seatId: c7b4e802-3d19-4a55-9f0c-6b2e8d4a1f77
+                        seatLabel: '3'
+                        status: taken
+                        fullName: דנה לוי
+                        phone: '0524471903'
+                        pickupPoint: צומת גלילות
+                      - seatId: 9a3f2c11-6e5d-4b07-b2f4-8c1d0e6a5b39
+                        seatLabel: '2'
+                        status: pending
+                        fullName: נועה כהן
+                        phone: '0501112233'
+                        pickupPoint: תחנה מרכזית תל אביב
+                      - seatId: 5d1c8e77-4b2a-4d90-8e63-0a7f1c9b2d44
+                        seatLabel: '1'
+                        status: available
+                        fullName: null
+                        phone: null
+                        pickupPoint: null
+                emptyBus:
+                  summary: Bus exists but has no seats defined — still a 200
+                  value:
+                    bus:
+                      id: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+                      name: אוטובוס 1
+                      seatCount: 0
+                    rows: []
+        '401':
+          description: >
+            No `Authorization` header, or the token is malformed or expired.
+            `http.service.ts` treats this globally as session expiry: it clears
+            the stored token and redirects to the login screen, so this response
+            MUST NOT carry any manifest data, not even partially.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                missingToken:
+                  value:
+                    message: Missing or invalid admin token
+                    code: UNAUTHENTICATED
+        '403':
+          description: >
+            The token is valid but its `roles` do not include `admin` — a
+            `user`-only account is rejected (PRD NFR).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                notAdmin:
+                  value:
+                    message: Admin role required
+                    code: FORBIDDEN
+        '404':
+          description: No bus with this id (or it is soft-deleted).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                notFound:
+                  value:
+                    message: Bus not found
+                    code: BUS_NOT_FOUND
+        '500':
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
   /api/seats/bookings:
     post:
       tags: [seats]
@@ -375,8 +520,19 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: >
-        Declared for the future admin-only endpoints of this service. No endpoint
-        in this revision uses it — the passenger flow is entirely public.
+        The admin JWT issued by `user-management-service`'s
+        `POST /api/auth/login`, presented as `Authorization: Bearer <token>`.
+
+        `GET /api/buses/{busId}/manifest` is currently the only endpoint in this
+        service that requires it; the remaining passenger-flow routes are public
+        by design. The remaining admin routes (seat actions, tour/bus/busType
+        CRUD) will use this same scheme when their tickets land.
+
+        `tour-service` only ever *verifies* this token — it never issues one. It
+        must be verified with the same secret and algorithm
+        `user-management-service` signs with, and both the signature and the
+        expiry must be checked. `roles` must be read from the verified claims,
+        never from an unverified header or request body.
 
   parameters:
     TourId:
@@ -601,6 +757,89 @@ components:
           items:
             $ref: '#/components/schemas/Seat'
           description: Every seat on the bus with its current status. May be empty.
+
+    ManifestBus:
+      type: object
+      required: [id, name, seatCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: b1e7d940-2f36-4c88-a1d2-9e4f6a3b7c50
+        name:
+          type: string
+          description: Used as the copied report's header line.
+          example: אוטובוס 1
+        seatCount:
+          type: integer
+          minimum: 0
+          description: Total seats, so the report can state "N of M seats".
+          example: 50
+      description: >
+        Minimal bus identification for the manifest header. Deliberately narrower
+        than `BusSeatLayout` — the manifest table needs no grid geometry, and a
+        response carrying PII should carry nothing beyond what it needs.
+
+    ManifestRow:
+      type: object
+      required: [seatId, seatLabel, status]
+      properties:
+        seatId:
+          type: string
+          format: uuid
+          description: The seat this row describes. Rows are keyed by it client-side.
+          example: c7b4e802-3d19-4a55-9f0c-6b2e8d4a1f77
+        seatLabel:
+          type: string
+          description: Human-facing seat number, rendered LTR-isolated in the RTL table.
+          example: '3'
+        status:
+          $ref: '#/components/schemas/SeatStatus'
+        fullName:
+          type: string
+          nullable: true
+          description: >
+            **PII.** The passenger occupying this seat. `null`/omitted for a seat
+            with no passenger — an `available` seat, or a `reserved` seat the
+            admin blocked rather than assigned. Returned ONLY from this
+            admin-authenticated route.
+          example: דנה לוי
+        phone:
+          type: string
+          nullable: true
+          description: >
+            **PII.** Israeli local format, digits only, as normalized on booking.
+            `null`/omitted when the seat has no passenger. Returned ONLY from
+            this admin-authenticated route.
+          example: '0524471903'
+        pickupPoint:
+          type: string
+          nullable: true
+          description: >
+            The pickup point the passenger chose, one of the bus's
+            `pickupPoints`. `null`/omitted when the seat has no passenger.
+          example: צומת גלילות
+      description: >
+        One seat plus, when occupied, who occupies it.
+
+        This is the **only** schema in this contract that carries passenger
+        identity in a response. `Seat` — used by every public endpoint — must
+        stay free of these three fields; do not merge the two schemas.
+
+    ManifestResponse:
+      type: object
+      required: [bus, rows]
+      properties:
+        bus:
+          $ref: '#/components/schemas/ManifestBus'
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManifestRow'
+          description: >
+            One row per seat on the bus, including unoccupied seats. May be
+            empty. Ordering is not significant — the client sorts and filters
+            these rows itself.
 
     SeatBookingRequest:
       type: object

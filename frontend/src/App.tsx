@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from 'sonner'
+import { AdminRoute } from './components/routing/AdminRoute'
 import { AdminPage } from './pages/AdminPage'
 import { GatewayPage } from './pages/GatewayPage'
 import { SignupPage } from './pages/SignupPage'
@@ -21,8 +22,18 @@ export default function App() {
         <Route path="/signup" element={<SignupPage />} />
         {/* Screen 3 — Passenger View. Unauthenticated by design (PRD). */}
         <Route path="/tours" element={<ToursPage />} />
-        {/* Screen 4 — placeholder until its own ticket lands. */}
-        <Route path="/admin" element={<AdminPage />} />
+        {/*
+          Screen 4 — Admin Dashboard. `AdminRoute` is a UX guard only: the real
+          authorization boundary is the admin JWT each backend route verifies.
+        */}
+        <Route
+          path="/admin"
+          element={
+            <AdminRoute>
+              <AdminPage />
+            </AdminRoute>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster dir="rtl" position="top-center" richColors closeButton />

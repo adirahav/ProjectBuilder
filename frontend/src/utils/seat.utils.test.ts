@@ -67,6 +67,10 @@ describe('seat status presentation', () => {
     )
   })
 
+  it('drops the call to action in a read-only map', () => {
+    expect(formatSeatAriaLabel(buildSeat({ label: '7' }), false)).toBe('מושב 7 — פנוי')
+  })
+
   it('treats only an available seat as requestable', () => {
     expect(isSeatRequestable(buildSeat({ status: 'available' }))).toBe(true)
     for (const status of ['pending', 'taken', 'reserved'] as SeatStatus[]) {

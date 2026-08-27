@@ -1,6 +1,6 @@
 # Plan 009 — Admin Dashboard Shell with 3 Tabs (Seat Management, Tours & Buses, Passenger Manifest Report)
 
-Status: draft
+Status: done
 Owner: orchestrator
 Last updated: 2026-08-26
 Scope-Agents: frontend, tour-service, qa, security

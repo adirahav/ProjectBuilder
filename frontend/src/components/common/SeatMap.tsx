@@ -14,10 +14,16 @@ import { SeatButton } from './SeatButton'
  * Layout comes from the bus's own metadata (`aisleAfterColumn`, `doorRow`,
  * `backRow`) rather than from hardcoded row arithmetic, so a bus with a
  * different template renders correctly without a code change here.
+ *
+ * Shared by the passenger view (Screen 3) and the admin Seat Management tab
+ * (Screen 4a). Omitting `onSelectSeat` renders the map read-only: every seat
+ * becomes inert and stops announcing an action it cannot perform. The admin
+ * quick actions (approve/release/reserve) are a separate ticket (F6–F10).
  */
 type SeatMapProps = {
   seatMap: SeatMapData
-  onSelectSeat: (seat: Seat) => void
+  /** Omitted in read-only (admin) mode — every seat then renders inert. */
+  onSelectSeat?: (seat: Seat) => void
   /** A seat request is in flight — the whole map is inert until it settles. */
   isBusy?: boolean
 }

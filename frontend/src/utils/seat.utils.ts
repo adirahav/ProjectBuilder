@@ -55,10 +55,14 @@ export function isSeatRequestable(seat: Seat): boolean {
 /**
  * Accessible name for a seat: number + status in words, so the status is
  * available to a screen-reader user with no color perception at all.
+ *
+ * `isInteractive` is false in the read-only admin map (Screen 4a, plan 009),
+ * where no seat can be requested. The call to action is then dropped: a
+ * read-only view must not announce an action it cannot perform.
  */
-export function formatSeatAriaLabel(seat: Seat): string {
+export function formatSeatAriaLabel(seat: Seat, isInteractive = true): string {
   const base = `מושב ${seat.label} — ${seatStatusLabels[seat.status]}`
-  return isSeatRequestable(seat) ? `${base}. לחצו לשליחת בקשה` : base
+  return isInteractive && isSeatRequestable(seat) ? `${base}. לחצו לשליחת בקשה` : base
 }
 
 export function countSeatsByStatus(seats: Seat[], status: SeatStatus): number {

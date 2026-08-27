@@ -144,26 +144,56 @@ ipcMain.handle("pick-project-folder", async () => {
   return { path: folderPath, valid: true, workspacePath, setupNeeded: !isProjectConfigured(workspacePath) }
 })
 
+// Matches development/dev-loop.js's own quoteArgForCmd() exactly (doubled
+// internal quotes, not backslash-escaped) — cmd.exe's quoting rules are not
+// the same as POSIX shells', and this is the proven-working form already
+// used everywhere else `claude` gets spawned via a Windows shell in this
+// codebase.
+function quoteArgForCmd(value) {
+  const s = String(value)
+  if (!/[\s"]/u.test(s)) return s
+  return `"${s.replace(/"/g, '""')}"`
+}
+
 // On Windows, `claude` is a .cmd shim — spawning it directly (no shell)
 // intermittently fails to resolve on PATH, the same reason
 // development/dev-loop.js's own spawnClaude() always goes through a shell
 // on win32. Mirrored here rather than reusing that function directly, since
 // this runs BEFORE dev-loop.js exists anywhere writable (the setup
 // interview happens pre-workspace-configured).
+//
+// A hard timeout is essential here specifically because this runs from
+// Electron's own main process, not a terminal a human is watching — if the
+// child hangs (wrong PATH, an unexpected permission prompt, anything), the
+// renderer's "…" would otherwise wait forever with zero information. Killing
+// it and surfacing that clearly beats a silent infinite spinner.
+const CLAUDE_TURN_TIMEOUT_MS = 90 * 1000
+
 function runClaudeTurn(workspacePath, args, inputText) {
   return new Promise((resolve) => {
-    const quoted = args.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
     const child =
       process.platform === "win32"
-        ? spawn(["claude", ...quoted].join(" "), { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: true })
+        ? spawn(["claude", ...args.map(quoteArgForCmd)].join(" "), { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: true })
         : spawn("claude", args, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: false })
 
     let out = ""
     let err = ""
+    let settled = false
+    const settle = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      settle({ out: "", err: `Timed out after ${CLAUDE_TURN_TIMEOUT_MS / 1000}s with no response. Raw output so far: ${out || "(none)"} / stderr: ${err || "(none)"}`, code: -1 })
+    }, CLAUDE_TURN_TIMEOUT_MS)
+
     child.stdout.on("data", (d) => { out += d.toString() })
     child.stderr.on("data", (d) => { err += d.toString() })
-    child.on("close", (code) => resolve({ out: out.trim(), err: err.trim(), code }))
-    child.on("error", (e) => resolve({ out: "", err: e.message, code: -1 }))
+    child.on("close", (code) => settle({ out: out.trim(), err: err.trim(), code }))
+    child.on("error", (e) => settle({ out: "", err: e.message, code: -1 }))
     child.stdin.write(inputText)
     child.stdin.end()
   })

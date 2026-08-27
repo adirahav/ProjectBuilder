@@ -5,9 +5,30 @@
   "description": "Electron shell for dev-loop.js — pick a project folder, run the orchestrator, view its dashboard in a native window.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "build:template": "node scripts/build-template.js",
+    "start": "npm run build:template && electron .",
+    "dist": "npm run build:template && electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.devloop.desktop",
+    "productName": "Dev Loop Desktop",
+    "win": {
+      "target": "nsis"
+    },
+    "extraResources": [
+      {
+        "from": "resources/mongodb-win-x64",
+        "to": "mongodb-win-x64",
+        "filter": ["mongod.exe"]
+      },
+      {
+        "from": "resources/template",
+        "to": "template"
+      }
+    ]
   }
 }

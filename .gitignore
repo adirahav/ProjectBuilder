@@ -63,3 +63,15 @@ backend/*/.env.production
 
 # Live agent-status feed for the dashboard -- changes every second, never committed.
 docs/agent-status.json
+
+# Bundled MongoDB binary for the Electron desktop shell -- large, license-
+# bearing, fetched by hand per electron/resources/mongodb-win-x64/README.md,
+# picked up by electron-builder's extraResources at packaging time. Never
+# committed to git.
+electron/resources/**/*.exe
+
+# Generated snapshot of the orchestration template (agents/, development/,
+# .rule/, etc.) that electron-builder bundles into the packaged app -- see
+# electron/scripts/build-template.js. The repo root is the one real source
+# of this content; committing a second copy here would just go stale.
+electron/resources/template/

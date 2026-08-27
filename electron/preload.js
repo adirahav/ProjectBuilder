@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld("devLoop", {
   onLog: (callback) => ipcRenderer.on("dev-loop-log", (_event, text) => callback(text)),
   onDashboardUrl: (callback) => ipcRenderer.on("dev-loop-dashboard-url", (_event, url) => callback(url)),
   onExit: (callback) => ipcRenderer.on("dev-loop-exit", (_event, code) => callback(code)),
+  getMongodStatus: () => ipcRenderer.invoke("get-mongod-status"),
 })

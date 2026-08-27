@@ -1,6 +1,5 @@
 {
-  "costTask": "Admin dashboard shell with 3 tabs (Seat Management, Tours & Buses, Passenger Manifest Report)",
-  "costLog": [
+  "tasks": [
     {
       "role": "orchestrator",
       "label": "Orchestrator (planning)",
@@ -8,8 +7,7 @@
       "outputTokens": 11943,
       "cacheReadTokens": 102420,
       "costUsd": 0.44478325,
-      "costNis": 1.3228743421500002,
-      "durationS": 399.385
+      "durationMs": 399385
     },
     {
       "role": "frontend",
@@ -18,8 +16,7 @@
       "outputTokens": 69089,
       "cacheReadTokens": 13706170,
       "costUsd": 6.251450999999999,
-      "costNis": 18.5930655642,
-      "durationS": 1666.854
+      "durationMs": 1666854
     },
     {
       "role": "qa",
@@ -28,8 +25,7 @@
       "outputTokens": 4542,
       "cacheReadTokens": 77968,
       "costUsd": 0.4477349500000001,
-      "costNis": 1.3316532882900003,
-      "durationS": 319.072
+      "durationMs": 319072
     },
     {
       "role": "security",
@@ -38,10 +34,8 @@
       "outputTokens": 18421,
       "cacheReadTokens": 1485618,
       "costUsd": 0.96827015,
-      "costNis": 2.8798290801300004,
-      "durationS": 493.409
+      "durationMs": 493409
     }
   ],
-  "costTotalUsd": 8.11223935,
-  "costTotalNis": 24.12742227477
+  "totalCostUsd": 8.11223935
 }

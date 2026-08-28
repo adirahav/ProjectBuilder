@@ -60,9 +60,21 @@ function addThinkingMessage() {
 // as if it had been typed. Free text stays available regardless (for an
 // "other" answer, or any message that isn't multiple-choice at all); this
 // only ever ADDS an affordance, never removes the text path.
+// Two shapes the setup interview actually uses: a real bulleted list
+// ("- **Gated** — ...") and an inline phrasing ("...**מונוליט** או **מיקרו-
+// שירותים**?") with no bullets at all. Bulleted labels are tried first
+// (they're the unambiguous case); if that finds fewer than 2, every bold
+// span in the message is a candidate instead, EXCLUDING ones that read as a
+// section header rather than an option — "**Q7 — Backend shape:**" ends in
+// a colon right before the closing **, and a real option is never that long
+// either (a whole sentence in bold isn't a short label to put on a button).
 function renderChoiceButtons(text) {
-  const matches = [...text.matchAll(/^-\s*\*\*(.+?)\*\*/gm)].map((m) => m[1].trim())
-  const labels = [...new Set(matches)].slice(0, 6)
+  const bulleted = [...text.matchAll(/^-\s*\*\*(.+?)\*\*/gm)].map((m) => m[1].trim())
+  const allBold = [...text.matchAll(/\*\*(.+?)\*\*/g)]
+    .map((m) => m[1].trim())
+    .filter((s) => s.length <= 50 && !s.endsWith(":"))
+  const source = bulleted.length >= 2 ? bulleted : allBold
+  const labels = [...new Set(source)].slice(0, 6)
   if (labels.length < 2) return null
 
   const wrap = document.createElement("div")

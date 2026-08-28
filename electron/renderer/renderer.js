@@ -79,21 +79,57 @@ function extractChoices(text) {
   return { displayText: text, labels: [...new Set(source)].slice(0, 6) }
 }
 
-function renderChoiceButtons(labels) {
-  if (labels.length < 2) return null
+// Whenever the setup interview asks for a MongoDB connection string, the app
+// itself can just provide one — it already bundles mongod.exe (see
+// electron/resources/mongodb-win-x64/). Detected by keyword on the
+// question text rather than anything Claude has to know about (it doesn't
+// need to — see the click handler below, which sends a REAL connection
+// string as the literal answer, indistinguishable from the human having
+// typed one themselves).
+function isMongoConnectionQuestion(text) {
+  return /mongo/i.test(text)
+}
+
+function renderAnswerOptions(displayText, labels) {
+  const hasChoices = labels.length >= 2
+  const offerLocalMongo = isMongoConnectionQuestion(displayText)
+  if (!hasChoices && !offerLocalMongo) return null
 
   const wrap = document.createElement("div")
   wrap.className = "chat-choices"
-  for (const label of labels) {
+
+  if (hasChoices) {
+    for (const label of labels) {
+      const btn = document.createElement("button")
+      btn.className = "chat-choice-btn"
+      btn.textContent = label
+      btn.addEventListener("click", () => {
+        for (const b of wrap.querySelectorAll("button")) b.disabled = true
+        sendChatMessage(label)
+      })
+      wrap.appendChild(btn)
+    }
+  }
+
+  if (offerLocalMongo) {
     const btn = document.createElement("button")
     btn.className = "chat-choice-btn"
-    btn.textContent = label
-    btn.addEventListener("click", () => {
+    btn.textContent = "🗄️ Use this app's built-in local database"
+    btn.addEventListener("click", async () => {
       for (const b of wrap.querySelectorAll("button")) b.disabled = true
-      sendChatMessage(label)
+      btn.textContent = "Starting local database…"
+      const result = await window.devLoop.startLocalMongo(selectedWorkspacePath)
+      if (result.error) {
+        console.error(result.error)
+        btn.textContent = "Failed to start — see DevTools console"
+        for (const b of wrap.querySelectorAll("button")) b.disabled = false
+        return
+      }
+      sendChatMessage(`Use this connection string — it's a local database this app manages automatically: ${result.connectionString}`)
     })
     wrap.appendChild(btn)
   }
+
   chatMessagesEl.appendChild(wrap)
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight
   return wrap
@@ -125,7 +161,7 @@ pickBtnMain.addEventListener("click", async () => {
       } else {
         const { displayText, labels } = extractChoices(reply.text)
         addChatMessage("assistant", displayText)
-        renderChoiceButtons(labels)
+        renderAnswerOptions(displayText, labels)
       }
     } catch (e) {
       // An IPC call that throws in main.js otherwise rejects silently here

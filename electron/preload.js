@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld("devLoop", {
   getMongodStatus: () => ipcRenderer.invoke("get-mongod-status"),
   startSetupChat: (workspacePath) => ipcRenderer.invoke("setup-chat-start", workspacePath),
   sendSetupChatMessage: (workspacePath, message) => ipcRenderer.invoke("setup-chat-send", { workspacePath, message }),
+  startLocalMongo: (workspacePath) => ipcRenderer.invoke("start-local-mongo", workspacePath),
 })

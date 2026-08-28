@@ -20,6 +20,8 @@ const VISIBLE_OUTPUT_DIRS = ["frontend", "backend"]
 
 let mainWindow = null
 let devLoopProcess = null
+let mongodProcess = null
+const MONGO_PORT = 27017
 
 // Dev (`npm start`, unpackaged) vs packaged (electron-builder's `extraResources`
 // — see electron/package.json's `build.extraResources`) resolve to different
@@ -42,6 +44,54 @@ function getTemplatePath() {
 ipcMain.handle("get-mongod-status", () => {
   const mongodPath = getMongodPath()
   return { path: mongodPath, present: fs.existsSync(mongodPath) }
+})
+
+// Starts the bundled mongod.exe once per app run (idempotent — a second
+// call while it's already up just returns the same connection string) with
+// its data directory under this app's own userData, never inside a
+// project's workspace. `workspacePath`'s own hashed id becomes the database
+// name, so different projects the human picks don't collide in the same
+// local Mongo instance. This is the "app provides the database for you"
+// path offered as a CHOICES option alongside "provide a real connection
+// string yourself" — see the setup chat's own instructions.
+async function ensureLocalMongoRunning(workspacePath) {
+  const mongodPath = getMongodPath()
+  if (!fs.existsSync(mongodPath)) {
+    throw new Error(`mongod.exe not found at ${mongodPath} — see electron/resources/mongodb-win-x64/README.md`)
+  }
+
+  const dbName = path.basename(workspacePath)
+  const connectionString = `mongodb://127.0.0.1:${MONGO_PORT}/${dbName}`
+
+  if (mongodProcess) return connectionString // already running for this app session
+
+  const dataDir = path.join(app.getPath("userData"), "mongo-data")
+  fs.mkdirSync(dataDir, { recursive: true })
+
+  mongodProcess = spawn(mongodPath, ["--dbpath", dataDir, "--port", String(MONGO_PORT), "--bind_ip", "127.0.0.1"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  mongodProcess.stdout.on("data", (d) => console.log(`[mongod] ${d.toString().trim()}`))
+  mongodProcess.stderr.on("data", (d) => console.log(`[mongod] ${d.toString().trim()}`))
+  mongodProcess.on("exit", (code) => {
+    console.log(`[mongod] exited with code ${code}`)
+    mongodProcess = null
+  })
+
+  // mongod takes a moment to start listening — a fixed wait is crude but
+  // simple; a follow-up could instead poll the port or watch stdout for
+  // "Waiting for connections" before resolving.
+  await new Promise((resolve) => setTimeout(resolve, 3000))
+  return connectionString
+}
+
+ipcMain.handle("start-local-mongo", async (event, workspacePath) => {
+  try {
+    const connectionString = await ensureLocalMongoRunning(workspacePath)
+    return { connectionString }
+  } catch (e) {
+    return { error: e.message }
+  }
 })
 
 function createWindow() {
@@ -346,11 +396,13 @@ if (!gotLock) {
 
 app.on("window-all-closed", () => {
   if (devLoopProcess) devLoopProcess.kill()
+  if (mongodProcess) mongodProcess.kill()
   if (process.platform !== "darwin") app.quit()
 })
 
 app.on("before-quit", () => {
   if (devLoopProcess) devLoopProcess.kill()
+  if (mongodProcess) mongodProcess.kill()
 })
 
 app.on("activate", () => {

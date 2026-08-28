@@ -42,6 +42,46 @@ function addChatMessage(role, text) {
   return el
 }
 
+// A real bubble (dots + label), not a bare "…" easy to mistake for the
+// screen just being empty — that was read as "nothing is happening" before.
+function addThinkingMessage() {
+  const el = document.createElement("div")
+  el.className = "chat-msg thinking"
+  el.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> Thinking…`
+  chatMessagesEl.appendChild(el)
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight
+  return el
+}
+
+// Pulls "- **Label** ..." bullet options out of an assistant message (the
+// setup interview's own established way of presenting a small fixed choice,
+// e.g. Gated/Ungated) and renders them as real clickable buttons right
+// under that message — clicking one sends its label as the answer, exactly
+// as if it had been typed. Free text stays available regardless (for an
+// "other" answer, or any message that isn't multiple-choice at all); this
+// only ever ADDS an affordance, never removes the text path.
+function renderChoiceButtons(text) {
+  const matches = [...text.matchAll(/^-\s*\*\*(.+?)\*\*/gm)].map((m) => m[1].trim())
+  const labels = [...new Set(matches)].slice(0, 6)
+  if (labels.length < 2) return null
+
+  const wrap = document.createElement("div")
+  wrap.className = "chat-choices"
+  for (const label of labels) {
+    const btn = document.createElement("button")
+    btn.className = "chat-choice-btn"
+    btn.textContent = label
+    btn.addEventListener("click", () => {
+      for (const b of wrap.querySelectorAll("button")) b.disabled = true
+      sendChatMessage(label)
+    })
+    wrap.appendChild(btn)
+  }
+  chatMessagesEl.appendChild(wrap)
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight
+  return wrap
+}
+
 pickBtnMain.addEventListener("click", async () => {
   const result = await window.devLoop.pickProjectFolder()
   if (!result) return
@@ -57,17 +97,22 @@ pickBtnMain.addEventListener("click", async () => {
   if (result.setupNeeded) {
     chatMessagesEl.innerHTML = ""
     goToStep("chat")
-    const thinkingEl = addChatMessage("thinking", "…")
+    const thinkingEl = addThinkingMessage()
     chatSendBtn.disabled = true
     chatContinueBtn.disabled = true
     try {
       const reply = await window.devLoop.startSetupChat(selectedWorkspacePath)
       thinkingEl.remove()
-      addChatMessage("assistant", reply.error ? `Something went wrong: ${reply.error}` : reply.text)
+      if (reply.error) {
+        addChatMessage("assistant", `Something went wrong: ${reply.error}`)
+      } else {
+        addChatMessage("assistant", reply.text)
+        renderChoiceButtons(reply.text)
+      }
     } catch (e) {
       // An IPC call that throws in main.js otherwise rejects silently here
-      // and leaves the "…" placeholder stuck forever with no visible cause
-      // — this is exactly the failure mode this catch exists to rule out.
+      // and leaves the thinking placeholder stuck forever with no visible
+      // cause — this is exactly the failure mode this catch exists to rule out.
       thinkingEl.remove()
       console.error(e)
       addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
@@ -90,18 +135,23 @@ chatBackBtn.addEventListener("click", () => {
   goToStep(1)
 })
 
-async function sendChatMessage() {
-  const text = chatInputEl.value.trim()
+async function sendChatMessage(presetText) {
+  const text = presetText ?? chatInputEl.value.trim()
   if (!text) return
   addChatMessage("user", text)
-  chatInputEl.value = ""
+  if (!presetText) chatInputEl.value = ""
   chatSendBtn.disabled = true
   chatContinueBtn.disabled = true
-  const thinkingEl = addChatMessage("thinking", "…")
+  const thinkingEl = addThinkingMessage()
   try {
     const reply = await window.devLoop.sendSetupChatMessage(selectedWorkspacePath, text)
     thinkingEl.remove()
-    addChatMessage("assistant", reply.error ? `Something went wrong: ${reply.error}` : reply.text)
+    if (reply.error) {
+      addChatMessage("assistant", `Something went wrong: ${reply.error}`)
+    } else {
+      addChatMessage("assistant", reply.text)
+      renderChoiceButtons(reply.text)
+    }
   } catch (e) {
     thinkingEl.remove()
     console.error(e)
@@ -111,7 +161,7 @@ async function sendChatMessage() {
     chatContinueBtn.disabled = false
   }
 }
-chatSendBtn.addEventListener("click", sendChatMessage)
+chatSendBtn.addEventListener("click", () => sendChatMessage())
 chatInputEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault()

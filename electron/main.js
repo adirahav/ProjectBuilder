@@ -232,11 +232,24 @@ function runClaudeTurn(workspacePath, args, inputText) {
 // CLAUDE_PERMISSION_MODE — this mirrors it instead of re-discovering it).
 const SETUP_CHAT_ARGS = ["--print", "--permission-mode", "bypassPermissions"]
 
+// The setup prompt's own instructions describe asking questions via an
+// interactive structured-question tool (mirroring how a real Claude Code
+// session would) — which genuinely doesn't exist in this one-shot --print
+// mode. Left unprompted, Claude notices, tries it, and narrates the failure
+// ("It seems the interactive question tool isn't available...") before
+// falling back to plain text — meta-commentary a human using this chat has
+// no reason to see. Telling it up front skips the failed attempt entirely,
+// not just its explanation.
+const SETUP_CHAT_FIRST_MESSAGE = [
+  "Let's begin. Start with Part 1's questions.",
+  "Note: there is no interactive question tool available in this session — ask every question as plain text in your response, never attempt to invoke one.",
+].join(" ")
+
 ipcMain.handle("setup-chat-start", async (event, workspacePath) => {
   const result = await runClaudeTurn(
     workspacePath,
     [...SETUP_CHAT_ARGS, "--system-prompt", "development/NEW-PROJECT-SETUP-PROMPT.md"],
-    "Let's begin. Start with Part 1's questions.",
+    SETUP_CHAT_FIRST_MESSAGE,
   )
   return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })

@@ -96,7 +96,45 @@
   .chat-msg { max-width: 640px; padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
   .chat-msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
   .chat-msg.user { align-self: flex-end; background: rgba(240, 180, 41, 0.14); border: 1px solid rgba(240, 180, 41, 0.3); }
-  .chat-msg.thinking { align-self: flex-start; color: var(--dim); font-style: italic; }
+  /* A real thinking bubble — same size/shape as an actual assistant
+     message, not a bare italic "…" easy to mistake for empty space (that's
+     exactly what read as "nothing is happening" before this). */
+  .chat-msg.thinking {
+    align-self: flex-start;
+    background: var(--panel); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    color: var(--dim); font-style: normal;
+  }
+  .thinking-dots { display: inline-flex; gap: 4px; }
+  .thinking-dots span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--dim);
+    animation: thinking-bounce 1.2s ease-in-out infinite;
+  }
+  .thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes thinking-bounce {
+    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+    30% { opacity: 1; transform: translateY(-3px); }
+  }
+
+  /* Multiple-choice options parsed out of an assistant message (see
+     renderer.js's renderChoiceButtons()) — a real clickable affordance
+     instead of forcing the human to retype "gated" verbatim. Free-text
+     input right below stays available for anything not covered/an "other"
+     answer, never replaced by these. */
+  .chat-choices { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 8px; max-width: 640px; margin-top: -4px; }
+  .chat-choice-btn {
+    font-size: 13px; font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--accent);
+    background: rgba(240, 180, 41, 0.1);
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .chat-choice-btn:hover:not(:disabled) { background: rgba(240, 180, 41, 0.2); }
+  .chat-choice-btn:disabled { opacity: 0.4; cursor: default; }
   #chat-input-row { display: flex; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
   #chat-input {
     flex: 1; min-width: 0; resize: none;

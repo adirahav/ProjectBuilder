@@ -53,28 +53,33 @@ function addThinkingMessage() {
   return el
 }
 
-// Pulls "- **Label** ..." bullet options out of an assistant message (the
-// setup interview's own established way of presenting a small fixed choice,
-// e.g. Gated/Ungated) and renders them as real clickable buttons right
-// under that message — clicking one sends its label as the answer, exactly
-// as if it had been typed. Free text stays available regardless (for an
-// "other" answer, or any message that isn't multiple-choice at all); this
-// only ever ADDS an affordance, never removes the text path.
-// Two shapes the setup interview actually uses: a real bulleted list
-// ("- **Gated** — ...") and an inline phrasing ("...**מונוליט** או **מיקרו-
-// שירותים**?") with no bullets at all. Bulleted labels are tried first
-// (they're the unambiguous case); if that finds fewer than 2, every bold
-// span in the message is a candidate instead, EXCLUDING ones that read as a
-// section header rather than an option — "**Q7 — Backend shape:**" ends in
-// a colon right before the closing **, and a real option is never that long
-// either (a whole sentence in bold isn't a short label to put on a button).
-function renderChoiceButtons(text) {
+// The setup chat's first message (see main.js's SETUP_CHAT_FIRST_MESSAGE)
+// asks Claude to end any small-fixed-set question with a machine-readable
+// "CHOICES: A | B | C" line — far more reliable than trying to reverse-
+// engineer option boundaries out of however it happened to phrase things in
+// prose (a bulleted list one time, "**A** or **B**?" inline the next, RTL/
+// Hebrew phrasing visually reordering the markdown asterisks in ways that
+// broke naive bold-span parsing entirely — see chat history). This strips
+// that line out of what's actually shown and returns its options; falls
+// back to the old bold-span heuristics for anything from before that
+// instruction took effect (e.g. resuming an older session).
+function extractChoices(text) {
+  const choicesMatch = text.match(/^CHOICES:\s*(.+)$/im)
+  if (choicesMatch) {
+    const displayText = text.slice(0, choicesMatch.index).trim()
+    const labels = choicesMatch[1].split("|").map((s) => s.trim()).filter(Boolean).slice(0, 6)
+    return { displayText, labels }
+  }
+
   const bulleted = [...text.matchAll(/^-\s*\*\*(.+?)\*\*/gm)].map((m) => m[1].trim())
   const allBold = [...text.matchAll(/\*\*(.+?)\*\*/g)]
     .map((m) => m[1].trim())
     .filter((s) => s.length <= 50 && !s.endsWith(":"))
   const source = bulleted.length >= 2 ? bulleted : allBold
-  const labels = [...new Set(source)].slice(0, 6)
+  return { displayText: text, labels: [...new Set(source)].slice(0, 6) }
+}
+
+function renderChoiceButtons(labels) {
   if (labels.length < 2) return null
 
   const wrap = document.createElement("div")
@@ -118,8 +123,9 @@ pickBtnMain.addEventListener("click", async () => {
       if (reply.error) {
         addChatMessage("assistant", `Something went wrong: ${reply.error}`)
       } else {
-        addChatMessage("assistant", reply.text)
-        renderChoiceButtons(reply.text)
+        const { displayText, labels } = extractChoices(reply.text)
+        addChatMessage("assistant", displayText)
+        renderChoiceButtons(labels)
       }
     } catch (e) {
       // An IPC call that throws in main.js otherwise rejects silently here
@@ -161,8 +167,9 @@ async function sendChatMessage(presetText) {
     if (reply.error) {
       addChatMessage("assistant", `Something went wrong: ${reply.error}`)
     } else {
-      addChatMessage("assistant", reply.text)
-      renderChoiceButtons(reply.text)
+      const { displayText, labels } = extractChoices(reply.text)
+      addChatMessage("assistant", displayText)
+      renderChoiceButtons(labels)
     }
   } catch (e) {
     thinkingEl.remove()

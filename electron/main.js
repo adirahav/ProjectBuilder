@@ -240,9 +240,17 @@ const SETUP_CHAT_ARGS = ["--print", "--permission-mode", "bypassPermissions"]
 // falling back to plain text — meta-commentary a human using this chat has
 // no reason to see. Telling it up front skips the failed attempt entirely,
 // not just its explanation.
+// Also asks for a machine-readable CHOICES line on any small-fixed-set
+// question, instead of leaving the renderer to guess option boundaries out
+// of however Claude happens to phrase them in prose (a bulleted list one
+// time, "**A** or **B**?" inline the next, RTL/Hebrew phrasing reordering
+// the markdown asterisks visually in ways that broke naive parsing — see
+// chat history). This sidesteps all of that: renderer.js just looks for a
+// line starting with "CHOICES:" and strips it from what's actually shown.
 const SETUP_CHAT_FIRST_MESSAGE = [
   "Let's begin. Start with Part 1's questions.",
   "Note: there is no interactive question tool available in this session — ask every question as plain text in your response, never attempt to invoke one.",
+  'Whenever a question has a small fixed set of options (e.g. a yes/no or A-vs-B choice), end your response with one extra line in exactly this format: CHOICES: Option one | Option two | Option three (2-6 options, each a short label in the same language as your question, no markdown formatting on that line). Omit this line entirely for open-ended questions with no fixed options.',
 ].join(" ")
 
 ipcMain.handle("setup-chat-start", async (event, workspacePath) => {

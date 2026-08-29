@@ -505,6 +505,42 @@ ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
 
   const { workspacePath } = ensureWorkspace(visibleFolderPath)
 
+  // Sanity check before ever spawning: a real, completed setup writes a
+  // multi-key orchestrator.config.json (designSource, backendServices,
+  // autoApprovePlans, ...). A file with only 0-1 keys means something went
+  // wrong writing it (seen for real: dev-loop.js's own
+  // adoptApprovalModeFromSetup() overwrote a genuinely complete config with
+  // a bare {"autoApprovePlans": true} stub, and every question this app
+  // asks afterward silently used wrong defaults — designSource missing
+  // meant "no Designer agent" even though one was actually configured. This
+  // catches that class of bug before it wastes a real build run instead of
+  // after.
+  const configPath = path.join(workspacePath, "orchestrator.config.json")
+  let orchestratorConfig = {}
+  if (fs.existsSync(configPath)) {
+    try { orchestratorConfig = JSON.parse(fs.readFileSync(configPath, "utf-8")) } catch { /* treated as empty below */ }
+  }
+  if (Object.keys(orchestratorConfig).length <= 1) {
+    return {
+      started: false,
+      reason: `orchestrator.config.json at ${configPath} looks incomplete (only ${Object.keys(orchestratorConfig).length} key(s)) — setup may not have finished writing it correctly. Check that file before starting.`,
+    }
+  }
+
+  // Read directly instead of letting dev-loop.js's own
+  // adoptApprovalModeFromSetup() infer/write it — passing it explicitly via
+  // env makes that function's own early-return trigger (see
+  // `process.env.AUTO_APPROVE_PLANS != null`), skipping its write path
+  // entirely. This app already knows the real answer (from the SAME
+  // .setup-progress.md that function would otherwise re-parse) with no risk
+  // of the race that corrupted the config above.
+  let approvalMode = null
+  const progressPath = path.join(workspacePath, ".setup-progress.md")
+  if (fs.existsSync(progressPath)) {
+    const match = fs.readFileSync(progressPath, "utf-8").match(/^Approval mode:\s*(gated|ungated)/im)
+    if (match) approvalMode = match[1].toLowerCase()
+  }
+
   // stdin is intentionally left with nothing writing to it — dev-loop.js's
   // terminal prompts (askUserInput) are also answerable through its own
   // dashboard /respond endpoint (see dev-loop.js's pendingHumanInput), which
@@ -512,12 +548,16 @@ ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
   devLoopProcess = spawn("node", ["development/dev-loop.js"], {
     cwd: workspacePath,
     stdio: ["ignore", "pipe", "pipe"],
-    // DEV_LOOP_NO_AUTO_OPEN: this window's own <webview> already shows the
-    // dashboard (see onDashboardUrl below) — without this, dev-loop.js also
-    // pops the same page open in the system's default browser, which is
-    // exactly the "why is Chrome opening" confusion this flag exists to
-    // avoid entirely.
-    env: { ...process.env, DEV_LOOP_NO_AUTO_OPEN: "1" },
+    env: {
+      ...process.env,
+      // DEV_LOOP_NO_AUTO_OPEN: this window's own <webview> already shows the
+      // dashboard (see onDashboardUrl below) — without this, dev-loop.js also
+      // pops the same page open in the system's default browser, which is
+      // exactly the "why is Chrome opening" confusion this flag exists to
+      // avoid entirely.
+      DEV_LOOP_NO_AUTO_OPEN: "1",
+      ...(approvalMode ? { AUTO_APPROVE_PLANS: approvalMode === "ungated" ? "true" : "false" } : {}),
+    },
   })
 
   let dashboardUrlSent = false

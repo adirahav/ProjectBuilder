@@ -164,6 +164,21 @@ function ensureWorkspace(visibleFolderPath) {
   const isFirstRun = !fs.existsSync(workspacePath)
   if (isFirstRun) {
     copyRecursive(getTemplatePath(), workspacePath)
+  } else {
+    // development/ (dev-loop.js, agent-dashboard/, NEW-PROJECT-SETUP-PROMPT.md,
+    // ...) is pure tooling this app ships and updates -- nothing ever writes
+    // project content there, unlike agents/ or docs/ which hold this
+    // specific project's real PRD/backlog/filled-in rules once configured
+    // and must NEVER be overwritten after first run. Re-syncing just this
+    // one directory on every run means an existing project actually gets
+    // dev-loop.js fixes/features from a newer build of this app instead of
+    // being frozen at whatever version existed the day its workspace was
+    // first created (a real bug: DEV_LOOP_NO_AUTO_OPEN not existing yet in
+    // an old copy is exactly why the dashboard was still popping open in
+    // the system browser after that fix already shipped — see chat history).
+    const devDir = path.join(workspacePath, "development")
+    fs.rmSync(devDir, { recursive: true, force: true })
+    copyRecursive(path.join(getTemplatePath(), "development"), devDir)
   }
 
   for (const dirName of VISIBLE_OUTPUT_DIRS) {

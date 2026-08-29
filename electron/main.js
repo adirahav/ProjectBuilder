@@ -106,12 +106,9 @@ function createWindow() {
     },
   })
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"))
-  // Renderer-side console.error/console.log lands right in this panel —
-  // in dev mode there's no other way to see it without manually opening
-  // DevTools every run, and a silently-thrown/rejected renderer error is
-  // exactly what was indistinguishable from a genuine backend hang while
-  // debugging the setup chat (see chat history).
-  if (!app.isPackaged) mainWindow.webContents.openDevTools()
+  // No longer auto-opened — useful while actively debugging the setup chat
+  // (see chat history), annoying on every normal run afterward. Open by
+  // hand (Ctrl+Shift+I) when actually needed.
 }
 
 // Any folder the human can browse to is acceptable — a brand-new empty one

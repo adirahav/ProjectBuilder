@@ -81,6 +81,10 @@ Before building any mockup, decide (and write into `docs/design/design-notes.md`
 - Spacing scale (the handful of spacing values actually used, not arbitrary per-element choices).
 - Component style conventions (button shapes/states, card style, form-field style, border-radius
   convention) — described briefly enough that "matching this system" is unambiguous.
+- Icon library (e.g. Lucide, Heroicons, Font Awesome) — pick one and use it consistently across
+  every mockup; this is a visual-system decision like the rest of this list, not something to leave
+  for the Frontend Agent to pick later on its own. If `.rule/style-rules.md` already names one
+  (see the pre-existing-constraints check above), use that instead of picking a new one.
 - RTL/LTR: if `docs/PRD.md`'s Non-Functional Requirements call for both directions, build mockups
   using logical CSS properties (`margin-inline-start`, not `margin-left`) so they're meaningful in
   either direction — see the `css-layer` skill.

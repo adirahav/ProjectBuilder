@@ -97,8 +97,13 @@ function extractChoices(text) {
 // need to — see the click handler below, which sends a REAL connection
 // string as the literal answer, indistinguishable from the human having
 // typed one themselves).
+// "mongodb", not the looser "mongo" — the latter also matches "Mongoose"
+// (e.g. a client-only project's setup interview explaining it's removing
+// Mongoose/JWT/backend layers entirely), which has nothing to do with a
+// connection-string question and was popping this button up on completely
+// unrelated turns.
 function isMongoConnectionQuestion(text) {
-  return /mongo/i.test(text)
+  return /mongodb/i.test(text)
 }
 
 // Whenever the setup interview asks about an AI-Studio design export, the

@@ -2,7 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain } = require("electron")
 const path = require("path")
 const fs = require("fs")
 const crypto = require("crypto")
-const { spawn } = require("child_process")
+const { spawn, execSync } = require("child_process")
 
 // dev-loop.js prints this exact banner line once its dashboard HTTP server
 // is actually listening (see startDashboardServer() in dev-loop.js) — we
@@ -92,6 +92,41 @@ ipcMain.handle("start-local-mongo", async (event, workspacePath) => {
   } catch (e) {
     return { error: e.message }
   }
+})
+
+// Matches development/NEW-PROJECT-SETUP-PROMPT.md's own AI-Studio-export
+// convention exactly: "ask for the folder name (defaults to
+// raw_from_ai_studio/, matching this template)". Extracting straight into
+// that fixed name means the human never has to type a folder name or know
+// it exists at all -- pick the ZIP, done, Claude finds it exactly where it
+// already expects an AI-Studio export to be.
+const AI_STUDIO_EXPORT_DIR = "raw_from_ai_studio"
+
+ipcMain.handle("upload-ai-studio-export", async (event, workspacePath) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [{ name: "ZIP Archives", extensions: ["zip"] }],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+
+  const zipPath = result.filePaths[0]
+  const destDir = path.join(workspacePath, AI_STUDIO_EXPORT_DIR)
+  fs.rmSync(destDir, { recursive: true, force: true })
+  fs.mkdirSync(destDir, { recursive: true })
+
+  try {
+    // No extra npm dependency for a one-off unzip — Expand-Archive ships
+    // with Windows PowerShell. Single-quoted PS string; the only escaping
+    // a real path needs is doubling an embedded single quote.
+    const psQuote = (p) => `'${p.replace(/'/g, "''")}'`
+    execSync(`powershell -NoProfile -Command "Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destDir)} -Force"`, { stdio: "ignore" })
+  } catch (e) {
+    return { error: `Failed to extract the ZIP: ${e.message}` }
+  }
+
+  const fileCount = fs.readdirSync(destDir, { recursive: true }).length
+  if (fileCount === 0) return { error: "The ZIP extracted but appears to be empty." }
+  return { folderName: AI_STUDIO_EXPORT_DIR, fileCount }
 })
 
 function createWindow() {

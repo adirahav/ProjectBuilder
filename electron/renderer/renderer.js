@@ -101,10 +101,22 @@ function isMongoConnectionQuestion(text) {
   return /mongo/i.test(text)
 }
 
+// Whenever the setup interview asks about an AI-Studio design export, the
+// app can just take the ZIP directly and extract it into
+// raw_from_ai_studio/ — the exact folder name NEW-PROJECT-SETUP-PROMPT.md's
+// own AI-Studio-export instructions already expect (see main.js's
+// AI_STUDIO_EXPORT_DIR), so Claude finds it with zero extra explanation
+// needed. Same pattern as the Mongo button: detected by keyword, Claude
+// never needs to know this upload path exists.
+function isAiStudioQuestion(text) {
+  return /ai[\s-]?studio/i.test(text)
+}
+
 function renderAnswerOptions(displayText, labels) {
   const hasChoices = labels.length >= 2
   const offerLocalMongo = isMongoConnectionQuestion(displayText)
-  if (!hasChoices && !offerLocalMongo) return null
+  const offerAiStudioUpload = isAiStudioQuestion(displayText)
+  if (!hasChoices && !offerLocalMongo && !offerAiStudioUpload) return null
 
   const wrap = document.createElement("div")
   wrap.className = "chat-choices"
@@ -137,6 +149,25 @@ function renderAnswerOptions(displayText, labels) {
         return
       }
       sendChatMessage(`Use this connection string — it's a local database this app manages automatically: ${result.connectionString}`)
+    })
+    wrap.appendChild(btn)
+  }
+
+  if (offerAiStudioUpload) {
+    const btn = document.createElement("button")
+    btn.className = "chat-choice-btn"
+    btn.textContent = "📦 Upload AI Studio export (.zip)"
+    btn.addEventListener("click", async () => {
+      const result = await window.devLoop.uploadAiStudioExport(selectedWorkspacePath)
+      if (!result) return // dialog cancelled — leave the button as-is, nothing sent
+      for (const b of wrap.querySelectorAll("button")) b.disabled = true
+      if (result.error) {
+        console.error(result.error)
+        btn.textContent = "Upload failed — see DevTools console"
+        for (const b of wrap.querySelectorAll("button")) b.disabled = false
+        return
+      }
+      sendChatMessage(`I uploaded my AI-Studio export — it's extracted into the ${result.folderName}/ folder (${result.fileCount} file(s)).`)
     })
     wrap.appendChild(btn)
   }

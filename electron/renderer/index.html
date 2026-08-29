@@ -70,6 +70,30 @@
   #wizard-error { margin-top: 16px; font-size: 13px; color: #f87171; }
   #wizard-error:empty { display: none; }
 
+  #recent-projects { margin-top: 28px; text-align: left; }
+  #recent-projects:empty { display: none; }
+  #recent-projects .recent-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--dim); margin-bottom: 10px; text-align: center;
+  }
+  .recent-project-btn {
+    display: block; width: 100%;
+    text-align: left;
+    font-size: 13px; font-weight: 500;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .recent-project-btn:hover { border-color: var(--accent); }
+  .recent-project-btn .recent-project-status {
+    color: var(--dim); font-size: 11px; margin-inline-start: 8px;
+  }
+
   .wizard-nav { display: flex; gap: 10px; justify-content: center; margin-top: 4px; }
   .wizard-nav button { padding: 10px 22px; font-size: 14px; }
   #start-btn {
@@ -187,6 +211,7 @@
       </p>
       <button id="pick-btn-main">📁 Select Project Folder…</button>
       <div id="wizard-error"></div>
+      <div id="recent-projects"></div>
     </div>
   </div>
 

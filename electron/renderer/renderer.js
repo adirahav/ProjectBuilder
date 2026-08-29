@@ -135,8 +135,11 @@ function renderAnswerOptions(displayText, labels) {
   return wrap
 }
 
-pickBtnMain.addEventListener("click", async () => {
-  const result = await window.devLoop.pickProjectFolder()
+// Shared by both ways of landing here — browsing via the OS dialog and
+// clicking a recent-project shortcut (see renderRecentProjects() below) —
+// so picking up an in-progress setup or jumping straight to Start behaves
+// identically either way.
+async function handleProjectSelected(result) {
   if (!result) return
   if (!result.valid) {
     wizardErrorEl.textContent = result.reason
@@ -187,16 +190,52 @@ pickBtnMain.addEventListener("click", async () => {
   } else {
     goToStep(2)
   }
+}
+
+pickBtnMain.addEventListener("click", async () => {
+  handleProjectSelected(await window.devLoop.pickProjectFolder())
 })
+
+// One-click shortcuts for folders this app has already been pointed at —
+// beats re-browsing the OS dialog to the exact same path every time,
+// especially now that resuming an in-progress setup conversation actually
+// works (see main.js's CHAT_STARTED_MARKER) and is worth surfacing here as
+// a real option, not just possible if you happen to pick the right folder.
+async function renderRecentProjects() {
+  const wrap = document.getElementById("recent-projects")
+  const projects = await window.devLoop.getRecentProjects()
+  if (!projects.length) {
+    wrap.innerHTML = ""
+    return
+  }
+  const label = document.createElement("div")
+  label.className = "recent-label"
+  label.textContent = "Or continue a recent project"
+  wrap.innerHTML = ""
+  wrap.appendChild(label)
+  for (const project of projects) {
+    const btn = document.createElement("button")
+    btn.className = "recent-project-btn"
+    btn.title = project.path
+    btn.textContent = project.path
+    btn.addEventListener("click", async () => {
+      handleProjectSelected(await window.devLoop.selectRecentProject(project.path))
+    })
+    wrap.appendChild(btn)
+  }
+}
+renderRecentProjects()
 
 // The only way back to folder-picking is this explicit Back button — there
 // is no "change folder" affordance once past step 1, on purpose (a human
 // mid-run must never accidentally repoint a run already under way).
 backBtn.addEventListener("click", () => {
   goToStep(1)
+  renderRecentProjects()
 })
 chatBackBtn.addEventListener("click", () => {
   goToStep(1)
+  renderRecentProjects()
 })
 
 async function sendChatMessage(presetText) {

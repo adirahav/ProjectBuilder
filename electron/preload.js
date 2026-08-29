@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require("electron")
 // access (contextIsolation is on in main.js), only these specific calls.
 contextBridge.exposeInMainWorld("devLoop", {
   pickProjectFolder: () => ipcRenderer.invoke("pick-project-folder"),
+  getRecentProjects: () => ipcRenderer.invoke("get-recent-projects"),
+  selectRecentProject: (folderPath) => ipcRenderer.invoke("select-recent-project", folderPath),
   start: (projectPath) => ipcRenderer.invoke("start-dev-loop", projectPath),
   stop: () => ipcRenderer.invoke("stop-dev-loop"),
   onLog: (callback) => ipcRenderer.on("dev-loop-log", (_event, text) => callback(text)),

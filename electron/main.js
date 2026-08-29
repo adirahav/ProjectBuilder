@@ -208,15 +208,43 @@ function hasSetupChatStarted(workspacePath) {
   return fs.existsSync(path.join(workspacePath, CHAT_STARTED_MARKER))
 }
 
-ipcMain.handle("pick-project-folder", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory", "createDirectory"] })
-  if (result.canceled || result.filePaths.length === 0) return null
-  const folderPath = result.filePaths[0]
+// Small MRU list of previously-picked project folders — lets step 1 offer
+// "continue one of these" instead of the human always having to re-browse
+// to the exact same folder in the OS dialog, especially now that resuming
+// an in-progress setup conversation actually works (see CHAT_STARTED_MARKER
+// above) and is worth surfacing as a real one-click option.
+const RECENT_PROJECTS_PATH = path.join(app.getPath("userData"), "recent-projects.json")
+const MAX_RECENT_PROJECTS = 6
+
+function loadRecentProjects() {
+  try {
+    const list = JSON.parse(fs.readFileSync(RECENT_PROJECTS_PATH, "utf-8"))
+    // A path can vanish between runs (moved/deleted on disk) — drop those
+    // rather than offer a dead shortcut that will just fail validation.
+    return Array.isArray(list) ? list.filter((p) => fs.existsSync(p.path)) : []
+  } catch {
+    return []
+  }
+}
+
+function recordRecentProject(folderPath) {
+  const existing = loadRecentProjects().filter((p) => p.path !== folderPath)
+  const updated = [{ path: folderPath, lastUsed: new Date().toISOString() }, ...existing].slice(0, MAX_RECENT_PROJECTS)
+  fs.writeFileSync(RECENT_PROJECTS_PATH, JSON.stringify(updated, null, 2), "utf-8")
+}
+
+ipcMain.handle("get-recent-projects", () => loadRecentProjects())
+
+// Shared by both entry points into step 1 — browsing via the OS dialog and
+// clicking a recent-project shortcut — so they report the exact same shape
+// (valid/workspacePath/setupNeeded/resumeChat) and both update the MRU list.
+function prepareProject(folderPath) {
   const check = validateProjectFolder(folderPath)
   if (!check.valid) return { path: folderPath, ...check }
 
   const { workspacePath } = ensureWorkspace(folderPath)
   const configured = isProjectConfigured(workspacePath)
+  recordRecentProject(folderPath)
   return {
     path: folderPath,
     valid: true,
@@ -227,7 +255,15 @@ ipcMain.handle("pick-project-folder", async () => {
     // off" turn against the already-existing Claude session.
     resumeChat: !configured && hasSetupChatStarted(workspacePath),
   }
+}
+
+ipcMain.handle("pick-project-folder", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory", "createDirectory"] })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return prepareProject(result.filePaths[0])
 })
+
+ipcMain.handle("select-recent-project", (event, folderPath) => prepareProject(folderPath))
 
 // Matches development/dev-loop.js's own quoteArgForCmd() exactly (doubled
 // internal quotes, not backslash-escaped) — cmd.exe's quoting rules are not

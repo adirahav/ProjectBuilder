@@ -288,7 +288,15 @@ function quoteArgForCmd(value) {
 // child hangs (wrong PATH, an unexpected permission prompt, anything), the
 // renderer's "…" would otherwise wait forever with zero information. Killing
 // it and surfacing that clearly beats a silent infinite spinner.
-const CLAUDE_TURN_TIMEOUT_MS = 90 * 1000
+//
+// 90s was too short for real use: once the interview reaches "confirm and
+// I'll start drafting," Claude isn't just answering a question anymore, it's
+// actually writing files to disk (PRD, glossary, rule files, ...) -- a much
+// heavier turn that legitimately runs past a minute and a half. A false
+// timeout there kills real, in-progress work, not a hang. 8 minutes is a
+// generous ceiling for a single turn; a genuine hang still gets caught, just
+// later, and a real drafting turn no longer gets mistaken for one.
+const CLAUDE_TURN_TIMEOUT_MS = 8 * 60 * 1000
 
 function runClaudeTurn(workspacePath, args, inputText) {
   return new Promise((resolve) => {

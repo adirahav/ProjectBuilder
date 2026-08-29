@@ -33,10 +33,21 @@ function setRunStatus(text) {
   runStatusEl.textContent = text
 }
 
+// Escapes real HTML first (so nothing in Claude's own output can inject
+// markup), THEN turns **bold** into <strong> — order matters, doing it the
+// other way round would let the escaping mangle the tags this just added.
+function formatChatText(text) {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+  return escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+}
+
 function addChatMessage(role, text) {
   const el = document.createElement("div")
   el.className = `chat-msg ${role}`
-  el.textContent = text
+  el.innerHTML = formatChatText(text)
   chatMessagesEl.appendChild(el)
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight
   return el
@@ -254,7 +265,7 @@ async function sendChatMessage(presetText) {
     } else {
       const { displayText, labels } = extractChoices(reply.text)
       addChatMessage("assistant", displayText)
-      renderChoiceButtons(labels)
+      renderAnswerOptions(displayText, labels)
     }
   } catch (e) {
     thinkingEl.remove()

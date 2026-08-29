@@ -185,8 +185,27 @@ function ensureWorkspace(visibleFolderPath) {
 // itself uses (see its adoptApprovalModeFromSetup()) to tell "this project
 // has already been through the interview" apart from "fresh template,
 // still full of {{PLACEHOLDER}} markers, needs the setup Q&A run first."
+// NOTE: .setup-progress.md is only written once Part 1 is confirmed — a
+// human who closed the app mid-interview (before Part 1 finished) won't
+// have it yet either, which is exactly the case CHAT_STARTED_MARKER below
+// exists to still tell apart from a genuinely brand-new project.
 function isProjectConfigured(workspacePath) {
   return fs.existsSync(path.join(workspacePath, ".setup-progress.md"))
+}
+
+// Written the first time setup-chat-start actually runs for a workspace —
+// lets a later run tell "this chat was started before, reconnect to that
+// same Claude session via --continue" apart from "never started, send the
+// real Part-1-opening message." Without this, reopening the app after
+// closing it mid-interview looked like it "always starts over" (see chat
+// history) — not because the underlying Claude session was lost (Claude
+// Code keeps per-directory session history on its own), but because this
+// app was unconditionally sending the fresh-start message every time
+// instead of resuming.
+const CHAT_STARTED_MARKER = ".electron-setup-chat-started"
+
+function hasSetupChatStarted(workspacePath) {
+  return fs.existsSync(path.join(workspacePath, CHAT_STARTED_MARKER))
 }
 
 ipcMain.handle("pick-project-folder", async () => {
@@ -197,7 +216,17 @@ ipcMain.handle("pick-project-folder", async () => {
   if (!check.valid) return { path: folderPath, ...check }
 
   const { workspacePath } = ensureWorkspace(folderPath)
-  return { path: folderPath, valid: true, workspacePath, setupNeeded: !isProjectConfigured(workspacePath) }
+  const configured = isProjectConfigured(workspacePath)
+  return {
+    path: folderPath,
+    valid: true,
+    workspacePath,
+    setupNeeded: !configured,
+    // Only meaningful when setupNeeded is true — tells the renderer whether
+    // to send the fresh Part-1 opener or a plain "continue where we left
+    // off" turn against the already-existing Claude session.
+    resumeChat: !configured && hasSetupChatStarted(workspacePath),
+  }
 })
 
 // Matches development/dev-loop.js's own quoteArgForCmd() exactly (doubled
@@ -308,6 +337,24 @@ ipcMain.handle("setup-chat-start", async (event, workspacePath) => {
     workspacePath,
     [...SETUP_CHAT_ARGS, "--system-prompt", "development/NEW-PROJECT-SETUP-PROMPT.md"],
     SETUP_CHAT_FIRST_MESSAGE,
+  )
+  if (result.code === 0) {
+    fs.writeFileSync(path.join(workspacePath, CHAT_STARTED_MARKER), new Date().toISOString(), "utf-8")
+  }
+  return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
+})
+
+// Reconnects to the SAME Claude Code session setup-chat-start began (Claude
+// Code keeps per-directory session history on its own — --continue just
+// finds "the most recent session in this cwd") instead of sending the
+// fresh Part-1-opening message again, which would otherwise look
+// indistinguishable from actually restarting the interview from scratch.
+// Used when pick-project-folder reports resumeChat: true.
+ipcMain.handle("setup-chat-resume", async (event, workspacePath) => {
+  const result = await runClaudeTurn(
+    workspacePath,
+    [...SETUP_CHAT_ARGS, "--continue"],
+    "Continue exactly where we left off — re-ask your last question if you need to, don't restart the interview.",
   )
   return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })

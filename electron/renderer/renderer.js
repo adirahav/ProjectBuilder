@@ -149,12 +149,22 @@ pickBtnMain.addEventListener("click", async () => {
 
   if (result.setupNeeded) {
     chatMessagesEl.innerHTML = ""
+    if (result.resumeChat) {
+      // The conversation history from before isn't replayed here (only
+      // Claude's own session remembers it, these chat bubbles are just this
+      // window's ephemeral display) — but the underlying session really is
+      // continued via --continue, so Claude picks the interview back up
+      // wherever it actually left off instead of restarting Part 1.
+      addChatMessage("assistant", "Picking up where we left off…")
+    }
     goToStep("chat")
     const thinkingEl = addThinkingMessage()
     chatSendBtn.disabled = true
     chatContinueBtn.disabled = true
     try {
-      const reply = await window.devLoop.startSetupChat(selectedWorkspacePath)
+      const reply = result.resumeChat
+        ? await window.devLoop.resumeSetupChat(selectedWorkspacePath)
+        : await window.devLoop.startSetupChat(selectedWorkspacePath)
       thinkingEl.remove()
       if (reply.error) {
         addChatMessage("assistant", `Something went wrong: ${reply.error}`)

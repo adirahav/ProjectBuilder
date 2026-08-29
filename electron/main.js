@@ -11,6 +11,29 @@ const { createInterface } = require("readline")
 // project can override DASHBOARD_PORT.
 const DASHBOARD_URL_PATTERN = /AGENT DASHBOARD — (http:\/\/localhost:\d+\/)/
 
+// child.kill() only signals the DIRECT child — on Windows, when that child
+// was spawned with shell:true (claude, dev-loop.js's own node process, ...),
+// the direct child is really cmd.exe, and kill() leaves whatever cmd.exe
+// itself spawned (the actual claude.exe / node.exe doing the real work)
+// completely untouched and running forever. This was confirmed for real
+// this session: killing/restarting through several rounds of debugging left
+// 5 orphaned claude.exe and ~20 orphaned node.exe processes running in the
+// background, still holding files open in (and in one case, still actively
+// writing to) a workspace that had already been deleted. `taskkill /T /F`
+// kills the whole process tree, not just the immediate child.
+function killProcessTree(child) {
+  if (!child || child.killed) return
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" })
+    } catch {
+      // Already exited between the killed-check above and here — fine.
+    }
+  } else {
+    child.kill()
+  }
+}
+
 // Directories inside the internal workspace that are junctioned straight
 // into the user's chosen visible folder — see ensureWorkspace() below. Only
 // the real PRODUCT output lives where the user can see it; everything else
@@ -388,7 +411,7 @@ function runClaudeTurn(workspacePath, args, inputText, onProgress) {
     }
     const timer = setTimeout(() => {
       console.log(`[setup-chat] TIMEOUT firing, killing pid=${child.pid}`)
-      child.kill()
+      killProcessTree(child)
       settle({ out: "", err: `Timed out after ${CLAUDE_TURN_TIMEOUT_MS / 1000}s with no response. Raw output so far: ${assistantText || "(none)"} / stderr: ${err || "(none)"}`, code: -1 })
     }, CLAUDE_TURN_TIMEOUT_MS)
 
@@ -589,7 +612,7 @@ ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
 
 ipcMain.handle("stop-dev-loop", () => {
   if (!devLoopProcess) return { stopped: false, reason: "Not running." }
-  devLoopProcess.kill()
+  killProcessTree(devLoopProcess)
   devLoopProcess = null
   return { stopped: true }
 })
@@ -615,14 +638,14 @@ if (!gotLock) {
 }
 
 app.on("window-all-closed", () => {
-  if (devLoopProcess) devLoopProcess.kill()
-  if (mongodProcess) mongodProcess.kill()
+  killProcessTree(devLoopProcess)
+  killProcessTree(mongodProcess)
   if (process.platform !== "darwin") app.quit()
 })
 
 app.on("before-quit", () => {
-  if (devLoopProcess) devLoopProcess.kill()
-  if (mongodProcess) mongodProcess.kill()
+  killProcessTree(devLoopProcess)
+  killProcessTree(mongodProcess)
 })
 
 app.on("activate", () => {

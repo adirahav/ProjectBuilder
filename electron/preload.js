@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("devLoop", {
   startSetupChat: (workspacePath) => ipcRenderer.invoke("setup-chat-start", workspacePath),
   sendSetupChatMessage: (workspacePath, message) => ipcRenderer.invoke("setup-chat-send", { workspacePath, message }),
   resumeSetupChat: (workspacePath) => ipcRenderer.invoke("setup-chat-resume", workspacePath),
+  onSetupChatProgress: (callback) => ipcRenderer.on("setup-chat-progress", (_event, text) => callback(text)),
   startLocalMongo: (workspacePath) => ipcRenderer.invoke("start-local-mongo", workspacePath),
   uploadAiStudioExport: (workspacePath) => ipcRenderer.invoke("upload-ai-studio-export", workspacePath),
 })

@@ -3,6 +3,7 @@ const path = require("path")
 const fs = require("fs")
 const crypto = require("crypto")
 const { spawn, execSync } = require("child_process")
+const { createInterface } = require("readline")
 
 // dev-loop.js prints this exact banner line once its dashboard HTTP server
 // is actually listening (see startDashboardServer() in dev-loop.js) — we
@@ -345,9 +346,22 @@ function quoteArgForCmd(value) {
 // later, and a real drafting turn no longer gets mistaken for one.
 const CLAUDE_TURN_TIMEOUT_MS = 8 * 60 * 1000
 
-function runClaudeTurn(workspacePath, args, inputText) {
+// A tool_use block's own name -> what to show the human while it runs.
+// Anything not listed here (Read, Bash, Grep, ...) just isn't worth
+// surfacing as a distinct progress line -- only the "I'm writing your files"
+// signal is what "is it stuck?" is actually asking about.
+const PROGRESS_TOOL_LABELS = { Write: "Writing", Edit: "Editing" }
+
+// Streams `--output-format stream-json` (same format/shape
+// development/dev-loop.js's own spawnClaude() already parses) instead of
+// waiting for one plain-text blob at the end -- lets onProgress fire in
+// real time as Claude actually writes files, e.g. "Writing docs/PRD.md…",
+// instead of a static "Thinking…" that gives no sign of life during a long
+// drafting turn.
+function runClaudeTurn(workspacePath, args, inputText, onProgress) {
   return new Promise((resolve) => {
-    const commandString = ["claude", ...args.map(quoteArgForCmd)].join(" ")
+    const streamArgs = [...args, "--verbose", "--output-format", "stream-json"]
+    const commandString = ["claude", ...streamArgs.map(quoteArgForCmd)].join(" ")
     // Prints straight to the terminal `npm start` is running in — this is
     // the fastest way to tell "child never spawned" apart from "spawned but
     // hung" apart from "IPC never even reached main.js" while debugging
@@ -357,11 +371,12 @@ function runClaudeTurn(workspacePath, args, inputText) {
     const child =
       process.platform === "win32"
         ? spawn(commandString, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: true })
-        : spawn("claude", args, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: false })
+        : spawn("claude", streamArgs, { cwd: workspacePath, stdio: ["pipe", "pipe", "pipe"], shell: false })
 
     console.log(`[setup-chat] spawned, pid=${child.pid}`)
 
-    let out = ""
+    let assistantText = ""
+    let resultText = null
     let err = ""
     let settled = false
     const settle = (result) => {
@@ -374,12 +389,33 @@ function runClaudeTurn(workspacePath, args, inputText) {
     const timer = setTimeout(() => {
       console.log(`[setup-chat] TIMEOUT firing, killing pid=${child.pid}`)
       child.kill()
-      settle({ out: "", err: `Timed out after ${CLAUDE_TURN_TIMEOUT_MS / 1000}s with no response. Raw output so far: ${out || "(none)"} / stderr: ${err || "(none)"}`, code: -1 })
+      settle({ out: "", err: `Timed out after ${CLAUDE_TURN_TIMEOUT_MS / 1000}s with no response. Raw output so far: ${assistantText || "(none)"} / stderr: ${err || "(none)"}`, code: -1 })
     }, CLAUDE_TURN_TIMEOUT_MS)
 
-    child.stdout.on("data", (d) => { out += d.toString(); console.log(`[setup-chat] stdout chunk: ${d.toString().slice(0, 200)}`) })
+    const rl = createInterface({ input: child.stdout })
+    rl.on("line", (line) => {
+      if (settled || !line.trim()) return
+      let event
+      try { event = JSON.parse(line) } catch { return }
+
+      if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+        for (const block of event.message.content) {
+          if (block.type === "text" && block.text) {
+            assistantText += block.text + "\n"
+          } else if (block.type === "tool_use" && PROGRESS_TOOL_LABELS[block.name]) {
+            const filePath = block.input?.file_path || block.input?.path
+            if (filePath && onProgress) onProgress(`${PROGRESS_TOOL_LABELS[block.name]} ${path.relative(workspacePath, filePath) || filePath}…`)
+          }
+        }
+      }
+      if (event.type === "result") resultText = event.result ?? assistantText
+    })
+
     child.stderr.on("data", (d) => { err += d.toString(); console.log(`[setup-chat] stderr chunk: ${d.toString().slice(0, 200)}`) })
-    child.on("close", (code) => settle({ out: out.trim(), err: err.trim(), code }))
+    child.on("close", (code) => {
+      const out = (resultText ?? assistantText).trim()
+      settle({ out, err: err.trim(), code: resultText !== null ? 0 : code })
+    })
     child.on("error", (e) => { console.log(`[setup-chat] spawn error event: ${e.message}`); settle({ out: "", err: e.message, code: -1 }) })
     child.stdin.write(inputText)
     child.stdin.end()
@@ -423,11 +459,16 @@ const SETUP_CHAT_FIRST_MESSAGE = [
   'Whenever a question has a small fixed set of options (e.g. a yes/no or A-vs-B choice), end your response with one extra line in exactly this format: CHOICES: Option one | Option two | Option three (2-6 options, each a short label in the same language as your question, no markdown formatting on that line). Omit this line entirely for open-ended questions with no fixed options.',
 ].join(" ")
 
+function sendChatProgress(text) {
+  mainWindow?.webContents.send("setup-chat-progress", text)
+}
+
 ipcMain.handle("setup-chat-start", async (event, workspacePath) => {
   const result = await runClaudeTurn(
     workspacePath,
     [...SETUP_CHAT_ARGS, "--system-prompt", "development/NEW-PROJECT-SETUP-PROMPT.md"],
     SETUP_CHAT_FIRST_MESSAGE,
+    sendChatProgress,
   )
   if (result.code === 0) {
     fs.writeFileSync(path.join(workspacePath, CHAT_STARTED_MARKER), new Date().toISOString(), "utf-8")
@@ -446,12 +487,13 @@ ipcMain.handle("setup-chat-resume", async (event, workspacePath) => {
     workspacePath,
     [...SETUP_CHAT_ARGS, "--continue"],
     "Continue exactly where we left off — re-ask your last question if you need to, don't restart the interview.",
+    sendChatProgress,
   )
   return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })
 
 ipcMain.handle("setup-chat-send", async (event, { workspacePath, message }) => {
-  const result = await runClaudeTurn(workspacePath, [...SETUP_CHAT_ARGS, "--continue"], message)
+  const result = await runClaudeTurn(workspacePath, [...SETUP_CHAT_ARGS, "--continue"], message, sendChatProgress)
   return result.code === 0 ? { text: result.out } : { error: result.err || `Exited with code ${result.code}` }
 })
 

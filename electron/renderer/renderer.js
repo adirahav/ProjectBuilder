@@ -55,13 +55,31 @@ function addChatMessage(role, text) {
 
 // A real bubble (dots + label), not a bare "…" easy to mistake for the
 // screen just being empty — that was read as "nothing is happening" before.
+// Tracks whichever thinking bubble is currently on screen so
+// onSetupChatProgress (below) can update its label in place — e.g. "Writing
+// docs/PRD.md…" instead of a static "Thinking…" that gives no sign of life
+// during a long multi-file drafting turn (a human watching a silent spinner
+// for a full minute-plus otherwise has no way to tell "still working" apart
+// from "stuck").
+let currentThinkingLabelEl = null
+
 function addThinkingMessage() {
   const el = document.createElement("div")
   el.className = "chat-msg thinking"
-  el.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> Thinking…`
+  el.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> <span class="thinking-label">Thinking…</span>`
   chatMessagesEl.appendChild(el)
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight
+  currentThinkingLabelEl = el.querySelector(".thinking-label")
   return el
+}
+
+window.devLoop.onSetupChatProgress((text) => {
+  if (currentThinkingLabelEl) currentThinkingLabelEl.textContent = text
+})
+
+function removeThinkingMessage(thinkingEl) {
+  thinkingEl.remove()
+  currentThinkingLabelEl = null
 }
 
 // The setup chat's first message (see main.js's SETUP_CHAT_FIRST_MESSAGE)
@@ -217,7 +235,7 @@ async function handleProjectSelected(result) {
       const reply = result.resumeChat
         ? await window.devLoop.resumeSetupChat(selectedWorkspacePath)
         : await window.devLoop.startSetupChat(selectedWorkspacePath)
-      thinkingEl.remove()
+      removeThinkingMessage(thinkingEl)
       if (reply.error) {
         addChatMessage("assistant", `Something went wrong: ${reply.error}`)
       } else {
@@ -229,7 +247,7 @@ async function handleProjectSelected(result) {
       // An IPC call that throws in main.js otherwise rejects silently here
       // and leaves the thinking placeholder stuck forever with no visible
       // cause — this is exactly the failure mode this catch exists to rule out.
-      thinkingEl.remove()
+      removeThinkingMessage(thinkingEl)
       console.error(e)
       addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
     } finally {
@@ -297,7 +315,7 @@ async function sendChatMessage(presetText) {
   const thinkingEl = addThinkingMessage()
   try {
     const reply = await window.devLoop.sendSetupChatMessage(selectedWorkspacePath, text)
-    thinkingEl.remove()
+    removeThinkingMessage(thinkingEl)
     if (reply.error) {
       addChatMessage("assistant", `Something went wrong: ${reply.error}`)
     } else {
@@ -306,7 +324,7 @@ async function sendChatMessage(presetText) {
       renderAnswerOptions(displayText, labels)
     }
   } catch (e) {
-    thinkingEl.remove()
+    removeThinkingMessage(thinkingEl)
     console.error(e)
     addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
   } finally {

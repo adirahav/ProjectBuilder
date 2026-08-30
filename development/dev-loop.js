@@ -242,7 +242,27 @@ function camelKey(kebabKey) {
 // session self-heals without needing a restart every time a service becomes
 // known (scaffolded on disk, or newly named in the backlog's `scope:`).
 let BACKEND_SERVICE_KEYS = discoverBackendServices()
-let ALL_AGENT_KEYS = ["orchestrator", "designer", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
+const DESIGNER_ENABLED = orchestratorConfig.designSource === "DESIGNER_AGENT"
+function coreAgentKeys(backendKeys) {
+  return DESIGNER_ENABLED
+    ? ["orchestrator", "designer", "frontend", ...backendKeys, "qa", "security"]
+    : ["orchestrator", "frontend", ...backendKeys, "qa", "security"]
+}
+let ALL_AGENT_KEYS = coreAgentKeys(BACKEND_SERVICE_KEYS)
+
+function designSourceGuidance() {
+  const src = orchestratorConfig.designSource
+  if (src === "AISTUDIO") {
+    return "Design source of truth is raw_from_ai_studio/ — match colors, spacing, and component structure. Do not use that folder's package.json for dependency decisions."
+  }
+  if (src === "FIGMA") {
+    return "Design source is Figma (via MCP)."
+  }
+  if (src === "DESIGNER_AGENT") {
+    return "Design source is docs/design/mockups/ (Designer agent output) plus docs/design/design-notes.md."
+  }
+  return "No external design source is provided for this project. Design the UI per .rule/style-rules.md."
+}
 
 // ─── Task resume state ──────────────────────────────────────────────────────
 // Persisted per backlog task-slug so a crash/restart at any point (plan review,
@@ -1078,10 +1098,20 @@ async function main() {
   emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
+  // Sacred-main and no-git both mean: do not create a per-task branch.
+  // CREATE_BRANCH_PER_TASK is already forced off when there's no .git;
+  // main/master additionally skips even if the config asked for branches,
+  // instead of refusing to run at all.
+  const createBranchPerTask = CREATE_BRANCH_PER_TASK
+    && BASE_BRANCH !== "main"
+    && BASE_BRANCH !== "master"
+  if (GIT_ENABLED && (BASE_BRANCH === "main" || BASE_BRANCH === "master") && CREATE_BRANCH_PER_TASK) {
+    warn(`Current branch is '${BASE_BRANCH}' — skipping per-task branch creation. main/master is sacred: this loop will not branch from or merge into it. Tasks will work on '${BASE_BRANCH}' directly.`)
+  }
   log(
     GIT_ENABLED
       ? `Base branch: '${BASE_BRANCH}'` +
-          (CREATE_BRANCH_PER_TASK
+          (createBranchPerTask
             ? " — every task branches from here and merges back here, only after your approval."
             : " — tasks commit directly onto this branch, no per-task branch/merge this run.")
       : "No git repo — agents write files straight to disk, nothing gets branched/committed/merged."
@@ -1153,8 +1183,8 @@ async function main() {
       ? ""
       : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ")
 
-    const branchName = CREATE_BRANCH_PER_TASK ? `${BASE_BRANCH}-tasks/${task.slug}` : BASE_BRANCH
-    if (CREATE_BRANCH_PER_TASK) {
+    const branchName = createBranchPerTask ? `${BASE_BRANCH}-tasks/${task.slug}` : BASE_BRANCH
+    if (createBranchPerTask) {
       createGitBranch(branchName, BASE_BRANCH)
     } else if (GIT_ENABLED && execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim() !== BASE_BRANCH) {
       // Only relevant right after a run with branching ON left a task branch
@@ -1251,7 +1281,7 @@ async function main() {
           `You are the Frontend Agent.`,
           `Task: ${task.title}`,
           `Task id: ${tickets.frontend.id}`,
-          `No external design source is provided — design the UI per .rule/style-rules.md.`,
+          designSourceGuidance(),
           `Approved plan: ${planPath}`,
           `Follow your CLAUDE.md instructions exactly.`,
           `End your final response with exact line: STATUS: DONE`,
@@ -1672,7 +1702,7 @@ function refreshBackendServiceKeys() {
     AGENT_IDENTITY[key] = { icon: "🔧", color: "\x1b[34m", label: ` ${key}` }
   }
   BACKEND_SERVICE_KEYS = fresh
-  ALL_AGENT_KEYS = ["orchestrator", "designer", "frontend", ...BACKEND_SERVICE_KEYS, "qa", "security"]
+  ALL_AGENT_KEYS = coreAgentKeys(BACKEND_SERVICE_KEYS)
   log(`Discovered new backend service(s): ${newKeys.join(", ")} — picked up without a restart.`)
   return true
 }
@@ -1681,11 +1711,7 @@ function refreshBackendServiceKeys() {
 
 async function askClaudeForPlan({ task, prd, planPath, previousPlans, userInstructions }) {
   const prevList = previousPlans.map((p) => `- ${p.name}`).join("\n") || "(none)"
-  const designGuidance = [
-    "No external design source is provided for this project.",
-    "Design the UI yourself per .rule/style-rules.md.",
-    "Call out any UI assumptions in Open Questions.",
-  ].join("\n")
+  const designGuidance = designSourceGuidance()
 
   const args = [
     "--model", modelFor("planning"),
@@ -2321,7 +2347,7 @@ Deliver ${task.title} in the existing product.
 
 ## Assumptions
 - Existing app and test setup are functional
-- No external design source — Frontend Agent designs the UI per .rule/style-rules.md
+- ${designSourceGuidance()}
 
 ## Open Questions
 - Should this feature include analytics events? Recommended: no for first increment.
@@ -2357,16 +2383,12 @@ ${BACKEND_SERVICE_KEYS.map((key) => `- backend/${key} (only if in scope): npm --
 
 // The branch dev-loop.js was launched from — every task branches fresh from
 // here and merges back here, after approval. main/master is sacred: this
-// loop refuses to run against it at all, since an unattended per-task merge
-// loop is exactly the kind of thing that should never target main directly.
+// loop never creates a per-task branch from it or merges into it. When the
+// current branch is main/master (or there is no .git at all), branch
+// creation is skipped and tasks work on the current tree as-is.
 function getBaseBranch() {
   if (!GIT_ENABLED) return "no-git"
   const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim()
-  if (branch === "main" || branch === "master") {
-    printRed(`Refusing to run: current branch is '${branch}'. main/master is sacred — dev-loop.js never branches from or merges into it.`)
-    printRed(`Check out your own base branch first (e.g. 'git checkout <your-feature-branch>'), then rerun.`)
-    process.exit(1)
-  }
   if (branch.includes("-tasks/")) {
     // A task branch this same script generated (`<base>-tasks/<slug>`), not a
     // real human base branch. Re-deriving BASE_BRANCH from one of these is
@@ -2386,6 +2408,7 @@ function getBaseBranch() {
 // wherever HEAD happens to be (e.g. the previous task's branch), since that
 // would silently carry forward unmerged/unreviewed work between tasks.
 function createGitBranch(branch, baseBranch) {
+  if (!GIT_ENABLED) return
   execSync(`git checkout ${baseBranch}`, { stdio: "inherit" })
   try {
     execSync(`git rev-parse --verify ${branch}`, { stdio: "ignore" })
@@ -2454,7 +2477,8 @@ function commitCostArtifacts(task, baseBranch) {
 
 // Approval gate: nothing gets pushed or merged into BASE_BRANCH without an
 // explicit APPROVED from the human. main/master can never be a merge target
-// here — getBaseBranch() already refused to run if that were the case.
+// here — createBranchPerTask is forced off when the base is main/master, so
+// this function's merge path is never reached for those branches.
 async function pushAndMergeTaskBranch(task, branch, baseBranch) {
   if (branch === baseBranch) {
     // CREATE_BRANCH_PER_TASK was off for this run — the task's commit

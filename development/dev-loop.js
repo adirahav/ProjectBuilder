@@ -21,6 +21,7 @@
  *   1) Pick next task from .plan/000-backlog.md
  *   2) Generate plan in .plan/NNN-YYYY-MM-DD-topic.md and request approval
  *   3) Launch the Frontend agent (builds UI per .rule/style-rules.md, defines API contract(s))
+ *      through whichever LLM CLI this project is pinned to (Claude Code or Cursor `agent`)
  *   4) Launch Backend agents in parallel — one per discovered backend
  *      service, per .rule/architecture.md
  *   5) Launch QA validation
@@ -43,14 +44,14 @@ process.chdir(__projectRoot)
 dotenv.config({ path: `.env.${process.env.NODE_ENV || "development"}` })
 
 // ─── Model mapping ──────────────────────────────────────────────────────────
-// Which Claude model each operation uses. Opus is reserved for the operations
-// that write multi-file production code end-to-end (frontend, backend x3) —
-// that's where its extra reasoning actually pays for itself. Everything else
-// (planning, QA, security review, chat) is judgment/analysis over work Claude
-// (or a human) already reviews downstream, so Sonnet 5 gets equivalent
-// real-world quality at a fraction of the cost.
-// Single place to retune cost/quality per operation without hunting through
-// every spawnClaude() call site.
+// Which model each operation uses, per LLM provider. Opus (or Cursor's
+// opus-thinking equivalent) is reserved for the operations that write
+// multi-file production code end-to-end (frontend, backend x3) — that's
+// where extra reasoning actually pays for itself. Everything else (planning,
+// QA, security review, chat) is judgment/analysis over work already reviewed
+// downstream, so Sonnet-class models get equivalent real-world quality at a
+// fraction of the cost. Single place to retune cost/quality per operation
+// without hunting through every spawnLlm() call site.
 const MODEL_FOR = {
   planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
   "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
@@ -61,12 +62,31 @@ const MODEL_FOR = {
   "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
 }
 
+// Cursor CLI (`agent --model`) names — same quality split as MODEL_FOR, mapped
+// onto the ids `agent models` actually lists. Used only when ACTIVE_PROVIDER
+// is "cursor"; Claude Code still uses MODEL_FOR above.
+const CURSOR_MODEL_FOR = {
+  planning:            "claude-sonnet-5-thinking-high",
+  "planning-revise":   "claude-sonnet-5-thinking-high",
+  designer:            "claude-opus-5-thinking-high",
+  frontend:            "claude-opus-5-thinking-high",
+  qa:                  "claude-sonnet-5-thinking-high",
+  security:            "claude-sonnet-5-thinking-high",
+  "orchestrator-chat": "claude-sonnet-5-thinking-high",
+}
+
 // Any backend service key (discovered per-project, not listed here by name)
-// falls through to MODEL_FOR.frontend, i.e. Opus — backend code generation
+// falls through to the frontend row, i.e. Opus-class — backend code generation
 // gets the same treatment as frontend regardless of the service's name.
 function modelFor(operation) {
-  return MODEL_FOR[operation] || MODEL_FOR.frontend
+  const table = ACTIVE_PROVIDER === "cursor" ? CURSOR_MODEL_FOR : MODEL_FOR
+  return table[operation] || table.frontend
 }
+
+// Set by checkLlmAccount() before any agent spawn. "claude" runs the `claude`
+// CLI; "cursor" runs Cursor's `agent` CLI. null until that check finishes.
+let ACTIVE_PROVIDER = null
+let ACTIVE_ACCOUNT_EMAIL = null
 
 const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE || getArg("--claude-permission-mode") || "bypassPermissions"
 const CLAUDE_ALLOWED_TOOLS = process.env.CLAUDE_ALLOWED_TOOLS || getArg("--claude-allowed-tools")
@@ -127,7 +147,21 @@ const orchestratorConfig = loadOrchestratorConfig()
 // is skipped outright: agents just write files straight onto disk and the
 // loop moves on to the next task. Checked once, at load time, since whether
 // a repo exists here isn't expected to change mid-run.
-const GIT_ENABLED = existsSync(".git")
+let GIT_ENABLED = existsSync(".git")
+let CREATE_BRANCH_PER_TASK = GIT_ENABLED && (
+  process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
+    ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
+    : orchestratorConfig.createBranchPerTask !== false
+)
+
+function updateGitStatus() {
+  GIT_ENABLED = existsSync(".git")
+  CREATE_BRANCH_PER_TASK = GIT_ENABLED && (
+    process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
+      ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
+      : orchestratorConfig.createBranchPerTask !== false
+  )
+}
 
 // When true, the plan-review gate never stops to wait on a human — it
 // accepts the orchestrator's own "- Recommended: ..." answer on every Open
@@ -155,24 +189,6 @@ const AUTO_MERGE_TASKS = process.env.AUTO_MERGE_TASKS != null || getArg("--auto-
 const AUTO_APPROVE_DESIGN = process.env.AUTO_APPROVE_DESIGN != null || getArg("--auto-approve-design")
   ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_DESIGN || getArg("--auto-approve-design"))
   : Boolean(orchestratorConfig.autoApproveDesign)
-
-// Whether every task gets its own git branch (merged back only after human
-// approval) or commits straight onto the base branch. Used to ask fresh on
-// every single run — that turned out to be more annoying than useful in
-// practice (a human had to answer the same question every time she started
-// the loop). Now a normal orchestrator.config.json setting like the other
-// gates above: set once, applies to every run until changed. Default (the
-// key absent entirely) is `true` — per-task branches, the original/existing
-// behavior — since that's the safer choice for anyone who hasn't set an
-// opinion either way. A CLI flag/env var can still override it for a
-// one-off run without touching the config file.
-// Meaningless with no git repo at all — forced off regardless of config/CLI
-// overrides, since there's nothing to branch.
-const CREATE_BRANCH_PER_TASK = GIT_ENABLED && (
-  process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
-    ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
-    : orchestratorConfig.createBranchPerTask !== false
-)
 
 const PLAN_DIR = ".plan"
 const REPORTS_DIR = "docs/agent-reports"
@@ -691,8 +707,8 @@ async function ensureFrontendDevServerRunning() {
     // entrypoint isn't where expected, e.g. a non-Vite frontend tool.
     const viteBin = join(frontendDir, "node_modules", "vite", "bin", "vite.js")
     const child = process.platform === "win32" && existsSync(viteBin)
-      ? spawn(process.execPath, [join("node_modules", "vite", "bin", "vite.js")], spawnOpts)
-      : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev"], { ...spawnOpts, shell: process.platform === "win32" })
+      ? spawn(process.execPath, [join("node_modules", "vite", "bin", "vite.js"), "--strictPort"], spawnOpts)
+      : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev", "--", "--strictPort"], { ...spawnOpts, shell: process.platform === "win32" })
     child.unref()
     log(`Started the frontend dev server in the background (PID ${child.pid}) for the dashboard preview — output logged to ${logPath}.`)
   } catch (e) {
@@ -742,17 +758,6 @@ async function runDesignerIfNeeded() {
 // always runs when called (the approval loop below is what decides whether
 // to call it at all).
 async function runDesignerRevision(feedback) {
-  const args = [
-    "--model", modelFor("designer"),
-    "--permission-mode", CLAUDE_PERMISSION_MODE,
-    "--add-dir", process.cwd(),
-    "--system-prompt", "agents/designer/CLAUDE.md",
-    "--print",
-    "--verbose",
-    "--output-format", "stream-json",
-  ]
-  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
-
   const input = [
     `You are the Designer Agent, revising your own previous work based on human feedback.`,
     `Do not start over — edit the existing files under docs/design/mockups/ and docs/design/design-notes.md in place, keeping everything the feedback doesn't ask you to change.`,
@@ -762,7 +767,12 @@ async function runDesignerRevision(feedback) {
     `End your final response with exact line: STATUS: DONE`,
   ].join("\n")
 
-  const rawStdout = await spawnClaude(args, input, { agentKey: "designer", extraEnv: { CLAUDE_AGENT_ROLE: "designer" } })
+  const rawStdout = await launchLlm({
+    operation: "designer",
+    systemPromptPath: "agents/designer/CLAUDE.md",
+    input,
+    agentKey: "designer",
+  })
   if (rawStdout === null) return false
 
   const stdout = recordCost("designer", "Designer Agent (revision)", rawStdout)
@@ -790,6 +800,7 @@ async function reviewDesignUntilApproved() {
   while (true) {
     const answer = await askUserInput(
       `Review the mockups in docs/design/mockups/ (open the .html files in a browser) and docs/design/design-notes.md. Type APPROVED to continue, or enter feedback to revise the design: `,
+      { choices: [{ label: "✅ APPROVED", value: "APPROVED" }] }
     )
     const normalized = answer.trim().toUpperCase()
     if (normalized === "APPROVED") {
@@ -810,7 +821,7 @@ async function reviewDesignUntilApproved() {
     const ok = await runDesignerRevision(feedback)
     emitEvent("agent-back", "orchestrator")
     if (!ok) {
-      warn("Could not revise the design (Claude unavailable). Try again, or edit the mockup files manually, then type APPROVED.")
+      warn("Could not revise the design (LLM unavailable). Try again, or edit the mockup files manually, then type APPROVED.")
     }
   }
 }
@@ -862,11 +873,30 @@ function startDashboardServer() {
       // it can't live in the status FILE (its `respond` callback isn't
       // serializable), so this is the one field on this route that reflects
       // live process state instead of whatever was last written to disk.
+      // While a `claude auth login` child is running (see
+      // runClaudeLoginFlow()), there's no fixed one-shot pendingHumanInput —
+      // it may need zero, one, or several typed lines (a device code,
+      // Enter-to-continue, ...) forwarded to its stdin. Report a standing
+      // "awaiting input" state for it too, distinct from pendingHumanInput,
+      // so the dashboard keeps its respond-box open for the whole flow
+      // instead of only around a single fixed question.
+      const awaitingInput = pendingHumanInput
+        ? { prompt: pendingHumanInput.prompt, expectsText: pendingHumanInput.expectsText, choices: pendingHumanInput.choices || null }
+        : (activeLoginChild
+          ? {
+              prompt: "Login in progress — if the CLI asks for a code, paste it below and press Send. Otherwise just wait for the browser step to finish. Stuck (closed the browser tab, wrong account, ...)? Press Cancel and try again.",
+              expectsText: true,
+              cancellable: true,
+            }
+          : null)
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
       res.end(JSON.stringify({
         ...base,
         services: BACKEND_SERVICE_KEYS,
-        awaitingInput: pendingHumanInput ? { prompt: pendingHumanInput.prompt, expectsText: pendingHumanInput.expectsText } : null,
+        awaitingInput,
+        claudeAccount: ACTIVE_ACCOUNT_EMAIL,
+        llmProvider: ACTIVE_PROVIDER,
+        llmAccount: ACTIVE_ACCOUNT_EMAIL,
       }))
       return
     }
@@ -875,22 +905,56 @@ function startDashboardServer() {
     // answer/feedback, or an empty body for "just press Enter." Whichever of
     // (this route / the terminal's own readline prompt) resolves first wins;
     // the other is a no-op since pendingHumanInput.respond() self-guards
-    // against firing twice (see askUserInput()).
+    // against firing twice (see askUserInput()). While a login child is
+    // running, text goes straight to its stdin instead — that flow can take
+    // several rounds of input, not just one.
     if (req.url === "/respond" && req.method === "POST") {
       let body = ""
       req.on("data", (chunk) => { body += chunk })
       req.on("end", () => {
+        let text = ""
+        try { 
+          const parsed = JSON.parse(body || "{}")
+          text = parsed.text ?? "" 
+        } catch (e) {
+          warn(`Dashboard sent invalid JSON to /respond: ${e.message}`)
+          res.writeHead(400)
+          res.end()
+          return
+        }
+
+        if (activeLoginChild) {
+          activeLoginChild.stdin.write(text + "\n")
+          res.writeHead(204)
+          res.end()
+          return
+        }
+
         if (!pendingHumanInput) {
+          warn("Dashboard sent input to /respond, but the orchestrator is not waiting for input.")
           res.writeHead(409, { "Content-Type": "application/json" })
           res.end(JSON.stringify({ error: "Nothing is waiting for input right now." }))
           return
         }
-        let text = ""
-        try { text = JSON.parse(body || "{}").text ?? "" } catch { /* treat as empty */ }
+        log(`Input received from dashboard: "${text || "(empty)"}"`)
         pendingHumanInput.respond(text)
-        res.writeHead(204)
-        res.end()
+        res.writeHead(200, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({ status: "ok" }))
       })
+      return
+    }
+
+    // Kills a stuck `claude auth login` (closed the browser tab too early,
+    // signed into the wrong account, the CLI just hung, ...) so the human
+    // isn't stuck retyping into a dead prompt forever with no way out except
+    // a terminal that, under the eventual Electron build, won't exist.
+    // runClaudeLoginFlow()'s own child.on("close", ...) handler notices the
+    // kill and resolves false — the caller (checkLlmAccount()) is what
+    // decides whether to offer a retry from there.
+    if (req.url === "/cancel-login" && req.method === "POST") {
+      if (activeLoginChild) killProcessTree(activeLoginChild)
+      res.writeHead(204)
+      res.end()
       return
     }
 
@@ -1055,43 +1119,504 @@ function acquireLock() {
   process.on("SIGTERM", () => { releaseLock(); process.exit(143) })
 }
 
+function cliOnPath(bin) {
+  try {
+    execSync(`${bin} --version`, { stdio: "ignore" })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Cursor's Windows installer puts `agent.cmd` in %LOCALAPPDATA%\cursor-agent,
+// which is on the User PATH for new shells but often missing from a Node
+// process launched before that install (or from a terminal that never
+// refreshed PATH). Prepend that dir so `agent` resolves for the rest of
+// this run without asking the human to restart their terminal.
+function ensureCursorCliOnPath() {
+  if (cliOnPath("agent")) return true
+  const extra = process.platform === "win32"
+    ? join(process.env.LOCALAPPDATA || "", "cursor-agent")
+    : join(process.env.HOME || process.env.USERPROFILE || "", ".local", "bin")
+  const exe = process.platform === "win32" ? "agent.cmd" : "agent"
+  if (!existsSync(join(extra, exe))) return false
+  process.env.PATH = extra + (process.platform === "win32" ? ";" : ":") + (process.env.PATH || "")
+  return cliOnPath("agent")
+}
+
 // Fails fast with a clear, specific reason instead of a confusing crash deep
 // inside the loop (e.g. "fetch is not defined" on old Node, or a cryptic
 // spawn ENOENT the first time an agent tries to launch). Checked once, right
 // at startup, before anything else runs.
-function checkPrerequisites() {
+// Async, and every failure exits via abortRun() rather than a raw
+// printRed()+process.exit(), so the reason reaches the dashboard's message
+// pane too — not just stdout. This currently runs under a terminal, but
+// dev-loop.js is also meant to run headless under Electron eventually, where
+// there is no terminal at all; a message only a terminal can show is a
+// message nobody sees there. startDashboardServer() is deliberately the
+// very first thing main() does, before this, so that channel already exists
+// by the time any of these checks can fail.
+async function checkPrerequisites() {
   const nodeMajor = Number(process.versions.node.split(".")[0])
   if (nodeMajor < 18) {
-    printRed(`Node.js 18+ required (this script uses the native fetch API) — found ${process.version}.`)
-    printRed("Install a current Node.js from https://nodejs.org, then rerun.")
-    process.exit(1)
+    await abortRun(`Node.js 18+ required (this script uses the native fetch API) — found ${process.version}. Install a current Node.js from https://nodejs.org, then rerun.`)
+    return
   }
 
   if (GIT_ENABLED) {
     try {
       execSync("git --version", { stdio: "ignore" })
     } catch {
-      printRed("git is not installed or not on PATH — this script runs real git commands (branch, commit, merge).")
-      printRed("Install git, then rerun.")
-      process.exit(1)
+      await abortRun("git is not installed or not on PATH — this script runs real git commands (branch, commit, merge). Install git, then rerun.")
+      return
     }
   } else {
     warn("No .git found at the repo root — running without version control. Agents will write files straight to disk; nothing gets branched, committed, or merged automatically. (Run 'git init' first if that's not what you want.)")
   }
 
-  try {
-    execSync("claude --version", { stdio: "ignore" })
-  } catch {
-    printRed("The 'claude' CLI is not installed or not on PATH — every agent step in this loop launches it as a subprocess.")
-    printRed("Install Claude Code and log in ('claude /login'), then rerun.")
-    process.exit(1)
+  ensureCursorCliOnPath()
+  const hasClaude = cliOnPath("claude")
+  const hasCursor = cliOnPath("agent")
+  if (!hasClaude && !hasCursor) {
+    await abortRun("Neither the 'claude' CLI nor Cursor's 'agent' CLI is installed or on PATH — every agent step in this loop launches one of them as a subprocess. Install Claude Code ('claude auth login') and/or Cursor CLI from https://cursor.com/docs/cli ('agent login'), then rerun.")
+    return
   }
 }
 
+// Each CLI's login is a single, machine-wide account, with no awareness of
+// which project/IDE/Chrome profile it's being run from. On a machine used
+// for both personal and work projects, that means a work project's agents
+// can silently burn a *personal* account's usage/session limit (or vice
+// versa) with no warning until it hits a limit mid-run.
+// orchestrator.config.json's expectedLlmProvider + expectedLlmAccount pin
+// which CLI and email this project should run under. A project with no
+// value on record adopts whatever is currently logged in — after the human
+// confirms it (and which provider, if both are logged in) — rather than
+// blocking forever on a field nothing sets automatically.
+// Legacy expectedClaudeAccount is still read as provider=claude.
+function getLoggedInClaudeAccountEmail() {
+  try {
+    const out = execSync("claude auth status --json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const parsed = JSON.parse(out)
+    return parsed?.loggedIn ? (parsed.email || null) : null
+  } catch {
+    return null
+  }
+}
+
+function getLoggedInCursorAccountEmail() {
+  try {
+    const out = execSync("agent status --format json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const parsed = JSON.parse(out)
+    if (!parsed?.isAuthenticated) return null
+    return parsed.userInfo?.email || null
+  } catch {
+    return null
+  }
+}
+
+function getLoggedInEmail(provider) {
+  return provider === "cursor" ? getLoggedInCursorAccountEmail() : getLoggedInClaudeAccountEmail()
+}
+
+function getExpectedLlm() {
+  if (orchestratorConfig.expectedLlmProvider && orchestratorConfig.expectedLlmAccount) {
+    return {
+      provider: String(orchestratorConfig.expectedLlmProvider).toLowerCase(),
+      account: orchestratorConfig.expectedLlmAccount,
+    }
+  }
+  if (orchestratorConfig.expectedClaudeAccount) {
+    return { provider: "claude", account: orchestratorConfig.expectedClaudeAccount }
+  }
+  return { provider: null, account: null }
+}
+
+function pinExpectedLlm(provider, account) {
+  const updated = { ...loadOrchestratorConfig(), expectedLlmProvider: provider, expectedLlmAccount: account }
+  if (provider === "claude") updated.expectedClaudeAccount = account
+  else delete updated.expectedClaudeAccount
+  writeFileSync(ORCHESTRATOR_CONFIG_PATH, JSON.stringify(updated, null, 2) + "\n", "utf-8")
+  orchestratorConfig.expectedLlmProvider = provider
+  orchestratorConfig.expectedLlmAccount = account
+  if (provider === "claude") orchestratorConfig.expectedClaudeAccount = account
+  else delete orchestratorConfig.expectedClaudeAccount
+  log(`Recorded expectedLlmProvider: ${provider}, expectedLlmAccount: ${account} in ${ORCHESTRATOR_CONFIG_PATH}.`)
+}
+
+function setActiveLlm(provider, email) {
+  ACTIVE_PROVIDER = provider
+  ACTIVE_ACCOUNT_EMAIL = email
+  CLAUDE_ACCOUNT_EMAIL = email
+  const label = LLM_PROVIDERS[provider]?.label || provider
+  log(`Using ${label} as ${email} — every agent step this run launches through '${LLM_PROVIDERS[provider]?.bin || provider}'.`)
+}
+
+// child.kill() only signals the direct child — on Windows, when the child
+// was spawned with shell:true (as runClaudeLoginFlow() does), that's cmd.exe,
+// not the real claude.exe underneath it, which is then left running orphaned
+// forever. `taskkill /T` kills the whole process tree rooted at that PID
+// instead. Ported from electron/main.js's killProcessTree() — same bug,
+// same fix, needed here too now that a human can cancel a stuck login from
+// the dashboard (see /cancel-login below).
+function killProcessTree(child) {
+  if (!child || child.killed) return
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" })
+    } catch {
+      // Already exited between the killed-check above and here — fine.
+    }
+  } else {
+    child.kill()
+  }
+}
+
+// Set while `claude auth login` is running as a child process — lets the
+// dashboard's /respond route forward whatever the human types straight into
+// its stdin (see startDashboardServer()'s /respond handler) instead of only
+// the terminal's own stdin being able to answer it. `claude auth login` is
+// normally interactive (opens a browser tab, and on some setups prints a
+// device code to confirm); under the eventual Electron build there is no
+// terminal to run it in at all, so this has to be answerable from the
+// dashboard alone.
+let activeLoginChild = null
+
+// Registry of CLIs this loop can RUN agents through. Claude Code (`claude`)
+// and Cursor CLI (`agent`) both support headless `--print` + stream-json.
+// Login/status surfaces differ (`claude auth status --json` vs
+// `agent status --format json`); getLoggedInEmail() wraps that.
+const LLM_PROVIDERS = {
+  claude: {
+    label: "Claude",
+    bin: "claude",
+    loginArgs: (email) => ["auth", "login", "--claudeai", ...(email ? ["--email", email] : [])],
+  },
+  cursor: {
+    label: "Cursor",
+    bin: "agent",
+    loginArgs: () => ["login"],
+  },
+}
+
+// Runs a provider's login command and relays its output into the
+// dashboard's message pane (via writeAgentStatus) as it happens, not just
+// the terminal. Resolves true/false for whether the child exited cleanly —
+// callers that can verify success programmatically (Claude, via
+// getLoggedInClaudeAccountEmail()) still re-check that themselves
+// afterward, since a clean exit here doesn't guarantee the login actually
+// completed.
+function runProviderLoginFlow(provider, prefillEmail = "") {
+  return new Promise((resolve) => {
+    const loginArgs = provider.loginArgs(prefillEmail)
+    let child
+    if (process.platform === "win32") {
+      child = spawn([provider.bin, ...loginArgs.map(quoteArgForCmd)].join(" "), { stdio: ["pipe", "pipe", "pipe"], shell: true })
+    } else {
+      child = spawn(provider.bin, loginArgs, { stdio: ["pipe", "pipe", "pipe"], shell: false })
+    }
+    activeLoginChild = child
+
+    // Terminal keeps working exactly as before (typed input piped straight
+    // through) for as long as one exists; the dashboard gets the same
+    // access via /respond while activeLoginChild is set.
+    process.stdin.resume()
+    process.stdin.pipe(child.stdin)
+
+    const relay = (chunk) => {
+      const text = chunk.toString()
+      process.stdout.write(text)
+      writeAgentStatus("orchestrator", text)
+    }
+    child.stdout.on("data", relay)
+    child.stderr.on("data", relay)
+
+    const finish = (ok) => {
+      try { process.stdin.unpipe(child.stdin) } catch {}
+      process.stdin.pause()
+      activeLoginChild = null
+      resolve(ok)
+    }
+    child.on("close", (code) => finish(code === 0))
+    child.on("error", () => finish(false))
+  })
+}
+
+function runClaudeLoginFlow(prefillEmail = "") {
+  return runProviderLoginFlow(LLM_PROVIDERS.claude, prefillEmail)
+}
+
+// Runs `agent login` (Cursor) and then `agent status --format json` so we
+// can verify the email the same way the Claude path does.
+async function runCursorLoginFlow() {
+  ensureCursorCliOnPath()
+  if (!cliOnPath("agent")) {
+    warn("Cursor's CLI ('agent') isn't installed or not on PATH — install it from https://cursor.com/docs/cli, then try again.")
+    return false
+  }
+
+  log("Launching 'agent login' (Cursor) — a browser tab should open. If it asks for a code, type it in the box below and press Send.")
+  const ok = await runProviderLoginFlow(LLM_PROVIDERS.cursor)
+  const email = getLoggedInCursorAccountEmail()
+  if (email) log(`Cursor status: logged in as ${email}`)
+  else warn("Could not read Cursor login status ('agent status --format json' failed) — check manually if needed.")
+  return ok && Boolean(email)
+}
+
+async function chooseLoginProvider() {
+  const answer = await askUserInput(
+    `Which provider should this project's agents run through? (Claude/Cursor) `,
+    { choices: [{ label: "Claude", value: "claude" }, { label: "Cursor", value: "cursor" }] }
+  )
+  return answer.trim().toLowerCase().includes("cursor") ? "cursor" : "claude"
+}
+
+// Both printRed()s AND writeAgentStatus() (so the dashboard's message pane —
+// not just the terminal — shows *why* the run stopped), then exits after a
+// short delay instead of immediately: process.exit() also kills the
+// dashboard's own http server, so the browser's next 1s poll needs a moment
+// to land and pick up this message before the server disappears out from
+// under it. Without the delay, clicking "n" in the dashboard looked like
+// nothing happened at all — the tab just silently stopped updating.
+async function abortRun(msg) {
+  printRed(msg)
+  writeAgentStatus("orchestrator", `❌ ${msg}`)
+  // Callers must `await` this — it never resolves before process.exit()
+  // fires, so the caller can't fall through to the rest of the loop (e.g.
+  // spawning a Claude call) during the delay.
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  process.exit(1)
+}
+
+// Runs the login flow and, on failure (cancelled from the dashboard, closed
+// the browser tab too early, signed into the wrong account, ...), offers to
+// retry right there instead of dead-ending the whole run via abortRun() —
+// that used to be the only outcome of a failed login, which meant one wrong
+// click during OAuth killed the entire dev-loop.js process with no way back
+// except restarting it from scratch. Returns the newly logged-in email, or
+// null if the human explicitly gave up.
+async function attemptLogin(provider = "claude", prefillEmail = "") {
+  const spec = LLM_PROVIDERS[provider] || LLM_PROVIDERS.claude
+  for (;;) {
+    let newEmail = null
+    if (provider === "cursor") {
+      const loginOk = await runCursorLoginFlow()
+      newEmail = getLoggedInCursorAccountEmail()
+      if (loginOk && newEmail) return newEmail
+    } else {
+      log(`Launching 'claude auth login'${prefillEmail ? ` as ${prefillEmail}` : ""} — a browser tab should open. If it asks for a code, type it in the box below and press Send.`)
+      const loginOk = await runClaudeLoginFlow(prefillEmail)
+      newEmail = getLoggedInClaudeAccountEmail()
+      if (loginOk && newEmail && (!prefillEmail || newEmail === prefillEmail)) return newEmail
+    }
+
+    const answer = await askUserInput(
+      `${spec.label} login did not complete (still logged in as "${newEmail || "nobody"}"). Try again, or give up? (y/n) `,
+      { choices: [{ label: "Try again", value: "y" }, { label: "Give up", value: "n" }] }
+    )
+    if (!/^y/i.test(answer.trim())) return null
+  }
+}
+
+function probeLoggedInProviders() {
+  ensureCursorCliOnPath()
+  const loggedIn = {}
+  if (cliOnPath("claude")) {
+    const email = getLoggedInClaudeAccountEmail()
+    if (email) loggedIn.claude = email
+  }
+  if (cliOnPath("agent")) {
+    const email = getLoggedInCursorAccountEmail()
+    if (email) loggedIn.cursor = email
+  }
+  return loggedIn
+}
+
+async function checkLlmAccount() {
+  const loggedIn = probeLoggedInProviders()
+  const loggedProviders = Object.keys(loggedIn)
+  const expected = getExpectedLlm()
+
+  if (expected.provider && expected.account) {
+    const current = loggedIn[expected.provider] || null
+    if (current === expected.account) {
+      setActiveLlm(expected.provider, expected.account)
+      return
+    }
+
+    printRed(`Wrong ${expected.provider} account: this project expects "${expected.account}" but "${current || "nobody"}" is currently logged in.`)
+    const choices = []
+    if (loggedIn.cursor) choices.push({ label: `Continue with Cursor (${loggedIn.cursor})`, value: "y:cursor" })
+    if (loggedIn.claude) choices.push({ label: `Continue with Claude (${loggedIn.claude})`, value: "y:claude" })
+    choices.push({ label: `Log in as ${expected.account} (${LLM_PROVIDERS[expected.provider]?.label || expected.provider})`, value: "s" })
+    choices.push({ label: "Stop", value: "n" })
+
+    const answer = await askUserInput(
+      `This project is pinned to ${LLM_PROVIDERS[expected.provider]?.label || expected.provider} (${expected.account}). ` +
+      `Currently: Claude=${loggedIn.claude || "not logged in"}, Cursor=${loggedIn.cursor || "not logged in"}. ` +
+      `Type "y" to continue with a currently logged-in account, "s" to log in as ${expected.account} on ${expected.provider}, or "n" to stop. ` +
+      `(If the project's owner genuinely changed, update "expectedLlmProvider" / "expectedLlmAccount" in ${ORCHESTRATOR_CONFIG_PATH} yourself instead — this check never overwrites them silently.) (y/n/s) `,
+      { choices }
+    )
+    const choice = answer.trim().toLowerCase()
+    if (choice === "s" || choice.startsWith("s")) {
+      const newEmail = await attemptLogin(expected.provider, expected.provider === "claude" ? expected.account : "")
+      if (!newEmail) {
+        await abortRun("Aborting — account switch was not completed.")
+        return
+      }
+      setActiveLlm(expected.provider, newEmail)
+      return
+    }
+    if (choice === "n" || (choice.startsWith("n") && !choice.startsWith("y"))) {
+      await abortRun(`Aborting — log in as ${expected.account} on ${expected.provider}, then rerun.`)
+      return
+    }
+    if (choice.includes("cursor") && loggedIn.cursor) {
+      setActiveLlm("cursor", loggedIn.cursor)
+      return
+    }
+    if (choice.includes("claude") && loggedIn.claude) {
+      setActiveLlm("claude", loggedIn.claude)
+      return
+    }
+    if (loggedIn[expected.provider]) {
+      setActiveLlm(expected.provider, loggedIn[expected.provider])
+      return
+    }
+    const fallback = loggedIn.cursor ? "cursor" : (loggedIn.claude ? "claude" : null)
+    if (fallback) {
+      setActiveLlm(fallback, loggedIn[fallback])
+      return
+    }
+    await abortRun(`Aborting — log in as ${expected.account} on ${expected.provider}, then rerun.`)
+    return
+  }
+
+  if (loggedProviders.length === 0) {
+    const answer = await askUserInput("No LLM account is logged in on this machine. Log in now? (y/n) ", {
+      choices: [{ label: "Yes, log in", value: "y" }, { label: "No", value: "n" }],
+    })
+    if (!/^y/i.test(answer.trim())) {
+      await abortRun("Aborting — not logged in. Log in ('claude auth login' or 'agent login'), then rerun.")
+      return
+    }
+    const provider = await chooseLoginProvider()
+    if (provider === "cursor" && !cliOnPath("agent") && !ensureCursorCliOnPath()) {
+      await abortRun("Aborting — Cursor's CLI ('agent') is not installed. Install it from https://cursor.com/docs/cli, then rerun.")
+      return
+    }
+    if (provider === "claude" && !cliOnPath("claude")) {
+      await abortRun("Aborting — the 'claude' CLI is not installed. Install Claude Code, then rerun.")
+      return
+    }
+    const targetEmail = provider === "claude"
+      ? (await askUserInput("Email to log in to Claude as (leave blank to just open the login page): ")).trim()
+      : ""
+    const newEmail = await attemptLogin(provider, targetEmail)
+    if (!newEmail) {
+      await abortRun("Aborting — not logged in. Log in, then rerun.")
+      return
+    }
+    setActiveLlm(provider, newEmail)
+    pinExpectedLlm(provider, newEmail)
+    return
+  }
+
+  let provider
+  let email
+  if (loggedProviders.length === 2) {
+    const answer = await askUserInput(
+      `Both Claude (${loggedIn.claude}) and Cursor (${loggedIn.cursor}) are logged in. Which should this project's agents run through going forward? (Claude/Cursor) `,
+      { choices: [
+        { label: `Cursor (${loggedIn.cursor})`, value: "cursor" },
+        { label: `Claude (${loggedIn.claude})`, value: "claude" },
+      ] }
+    )
+    provider = answer.trim().toLowerCase().includes("cursor") ? "cursor" : "claude"
+    email = loggedIn[provider]
+  } else {
+    provider = loggedProviders[0]
+    email = loggedIn[provider]
+    const answer = await askUserInput(
+      `No expected LLM account is set for this project yet. Currently logged in to ${LLM_PROVIDERS[provider].label} as ${email} — use this account for this project going forward? ` +
+      `Type "y" to use it, "s" to switch — logs in as a different provider/account right here — or "n" to stop without switching. (y/n/s) `,
+      { choices: [{ label: "Yes", value: "y" }, { label: "No, switch", value: "s" }] }
+    )
+    const choice = answer.trim().toLowerCase()
+    if (choice === "s") {
+      const next = await chooseLoginProvider()
+      const targetEmail = next === "claude"
+        ? (await askUserInput("Email to log in to Claude as (leave blank to just open the login page): ")).trim()
+        : ""
+      if (next === provider && next === "cursor" && email) {
+        // Already on Cursor with a session — switching to a different Cursor
+        // account still needs a fresh login.
+      }
+      const newEmail = await attemptLogin(next, targetEmail)
+      if (!newEmail) {
+        await abortRun("Aborting — account switch was not completed.")
+        return
+      }
+      provider = next
+      email = newEmail
+    } else if (choice !== "y" && !choice.startsWith("y")) {
+      await abortRun("Aborting — log in to the intended account for this project, then rerun.")
+      return
+    }
+  }
+
+  setActiveLlm(provider, email)
+  pinExpectedLlm(provider, email)
+}
+
 async function main() {
-  checkPrerequisites()
-  acquireLock()
+  // Started before every other check, deliberately — checkPrerequisites()
+  // and checkLlmAccount() can both fail this early, and this is the one
+  // channel (besides the terminal, which won't exist under the eventual
+  // Electron build) that can show the human why. Nothing below can rely on
+  // a terminal being present or watched.
   await startDashboardServer()
+
+  // Prompt to initialize git if missing — version control is highly
+  // recommended for agent safety and context.
+  if (!GIT_ENABLED) {
+    banner("GIT IS NOT INITIALIZED")
+    const answer = await askUserInput(
+      "This project has no git repo. Agents work better and are safer with git (for diffs/rollbacks). " +
+      "Initialize git now? (y/N): "
+    )
+    if (answer.trim().toLowerCase() === "y") {
+      try {
+        log("Initializing git repository...")
+        execSync("git init", { stdio: "inherit" })
+        execSync("git add .", { stdio: "inherit" })
+        execSync("git commit -m \"initial commit from dev-loop setup\"", { stdio: "inherit" })
+        updateGitStatus()
+        log("Git initialized and initial commit created.")
+      } catch (e) {
+        warn(`Failed to initialize git: ${e.message}`)
+      }
+    }
+  }
+
+  // A "Session limit hit — resets X" banner is only ever meant to live for
+  // as long as an actual blockAndRetry() is waiting on it — it's cleared the
+  // moment the human responds. If the previous run got killed instead of
+  // finishing that exchange normally (Ctrl+C, crash, ...), the banner is
+  // stuck in docs/agent-status.json forever, and shows up as a confusing
+  // leftover on a fresh run that never hit any limit. Any session-limit
+  // banner still on disk at this point is necessarily stale — there is no
+  // live blockAndRetry() yet, this line runs before the loop does anything.
+  const startupStatus = readStatus()
+  if (startupStatus.sessionLimit) {
+    delete startupStatus.sessionLimit
+    writeStatus(startupStatus)
+  }
+
+  await checkPrerequisites()
+  acquireLock()
+  await checkLlmAccount()
   ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
 
   banner("DEV LOOP ORCHESTRATOR")
@@ -1713,17 +2238,6 @@ async function askClaudeForPlan({ task, prd, planPath, previousPlans, userInstru
   const prevList = previousPlans.map((p) => `- ${p.name}`).join("\n") || "(none)"
   const designGuidance = designSourceGuidance()
 
-  const args = [
-    "--model", modelFor("planning"),
-    "--permission-mode", CLAUDE_PERMISSION_MODE,
-    "--add-dir", process.cwd(),
-    "--system-prompt", "agents/orchestrator/CLAUDE.md",
-    "--print",
-    "--verbose",
-    "--output-format", "stream-json",
-  ]
-  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
-
   const input = `Follow planning rules from .rule/planning-rules.md exactly.
 
 Task selected from backlog:
@@ -1750,9 +2264,14 @@ Plan requirements:
 - Scope-Agents metadata field is load-bearing: the orchestrator will run ONLY the agents you list there (plus qa unless you deliberately omit it). Get this right — cross-check it against your own Risks section before finalizing (a backend service flagged as a risk there must be included even if you also wrote "no new endpoints expected").
 ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : ""}`
 
-  const rawStdout = await spawnClaude(args, input, { agentKey: "orchestrator", extraEnv: { CLAUDE_AGENT_ROLE: "orchestrator" } })
+  const rawStdout = await launchLlm({
+    operation: "planning",
+    systemPromptPath: "agents/orchestrator/CLAUDE.md",
+    input,
+    agentKey: "orchestrator",
+  })
   if (!rawStdout) {
-    warn("Claude unavailable for planning; using fallback plan template.")
+    warn("LLM unavailable for planning; using fallback plan template.")
     return generatePlanFallback({ task })
   }
   const stdout = recordCost("orchestrator", "Orchestrator (planning)", rawStdout)
@@ -1767,15 +2286,6 @@ ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : 
 }
 
 async function askClaudeToRevisePlan({ task, prd, planPath, currentPlan, feedback, userInstructions }) {
-  const args = [
-    "--model", modelFor("planning-revise"),
-    "--permission-mode", CLAUDE_PERMISSION_MODE,
-    "--add-dir", process.cwd(),
-    "--system-prompt", "agents/orchestrator/CLAUDE.md",
-    "--print",
-  ]
-  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
-
   const input = `Follow planning rules from .rule/planning-rules.md exactly.
 
 Revise this existing plan based on latest user feedback and latest plan-file edits.
@@ -1804,7 +2314,13 @@ Hard requirements:
 - Only add or change a "*HUMAN ANSWER:*" line for an Open Question if "User feedback for this revision cycle" above directly and specifically answers that exact question. If the feedback is generic (e.g. "no extra terminal feedback", a request to improve clarity, or anything not naming a specific question) — do NOT add or infer any "*HUMAN ANSWER:*" line for any question. A question with just its single "- Recommended: ..." line and no human-answer line is the correct, expected state until a human actually answers it — never fill that gap yourself, and never add a second line that repeats/labels the same recommendation again (e.g. a further "Recommended answer: ..." bullet).
 ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : ""}`
 
-  const stdout = await spawnClaude(args, input, { agentKey: "orchestrator", extraEnv: { CLAUDE_AGENT_ROLE: "orchestrator" } })
+  const stdout = await launchLlm({
+    operation: "planning-revise",
+    systemPromptPath: "agents/orchestrator/CLAUDE.md",
+    input,
+    outputFormat: null,
+    agentKey: "orchestrator",
+  })
   if (!stdout) return null
   return stdout.trim() || null
 }
@@ -1821,6 +2337,7 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
   while (true) {
     const answer = await askUserInput(
       `Review ${planPath}. Type APPROVED to continue, or enter feedback to revise the plan: `,
+      { choices: [{ label: "✅ APPROVED", value: "APPROVED" }] }
     )
     const normalized = answer.trim().toUpperCase()
     if (normalized === "APPROVED") {
@@ -1837,7 +2354,7 @@ async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }
     const feedback = answer.trim() || "No extra terminal feedback was given (human pressed Enter without typing anything). Re-read the latest plan file and improve clarity and completeness — this is NOT an answer to any Open Question, so do not add or infer any *HUMAN ANSWER:* line."
     const revised = await askClaudeToRevisePlan({ task, prd, planPath, currentPlan, feedback, userInstructions })
     if (!revised) {
-      warn("Could not auto-revise the plan (Claude unavailable). You can edit the plan file manually, then continue review.")
+      warn("Could not auto-revise the plan (LLM unavailable). You can edit the plan file manually, then continue review.")
       continue
     }
 
@@ -1875,11 +2392,11 @@ function simulateTickets(slug) {
 // ─── Agent runner ─────────────────────────────────────────────────────────────
 
 const BLOCK_REASONS = {
-  SESSION_LIMIT: "Claude usage/session limit hit.",
-  AUTH_ERROR: "Claude is not logged in (run 'claude /login').",
-  NOT_INSTALLED: "The 'claude' CLI could not be found on PATH.",
-  FAILED: "Claude CLI call failed (see raw output below).",
-  TIMEOUT: "The claude CLI process hung with no output and no completed response — killed after the idle timeout.",
+  SESSION_LIMIT: "LLM usage/session limit hit.",
+  AUTH_ERROR: "Not logged in to the LLM CLI for this run.",
+  NOT_INSTALLED: "The LLM CLI for this run could not be found on PATH.",
+  FAILED: "LLM CLI call failed (see raw output below).",
+  TIMEOUT: "The LLM CLI process hung with no output and no completed response — killed after the idle timeout.",
 }
 
 // Never simulate. On ANY failure to get real output from Claude — known
@@ -1931,6 +2448,10 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
   printRed(`${label}: BLOCKED — ${reason}`)
   if (raw) printRed(raw)
   printRed(`Status written to: ${statusPath}`)
+  // Not just printRed() — the dashboard's message pane only ever shows what
+  // writeAgentStatus() wrote, and under Electron there's no terminal at all
+  // for printRed() to reach.
+  writeAgentStatus(agentKey, `❌ ${label}: BLOCKED — ${reason}`)
   emitEvent(kind === "SESSION_LIMIT" ? "session-limit" : "attention-needed", agentKey, reason)
 
   // A structured field (not just the free-text `message`, which the very
@@ -1944,7 +2465,22 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
     writeStatus(status)
   }
 
-  await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `, { expectsText: false })
+  // A mid-run auth failure (session/token expired, logged out elsewhere,
+  // ...) used to just tell the human to go fix it in a terminal — the same
+  // gap checkLlmAccount() closes at startup, but here it can happen at
+  // any point mid-loop. Handle it the same way: run the login flow right
+  // through the dashboard instead of pointing at a terminal that won't
+  // exist under the eventual Electron build.
+  if (kind === "AUTH_ERROR") {
+    const newEmail = await attemptLogin(ACTIVE_PROVIDER || "claude")
+    if (newEmail) {
+      log(`Re-authenticated as ${newEmail} — retrying automatically.`)
+    } else {
+      await askUserInput(`Still not logged in. Fix it, then press Enter to retry ${label} exactly where it stopped: `, { expectsText: false })
+    }
+  } else {
+    await askUserInput(`Fix the issue above, then press Enter to retry ${label} exactly where it stopped: `, { expectsText: false })
+  }
 
   const status = readStatus()
   if (status.sessionLimit) {
@@ -1955,6 +2491,60 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
   return runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey })
 }
 
+function llmBin() {
+  return ACTIVE_PROVIDER === "cursor" ? "agent" : "claude"
+}
+
+// Builds provider-specific CLI flags + stdin. Cursor has no --system-prompt,
+// so the CLAUDE.md file is inlined at the front of the prompt. Claude keeps
+// --system-prompt / --permission-mode as before.
+function buildLlmInvocation({ operation, systemPromptPath, input, outputFormat = "stream-json", print = true }) {
+  const model = modelFor(operation)
+  let stdinText = input || ""
+
+  // Inject environment awareness — agents often hang or hallucinate if they
+  // expect git and it isn't there.
+  if (!GIT_ENABLED) {
+    stdinText = `[ENVIRONMENT: NO-GIT] This project is not a git repository. Do not attempt to run git commands. Use standard file system tools (ls, read, write) instead.\n\n${stdinText}`
+  }
+
+  if (ACTIVE_PROVIDER === "cursor") {
+    if (systemPromptPath && existsSync(systemPromptPath)) {
+      stdinText = [
+        `Follow these agent instructions exactly (from ${systemPromptPath}):`,
+        "",
+        readFileSync(systemPromptPath, "utf-8"),
+        "",
+        "---",
+        "",
+        stdinText,
+      ].join("\n")
+    }
+    const args = print
+      ? ["--print", "--force", "--trust", "--sandbox", "disabled", "--workspace", process.cwd(), "--add-dir", process.cwd(), "--model", model]
+      : ["--trust", "--workspace", process.cwd(), "--add-dir", process.cwd(), "--model", model]
+    if (outputFormat) args.push("--output-format", outputFormat)
+    return { args, stdinText }
+  }
+
+  const args = [
+    "--model", model,
+    "--permission-mode", CLAUDE_PERMISSION_MODE,
+    "--add-dir", process.cwd(),
+    "--system-prompt", systemPromptPath,
+  ]
+  if (print) args.push("--print", "--verbose")
+  if (outputFormat) args.push("--output-format", outputFormat)
+  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
+  return { args, stdinText }
+}
+
+function launchLlm({ operation, systemPromptPath, input, outputFormat = "stream-json", print = true, agentKey = "", timeoutMs = null }) {
+  const { args, stdinText } = buildLlmInvocation({ operation, systemPromptPath, input, outputFormat, print })
+  const extraEnv = agentKey ? { CLAUDE_AGENT_ROLE: agentKey } : {}
+  return spawnLlm(args, stdinText, { agentKey, extraEnv, timeoutMs })
+}
+
 // A real, successful Claude run that itself reports STATUS: BLOCKED (e.g. the
 // Security Agent found a real vulnerability) is not a technical failure to
 // retry — it's the agent correctly telling us not to proceed. Halt the whole
@@ -1962,8 +2552,8 @@ async function blockAndRetry({ systemPrompt, input, outputFile, doneMarker, labe
 class AgentBlockedError extends Error {}
 
 async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey }) {
-  const doneRegex = /^\s*STATUS\s*:\s*DONE\s*$/im
-  const blockedRegex = /^\s*STATUS\s*:\s*BLOCKED\s*$/im
+  const doneRegex = /^\s*STATUS\s*:\s*DONE/im
+  const blockedRegex = /^\s*STATUS\s*:\s*BLOCKED/im
   if (existsSync(outputFile)) {
     const existing = readFileSync(outputFile, "utf-8")
     if (existing.includes(doneMarker) || doneRegex.test(existing)) {
@@ -1972,20 +2562,16 @@ async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, ag
     }
   }
 
-  const args = [
-    "--model", modelFor(agentKey),
-    "--permission-mode", CLAUDE_PERMISSION_MODE,
-    "--add-dir", process.cwd(),
-    "--system-prompt", systemPrompt,
-    "--print",
-    "--verbose",
-    "--output-format", "stream-json",
-  ]
-  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
+  const { args, stdinText } = buildLlmInvocation({
+    operation: agentKey,
+    systemPromptPath: systemPrompt,
+    input,
+    outputFormat: "stream-json",
+  })
 
-  log(`${label}: launching...`)
+  log(`${label}: launching via ${llmBin()}...`)
   const extraEnv = agentKey ? { CLAUDE_AGENT_ROLE: agentKey } : {}
-  const rawStdout = await spawnClaude(args, input, { agentKey, extraEnv })
+  const rawStdout = await spawnLlm(args, stdinText, { agentKey, extraEnv })
 
   if (rawStdout === null) {
     return blockAndRetry({ systemPrompt, input, outputFile, doneMarker, label, agentKey })
@@ -2021,35 +2607,37 @@ async function runAgentInteractive({ systemPrompt, input, outputFile, doneMarker
     }
   }
 
+  const bin = llmBin()
   try {
-    execSync("claude --version", { stdio: "ignore" })
+    if (bin === "agent") ensureCursorCliOnPath()
+    execSync(`${bin} --version`, { stdio: "ignore" })
   } catch {
-    warn(`${label}: Claude not available — simulating output.`)
+    warn(`${label}: ${bin} not available — simulating output.`)
     simulateAgent(label, outputFile, doneMarker)
     return
   }
 
-  const args = [
-    "--model", modelFor(agentKey),
-    "--permission-mode", CLAUDE_PERMISSION_MODE,
-    "--add-dir", process.cwd(),
-    "--system-prompt", systemPrompt,
-  ]
-  if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
+  const { args, stdinText } = buildLlmInvocation({
+    operation: agentKey,
+    systemPromptPath: systemPrompt,
+    input,
+    outputFormat: null,
+    print: false,
+  })
 
-  log(`${label}: launching in interactive mode...`)
+  log(`${label}: launching ${bin} in interactive mode...`)
   log(`When the agent says STATUS: DONE, type /exit to continue.`)
 
   await new Promise((resolve) => {
     let child
     if (process.platform === "win32") {
-      const command = ["claude", ...args.map(quoteArgForCmd)].join(" ")
+      const command = [bin, ...args.map(quoteArgForCmd)].join(" ")
       child = spawn(command, { stdio: ["pipe", "inherit", "inherit"], shell: true })
     } else {
-      child = spawn("claude", args, { stdio: ["pipe", "inherit", "inherit"], shell: false })
+      child = spawn(bin, args, { stdio: ["pipe", "inherit", "inherit"], shell: false })
     }
 
-    child.stdin.write(input)
+    child.stdin.write(stdinText)
     process.stdin.resume()
     process.stdin.pipe(child.stdin)
 
@@ -2085,12 +2673,12 @@ function simulateAgent(label, outputFile, doneMarker) {
   writeFileSync(outputFile, content)
 }
 
-// Set right before spawnClaude resolves(null), so runAgent can tell a real
+// Set right before spawnLlm resolves(null), so runAgent can tell a real
 // session/usage-limit block apart from "claude not installed" or a crash.
 let lastSpawnError = null
 
 const SESSION_LIMIT_PATTERN = /hit your (?:session|usage) limit|resets?\s+\d{1,2}:\d{2}\s*(?:am|pm)\b/i
-const AUTH_ERROR_PATTERN = /\bnot logged in\b|please run\s*`?\/login`?|invalid api key/i
+const AUTH_ERROR_PATTERN = /\bnot logged in\b|please run\s*`?\/login`?|invalid api key|not authenticated|please run\s*`?agent login`?|authentication required/i
 
 // The claude CLI has been observed to print its final assistant text (often
 // STATUS: DONE/BLOCKED) and then never exit — no more output, no "result"
@@ -2114,11 +2702,14 @@ function printRed(msg) {
   process.stderr.write(`\x1b[91m${msg}\x1b[0m\n`)
 }
 
-function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
+function spawnLlm(args, stdinText, { agentKey = "", extraEnv = {}, timeoutMs = null } = {}) {
   lastSpawnError = null
+  const bin = llmBin()
+  const effectiveTimeout = timeoutMs || IDLE_TIMEOUT_MS
 
   try {
-    execSync("claude --version", { stdio: "ignore" })
+    if (bin === "agent") ensureCursorCliOnPath()
+    execSync(`${bin} --version`, { stdio: "ignore" })
   } catch {
     lastSpawnError = { kind: "NOT_INSTALLED", raw: "" }
     return Promise.resolve(null)
@@ -2133,10 +2724,10 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
   return new Promise((resolve) => {
     let child
     if (process.platform === "win32") {
-      const command = ["claude", ...args.map(quoteArgForCmd)].join(" ")
+      const command = [bin, ...args.map(quoteArgForCmd)].join(" ")
       child = spawn(command, { stdio: ["pipe", "pipe", "pipe"], shell: true, env })
     } else {
-      child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], shell: false, env })
+      child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"], shell: false, env })
     }
 
     let stderrText = ""
@@ -2163,15 +2754,16 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
       let completionGraceTimer = null
 
       const heartbeat = setInterval(() => {
+        if (pendingHumanInput) return // Don't print dots if the terminal is waiting for user input
         const idleMs = Date.now() - lastOutputAt
-        if (idleMs >= 5000 && idleMs < IDLE_TIMEOUT_MS) {
+        if (idleMs >= 5000 && idleMs < effectiveTimeout) {
           process.stdout.write(".")
         }
-        if (idleMs >= IDLE_TIMEOUT_MS && !settled) {
+        if (idleMs >= effectiveTimeout && !settled) {
           settled = true
           clearInterval(heartbeat)
-          printRed(`\n${agentKey || "claude"}: no output for ${Math.round(IDLE_TIMEOUT_MS / 60000)} min — the CLI process appears hung. Killing it.`)
-          child.kill()
+          printRed(`\n${agentKey || llmBin()}: no output for ${Math.round(effectiveTimeout / 60000)} min — the CLI process appears hung. Killing it.`)
+          killProcessTree(child)
           if (COMPLETION_MARKER_REGEX.test(assistantText)) {
             printRed("The agent had already finished its response before hanging — using that instead of waiting further.")
             resolve(JSON.stringify({ result: assistantText.trim(), usage: {}, total_cost_usd: 0, duration_ms: 0 }))
@@ -2192,6 +2784,13 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
         let event
         try { event = JSON.parse(line) } catch { return }
 
+        // Cursor emits tool_call events between assistant messages. Count
+        // them as live output so a long file-edit stretch doesn't trip the
+        // idle timeout the way a truly hung process would.
+        if (event.type === "tool_call" || event.type === "system") {
+          lastOutputAt = Date.now()
+        }
+
         if (event.type === "assistant" && Array.isArray(event.message?.content)) {
           for (const block of event.message.content) {
             if (block.type === "text" && block.text) {
@@ -2210,7 +2809,7 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
                 settled = true
                 if (completionGraceTimer) clearTimeout(completionGraceTimer)
                 clearInterval(heartbeat)
-                child.kill()
+                killProcessTree(child)
                 recordFailure(assistantText)
                 resolve(null)
                 return
@@ -2227,8 +2826,8 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
                   if (settled) return
                   settled = true
                   clearInterval(heartbeat)
-                  printRed(`\n${agentKey || "claude"}: response finished but the process didn't close within ${COMPLETION_GRACE_MS / 1000}s — recovering the completed response instead of waiting further.`)
-                  child.kill()
+                  printRed(`\n${agentKey || llmBin()}: response finished but the process didn't close within ${COMPLETION_GRACE_MS / 1000}s — recovering the completed response instead of waiting further.`)
+                  killProcessTree(child)
                   resolve(JSON.stringify({ result: assistantText.trim(), usage: {}, total_cost_usd: 0, duration_ms: 0 }))
                 }, COMPLETION_GRACE_MS)
               }
@@ -2249,7 +2848,7 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
         // A clean, finished run (e.g. a security report) can legitimately
         // contain words like "unauthorized" or "Authorization header" as its
         // subject matter — that must never be misread as a login failure.
-        if (code !== 0 || !resultEvent) { recordFailure(assistantText); resolve(null); return }
+        if (code !== 0 || !resultEvent || resultEvent.is_error) { recordFailure(assistantText); resolve(null); return }
         resolve(JSON.stringify({
           result:         resultEvent.result ?? "",
           usage:          resultEvent.usage ?? {},
@@ -2265,15 +2864,16 @@ function spawnClaude(args, stdinText, { agentKey = "", extraEnv = {} } = {}) {
 
       let settled = false
       const idleWatchdog = setInterval(() => {
+        if (pendingHumanInput) return // Don't print dots if the terminal is waiting for user input
         const idleMs = Date.now() - lastOutputAt
-        if (!quiet && idleMs >= 5000 && idleMs < IDLE_TIMEOUT_MS) {
+        if (!quiet && idleMs >= 5000 && idleMs < effectiveTimeout) {
           process.stdout.write(".")
         }
-        if (idleMs >= IDLE_TIMEOUT_MS && !settled) {
+        if (idleMs >= effectiveTimeout && !settled) {
           settled = true
           clearInterval(idleWatchdog)
-          printRed(`\n${agentKey || "claude"}: no output for ${Math.round(IDLE_TIMEOUT_MS / 60000)} min — the CLI process appears hung. Killing it.`)
-          child.kill()
+          printRed(`\n${agentKey || llmBin()}: no output for ${Math.round(effectiveTimeout / 60000)} min — the CLI process appears hung. Killing it.`)
+          killProcessTree(child)
           recordFailure(stdout, "TIMEOUT")
           resolve(null)
         }
@@ -2493,6 +3093,7 @@ async function pushAndMergeTaskBranch(task, branch, baseBranch) {
     emitEvent("waiting-approval", "orchestrator", "Merge approval")
     const answer = await askUserInput(
       `Push '${branch}' and merge it into '${baseBranch}'? Type APPROVED, or press Enter to leave it unmerged for now: `,
+      { choices: [{ label: "✅ APPROVED", value: "APPROVED" }] }
     )
     if (answer.trim().toUpperCase() !== "APPROVED") {
       log(`Leaving '${branch}' unmerged and unpushed — merge it into '${baseBranch}' yourself when ready.`)
@@ -2528,9 +3129,35 @@ function slugify(value) {
 
 async function waitForApproval(prompt) {
   while (true) {
-    const answer = await askUserInput(prompt)
+    const answer = await askUserInput(prompt, {
+      choices: [{ label: "✅ APPROVED", value: "APPROVED" }]
+    })
     if (answer.trim().toUpperCase() === "APPROVED") return
     log(`Type APPROVED to continue (got: "${answer.trim()}")`)
+  }
+}
+
+async function checkFrontendHealth() {
+  try {
+    const res = await fetch(FRONTEND_DEV_URL, { signal: AbortSignal.timeout(2000) })
+    // If we get a response, also check if it's actually Vite (and not a zombie)
+    const serverHeader = res.headers.get("server")
+    if (serverHeader && serverHeader.toLowerCase().includes("vite")) return true
+    
+    // If no Vite header, maybe it's fine (some versions don't send it or it's proxied)
+    // but if we are here and the user says it's not working, we might be hitting a zombie.
+    return res.ok
+  } catch {
+    // If 5173 is dead, check the log to see if Vite moved to a different port
+    const logPath = "docs/frontend-dev-server.log"
+    if (existsSync(logPath)) {
+      const log = readFileSync(logPath, "utf-8")
+      const match = log.match(/Local:\s+http:\/\/localhost:(\d+)\//i)
+      if (match && match[1] !== "5173") {
+        warn(`Vite is running on port ${match[1]} instead of 5173 (detected from logs).`)
+      }
+    }
+    return false
   }
 }
 
@@ -2540,11 +3167,28 @@ async function waitForApprovalWithChat({ task, tickets, planPath }) {
     return
   }
 
+  // Proactively check frontend health before asking for approval
+  const isHealthy = await checkFrontendHealth()
+  if (!isHealthy) {
+    warn(`Frontend dev server (http://localhost:5173) is not responding.`)
+    const answer = await askUserInput("Attempt to restart the frontend dev server? (Y/n): ")
+    if (answer.trim().toLowerCase() !== "n") {
+      await ensureFrontendDevServerRunning()
+      log("Restarted frontend dev server. Checking again...")
+      await new Promise(r => setTimeout(r, 2000))
+      if (!await checkFrontendHealth()) {
+        warn("Frontend still not responding. You may need to run 'npm run dev' in frontend/ manually.")
+      }
+    }
+  }
+
   log("Feature done. Type APPROVED to mark task complete, or send a command to the orchestrator.")
   emitEvent("waiting-approval", "orchestrator", "Feature-done approval")
 
   while (true) {
-    const answer = await askUserInput("orchestrator> ")
+    const answer = await askUserInput("orchestrator> ", {
+      choices: [{ label: "✅ APPROVED", value: "APPROVED" }]
+    })
     if (answer.trim().toUpperCase() === "APPROVED") return
 
     const context = `
@@ -2559,16 +3203,14 @@ When done responding, print exactly: AWAITING_APPROVAL
 Do NOT print APPROVED unless the user has explicitly said the task is complete.
 `.trim()
 
-    const args = [
-      "--model", modelFor("orchestrator-chat"),
-      "--permission-mode", CLAUDE_PERMISSION_MODE,
-      "--add-dir", process.cwd(),
-      "--system-prompt", "agents/orchestrator/CLAUDE.md",
-      "--print",
-    ]
-    if (CLAUDE_ALLOWED_TOOLS) args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS)
-
-    const stdout = await spawnClaude(args, context, { agentKey: "orchestrator" })
+    const stdout = await launchLlm({
+      operation: "orchestrator-chat",
+      systemPromptPath: "agents/orchestrator/CLAUDE.md",
+      input: context,
+      outputFormat: null,
+      agentKey: "orchestrator",
+      timeoutMs: 2 * 60 * 1000, // 2-minute timeout for chat; much faster recovery than the 10m global default
+    })
     if (stdout?.trim().toUpperCase().includes("APPROVED") && !stdout.includes("AWAITING_APPROVAL")) return
   }
 }
@@ -2768,6 +3410,10 @@ async function ensureBackendEnv(serviceDir) {
 // than a double-resolve.
 let pendingHumanInput = null
 
+// Kept in sync with ACTIVE_ACCOUNT_EMAIL by setActiveLlm() — older dashboard
+// clients still read `claudeAccount` on /status.json.
+let CLAUDE_ACCOUNT_EMAIL = null
+
 // `expectsText` tells the dashboard whether to show a text field at all.
 // Most prompts genuinely want typed content (feedback, "APPROVED", a real
 // config value) — those default to true. The couple of "fix it, then press
@@ -2775,7 +3421,13 @@ let pendingHumanInput = null
 // shell command) never read the answer text at all, just that *something*
 // was pressed — showing an empty textbox next to a confusingly-named "Just
 // Enter" button there was genuinely misleading, not just ugly.
-function askUserInput(prompt, { expectsText = true } = {}) {
+// `choices` is purely a dashboard affordance — an optional array of
+// { label, value }, rendered as one-click buttons next to the free-text box
+// instead of making the human type the exact expected word ("y"/"s"/...).
+// The terminal side is unaffected (still a plain rl.question); typing the
+// raw value in either place resolves the same way, since a button click is
+// just sendRespond(value) under the hood (see agent-dashboard.html).
+function askUserInput(prompt, { expectsText = true, choices = null } = {}) {
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout })
     let settled = false
@@ -2784,10 +3436,18 @@ function askUserInput(prompt, { expectsText = true } = {}) {
       settled = true
       pendingHumanInput = null
       process.stdout.write(RESET)
+      
+      // If we are settling from the dashboard, the terminal might still be 
+      // showing the prompt and waiting for its own Enter. Force clear the 
+      // line regardless of TTY status if possible.
+      try {
+        process.stdout.write("\r\x1b[2K\r") // ANSI escape to clear line and return cursor to start
+      } catch { /* ignore */ }
+      
       rl.close()
       resolve(answer)
     }
-    pendingHumanInput = { prompt, expectsText, respond: settle }
+    pendingHumanInput = { prompt, expectsText, choices, respond: settle }
     rl.question(prompt, settle)
     process.stdout.write("\x1b[91m")
   })

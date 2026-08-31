@@ -153,7 +153,10 @@ The worked example in each template is a starting point, not a contract. If the 
       "createBranchPerTask": true,
       "backendServices": ["api-gateway", "example-service"],
       "linearEnabled": true,
-      "designSource": "NONE"
+      "designSource": "NONE",
+      "expectedLlmProvider": "claude",
+      "expectedLlmAccount": "adi@emotionlogic.ai",
+      "expectedClaudeAccount": "adi@emotionlogic.ai"
     }
     ```
     - `autoApprovePlans` — `true` if Approval mode was answered "ungated" (see that section), `false` if "gated". `development/dev-loop.js` also self-adopts this from `.setup-progress.md` on its own first run if this key is still `false`/missing, so getting it right here isn't strictly load-bearing — but don't leave it unset if the answer is already known.
@@ -163,7 +166,8 @@ The worked example in each template is a starting point, not a contract. If the 
     - `backendServices` — **only if multi-agent with a backend** (Q9); the exact list of backend service directory names this project will have under `backend/`, matching `agents/backend/CLAUDE.md`'s own `## Services` list exactly (same names, same order doesn't matter). This is the single source of truth `development/dev-loop.js`'s `discoverBackendServices()` reads to know which Backend Agent(s) to launch for a scaffold task **before that service's directory exists on disk yet** — it used to instead scrape service names out of the backlog's own `scope:` fields, which broke for real once that free-text field got corrupted (a garbled line invented a fake service and put a bogus node on the dashboard). Get every service name here right at setup time and this class of bug can't happen — leave `[]` (or omit) for a single-backend or no-backend project, where directory-scanning alone is already unambiguous.
     - `linearEnabled` — `true`/`false` matching whether Linear is the issue tracker (Q9).
     - `designSource` — `"FIGMA"` / `"AISTUDIO"` / `"DESIGNER_AGENT"` / `"NONE"` matching Q9's design-source branch exactly, not left as a placeholder. `"DESIGNER_AGENT"` is what makes `development/dev-loop.js` actually launch `agents/designer/CLAUDE.md` once, automatically, before the first backlog task — get this value right or that step silently never runs.
-    This file is plain, committed JSON — deliberately not an env file, since none of these six values are secrets or read by the product's own runtime code, only by the orchestrator script.
+    - `expectedLlmProvider` / `expectedLlmAccount` — which CLI (`"claude"` or `"cursor"`) and which login email this project's agents should run under. `development/dev-loop.js` re-checks both against whoever is actually logged in on every run (`checkLlmAccount()`) and blocks (with an override prompt) on a mismatch. If both CLIs are logged in and nothing is pinned yet, it asks which to use, then writes these fields. `expectedClaudeAccount` is a legacy alias still read as provider=`claude`; new projects should set the two `expectedLlm*` keys and only keep `expectedClaudeAccount` when the provider is Claude.
+    This file is plain, committed JSON — deliberately not an env file, since none of these values are secrets or read by the product's own runtime code, only by the orchestrator script.
 
 ### On `docs/api-contract/*.yaml`
 These files are not part of the template scaffolding at all — no phase above touches them. They're a normal **build artifact**: per `agents/frontend/CLAUDE.md`, the Frontend Agent writes one `docs/api-contract/api-contract.<service-name>.yaml` per service as a byproduct of implementing each real feature ticket, only for the service(s) that ticket touches. Once `agents/frontend/CLAUDE.md` (Phase C) is correctly filled with the new project's real service names, the existing reference-project contract files under `docs/api-contract/` can simply be deleted — they will be regenerated automatically the first time a ticket reaches the Frontend Agent. Do not attempt to pre-generate them during setup.

@@ -231,6 +231,21 @@
   #respond-box:not(.text-mode) #respond-send { display: none; }
   #respond-box:not(.enter-mode) #respond-continue { display: none; }
   #respond-prompt { font-size: 12px; color: var(--text); margin-bottom: 8px; line-height: 1.5; white-space: pre-wrap; }
+  #respond-choices { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  #respond-choices:empty { display: none; margin-bottom: 0; }
+  .respond-choice-btn {
+    font-size: 12px; font-weight: 700;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+    color: #4ade80;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+  .respond-choice-btn:hover { background: rgba(34, 197, 94, 0.22); border-color: #4ade80; }
+  .respond-choice-btn:disabled { opacity: 0.5; cursor: default; }
   #respond-controls { display: flex; gap: 6px; }
   #respond-text {
     flex: 1; min-width: 0;
@@ -255,6 +270,8 @@
   #respond-continue { flex: 1; color: var(--orchestrator); border-color: rgba(240, 180, 41, 0.4); }
   #respond-send:hover, #respond-continue:hover { border-color: var(--orchestrator); }
   #respond-send:disabled, #respond-continue:disabled { opacity: 0.5; cursor: default; }
+  #respond-cancel-login { color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
+  #respond-cancel-login:hover { background: rgba(248, 113, 113, 0.12); border-color: #f87171; }
 
   .progress-badge {
     display: inline-block;
@@ -345,6 +362,19 @@
     margin: 0;
   }
 
+  /* Empty (and collapses via :empty) until checkLlmAccount() confirms which
+     Claude or Cursor account this run is on — see poll(). */
+  #claude-account-badge {
+    font-size: 11px; font-weight: 600; letter-spacing: normal;
+    color: var(--accent, #7dd3fc);
+    background: rgba(125, 211, 252, 0.12);
+    border: 1px solid rgba(125, 211, 252, 0.3);
+    border-radius: 10px;
+    padding: 2px 8px;
+    margin-left: 8px;
+  }
+  #claude-account-badge:empty { display: none; }
+
   /* A small always-visible toggle, not a blocking overlay — the page and
      everything on it is usable immediately; this just switches voice cues
      on/off, same as any mute button. The very first click still doubles as
@@ -364,7 +394,7 @@
 </style>
 </head>
 <body>
-<h1>👑 AGENT DASHBOARD</h1>
+<h1>👑 AGENT DASHBOARD <span id="claude-account-badge" title="LLM provider and account this run is authenticated as"></span></h1>
 <div id="layout">
   <div id="stage">
     <div id="ring">
@@ -382,10 +412,12 @@
       <div id="session-limit-banner"></div>
       <div id="respond-box">
         <div id="respond-prompt"></div>
+        <div id="respond-choices"></div>
         <div id="respond-controls">
           <input type="text" id="respond-text" placeholder="Type feedback/notes…" autocomplete="off">
           <button id="respond-send">Send</button>
           <button id="respond-continue">▶ Continue</button>
+          <button id="respond-cancel-login" style="display:none">✕ Cancel</button>
         </div>
       </div>
     </div>
@@ -682,21 +714,35 @@ soundToggleBtn.addEventListener("click", () => {
 async function sendRespond(text) {
   const sendBtn = document.getElementById("respond-send");
   const continueBtn = document.getElementById("respond-continue");
+  const choiceBtns = document.querySelectorAll(".respond-choice-btn");
+  const respondText = document.getElementById("respond-text");
+  
   sendBtn.disabled = true;
   continueBtn.disabled = true;
+  choiceBtns.forEach((b) => { b.disabled = true; });
+  
   try {
-    await fetch("/respond", {
+    console.log("Sending input to orchestrator:", text);
+    const res = await fetch("/respond", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    document.getElementById("respond-text").value = "";
-  } catch {
-    // Dashboard server hiccup — the terminal prompt is still live and can
-    // still be answered directly there; nothing more to do here.
+    
+    if (res.ok) {
+      respondText.value = "";
+      respondText.placeholder = "Sent!";
+      setTimeout(() => { respondText.placeholder = "Type feedback/notes…"; }, 2000);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert("Error: " + (data.error || "Server returned " + res.status));
+    }
+  } catch (e) {
+    alert("Dashboard connection error: " + e.message);
   } finally {
     sendBtn.disabled = false;
     continueBtn.disabled = false;
+    choiceBtns.forEach((b) => { b.disabled = false; });
   }
 }
 document.getElementById("respond-send").addEventListener("click", () => {
@@ -705,9 +751,44 @@ document.getElementById("respond-send").addEventListener("click", () => {
 document.getElementById("respond-continue").addEventListener("click", () => {
   sendRespond("");
 });
+// Kills the stuck `claude auth login` child on the server (see dev-loop.js's
+// /cancel-login route) — the only way to escape a hung/wrong-browser login
+// without a terminal. dev-loop.js's checkLlmAccount()/attemptLogin() then
+// offers a retry through the normal respond-box, not another dead end.
+document.getElementById("respond-cancel-login").addEventListener("click", () => {
+  fetch("/cancel-login", { method: "POST" }).catch(() => {});
+});
 document.getElementById("respond-text").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendRespond(e.target.value);
 });
+
+// One-click buttons for prompts that offer a fixed set of answers (e.g.
+// dev-loop.js's account-confirmation "y"/"s" choices) — sendRespond(value)
+// is exactly what typing that value + Send would do, this just saves the
+// typing. The free-text box + Send/Continue stay visible alongside these
+// for anything not covered by a button (e.g. typing "n" to decline).
+function renderRespondChoices(choices, promptText) {
+  const el = document.getElementById("respond-choices");
+  el.innerHTML = "";
+  
+  const effectiveChoices = Array.isArray(choices) ? [...choices] : [];
+  
+  // Fallback for active runs that haven't restarted dev-loop.js yet:
+  // If the prompt explicitly asks for "APPROVED" but the server didn't
+  // send any choice buttons, inject it automatically.
+  if (effectiveChoices.length === 0 && promptText && promptText.includes("APPROVED")) {
+    effectiveChoices.push({ label: "✅ APPROVED", value: "APPROVED" });
+  }
+
+  if (!effectiveChoices.length) return;
+  for (const { label, value } of effectiveChoices) {
+    const btn = document.createElement("button");
+    btn.className = "respond-choice-btn";
+    btn.textContent = label;
+    btn.addEventListener("click", () => sendRespond(value));
+    el.appendChild(btn);
+  }
+}
 
 document.getElementById("iframe-refresh").addEventListener("click", async () => {
   const btn = document.getElementById("iframe-refresh");
@@ -984,11 +1065,19 @@ async function poll() {
     const data = await res.json();
     dot.classList.add("live");
 
+    // Which Claude/Cursor account this run is authenticated as — set once
+    // checkLlmAccount() confirms it.
+    const providerLabel = data.llmProvider === "cursor" ? "Cursor" : data.llmProvider === "claude" ? "Claude" : "";
+    const account = data.llmAccount || data.claudeAccount || "";
+    document.getElementById("claude-account-badge").textContent = providerLabel && account
+      ? `${providerLabel} · ${account}`
+      : account;
+
     // Live text/highlight — refreshed by every output line, tracks who's
     // talking right now.
     const category = data.category || "orchestrator";
     setActiveCategory(category, data.keys);
-    thinkingPaused = !!(data.lastEvent && PAUSE_ON_EVENTS.has(data.lastEvent.event));
+    thinkingPaused = !!(data.awaitingInput || (data.lastEvent && PAUSE_ON_EVENTS.has(data.lastEvent.event)));
     document.getElementById("active-message").textContent = data.message || "…";
     document.getElementById("active-updated").textContent = data.updatedAt
       ? "Updated " + new Date(data.updatedAt).toLocaleTimeString()
@@ -1025,15 +1114,23 @@ async function poll() {
       // Continue button, no textbox, so it's not implying typing matters.
       respondBox.classList.toggle("text-mode", data.awaitingInput.expectsText !== false);
       respondBox.classList.toggle("enter-mode", data.awaitingInput.expectsText === false);
+      // Only for the standing "claude auth login is running" state (see
+      // dev-loop.js's /status.json route) — a stuck login (wrong browser,
+      // closed tab too early, ...) otherwise has no way out of this box
+      // short of killing the whole process from a terminal.
+      document.getElementById("respond-cancel-login").style.display = data.awaitingInput.cancellable ? "" : "none";
       if (respondPrompt.dataset.prompt !== data.awaitingInput.prompt) {
         respondPrompt.dataset.prompt = data.awaitingInput.prompt;
         respondPrompt.textContent = data.awaitingInput.prompt;
+        renderRespondChoices(data.awaitingInput.choices, data.awaitingInput.prompt);
       }
     } else {
       respondBox.classList.remove("active", "text-mode", "enter-mode");
+      document.getElementById("respond-cancel-login").style.display = "none";
       if (respondPrompt.dataset.prompt) {
         respondPrompt.dataset.prompt = "";
         document.getElementById("respond-text").value = "";
+        renderRespondChoices(null);
       }
     }
 
@@ -1057,7 +1154,16 @@ async function poll() {
     }
 
   } catch {
+    // The orchestrator process (and with it, this very dashboard server) can
+    // legitimately exit mid-run — e.g. abortRun() in dev-loop.js after the
+    // human answers "n" to the account-confirmation prompt. Without this,
+    // the tab just silently stops updating with no visible sign anything
+    // happened; the last real message (written via writeAgentStatus() right
+    // before exit) stays on screen, so make it unmistakable the process
+    // itself is gone, not just slow.
     dot.classList.remove("live");
+    document.getElementById("active-updated").textContent = "Orchestrator process stopped — check the terminal, then rerun.";
+    document.getElementById("respond-box").classList.remove("active");
   }
 
   // Task-history data is fetched straight from its own file under docs/cost/

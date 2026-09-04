@@ -176,6 +176,7 @@
     cursor: pointer;
   }
   .right-tab.active { color: var(--text); border-color: var(--orchestrator); box-shadow: 0 0 10px rgba(240, 180, 41, 0.25); }
+  .right-tab:disabled { opacity: 0.4; cursor: default; }
   .right-tab-panel { display: none; flex-direction: column; min-height: 0; flex: 1; }
   .right-tab-panel.active { display: flex; }
   #status-card {
@@ -247,6 +248,8 @@
   .respond-choice-btn:hover { background: rgba(34, 197, 94, 0.22); border-color: #4ade80; }
   .respond-choice-btn:disabled { opacity: 0.5; cursor: default; }
   #respond-controls { display: flex; gap: 6px; }
+  #respond-error { font-size: 12px; color: #f87171; margin-top: 6px; }
+  #respond-error:empty { display: none; }
   #respond-text {
     flex: 1; min-width: 0;
     font-size: 13px;
@@ -419,12 +422,13 @@
           <button id="respond-continue">▶ Continue</button>
           <button id="respond-cancel-login" style="display:none">✕ Cancel</button>
         </div>
+        <div id="respond-error"></div>
       </div>
     </div>
 
     <div id="right-tabs">
       <button class="right-tab active" id="tab-cost" data-panel="panel-cost">📜 Cost</button>
-      <button class="right-tab" id="tab-liveapp" data-panel="panel-liveapp">🌐 Live App</button>
+      <button class="right-tab" id="tab-liveapp" data-panel="panel-liveapp" disabled title="Waiting for the frontend dev server to respond…">🌐 Live App</button>
       <button class="right-tab" id="tab-design" data-panel="panel-design" style="display:none">🖌️ Design</button>
     </div>
 
@@ -446,7 +450,11 @@
         http://localhost:5173
         <button id="iframe-refresh" class="panel-refresh" title="Reload the preview">↻ Refresh</button>
       </div>
-      <iframe class="panel-frame" id="app-frame" src="http://localhost:5173" title="Live app preview"></iframe>
+      <!-- No src here — set once frontendReady is confirmed (see poll()'s
+           own handling below), not eagerly on page load, so this never
+           connects to whatever happens to be listening on the port before
+           there's any real signal it's this project's frontend. -->
+      <iframe class="panel-frame" id="app-frame" title="Live app preview"></iframe>
     </div>
 
     <div class="right-tab-panel" id="panel-design">
@@ -459,7 +467,7 @@
   </div>
 </div>
 
-<button id="sound-toggle">🔇 Enable voice cues</button>
+<button id="sound-toggle">🔊 Voice cues on</button>
 
 <script>
 // Primary ring: one portrait node per category, "backend" standing in for
@@ -669,7 +677,15 @@ function audioFileFor(event, category) {
   return AUDIO_MAP[event] || null;
 }
 
-let soundEnabled = false;
+// On by default — the app's own main.js sets Chromium's autoplay-policy to
+// no-user-gesture-required specifically so this works without a click
+// first; a plain web page couldn't default to true here (autoplay would
+// just silently fail until a real click happened), but this is loaded
+// inside our own Electron <webview>, not the open web. The button is still
+// there as an explicit off switch, and its label always matches this
+// variable exactly — there is exactly one place either changes (the click
+// handler below), so they can't drift out of sync.
+let soundEnabled = true;
 const audioCache = {};
 // Track whichever cue is currently playing so a new one can cut it off first.
 // Without this, waking the machine after it slept lets the browser's throttled
@@ -716,29 +732,37 @@ async function sendRespond(text) {
   const continueBtn = document.getElementById("respond-continue");
   const choiceBtns = document.querySelectorAll(".respond-choice-btn");
   const respondText = document.getElementById("respond-text");
-  
+  const errorEl = document.getElementById("respond-error");
+
   sendBtn.disabled = true;
   continueBtn.disabled = true;
   choiceBtns.forEach((b) => { b.disabled = true; });
-  
+  errorEl.textContent = "";
+
   try {
-    console.log("Sending input to orchestrator:", text);
     const res = await fetch("/respond", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    
+
     if (res.ok) {
       respondText.value = "";
       respondText.placeholder = "Sent!";
       setTimeout(() => { respondText.placeholder = "Type feedback/notes…"; }, 2000);
     } else {
+      // An inline message, not alert() — a blocking native dialog for what's
+      // usually a harmless race (e.g. a double-click landing after the
+      // prompt it answered already got resolved another way) was jarring
+      // out of proportion to the actual problem. Auto-clears; the box
+      // itself already reflects the real current state on the next poll.
       const data = await res.json().catch(() => ({}));
-      alert("Error: " + (data.error || "Server returned " + res.status));
+      errorEl.textContent = data.error || `Server returned ${res.status}`;
+      setTimeout(() => { errorEl.textContent = ""; }, 4000);
     }
   } catch (e) {
-    alert("Dashboard connection error: " + e.message);
+    errorEl.textContent = `Dashboard connection error: ${e.message}`;
+    setTimeout(() => { errorEl.textContent = ""; }, 4000);
   } finally {
     sendBtn.disabled = false;
     continueBtn.disabled = false;
@@ -1073,6 +1097,27 @@ async function poll() {
       ? `${providerLabel} · ${account}`
       : account;
 
+    // "Live App" tab stays disabled (and the iframe unset) until
+    // dev-loop.js's own frontendReady check has actually succeeded at
+    // least once — see /status.json's own comment for what this can and
+    // can't guarantee (it can't tell this project's dev server apart from
+    // an unrelated one left running on the same port).
+    const liveAppTab = document.getElementById("tab-liveapp");
+    if (data.frontendReady && liveAppTab.disabled) {
+      liveAppTab.disabled = false;
+      liveAppTab.title = "";
+      document.getElementById("app-frame").src = "http://localhost:5173";
+    } else if (!data.frontendReady && !liveAppTab.disabled) {
+      liveAppTab.disabled = true;
+      liveAppTab.title = "Waiting for the frontend dev server to respond…";
+      document.getElementById("app-frame").removeAttribute("src");
+      // Switch back to the Cost tab if Live App was the active one — an
+      // active-but-disabled tab with no content behind it is confusing.
+      if (liveAppTab.classList.contains("active")) {
+        document.getElementById("tab-cost").click();
+      }
+    }
+
     // Live text/highlight — refreshed by every output line, tracks who's
     // talking right now.
     const category = data.category || "orchestrator";
@@ -1155,14 +1200,19 @@ async function poll() {
 
   } catch {
     // The orchestrator process (and with it, this very dashboard server) can
-    // legitimately exit mid-run — e.g. abortRun() in dev-loop.js after the
-    // human answers "n" to the account-confirmation prompt. Without this,
-    // the tab just silently stops updating with no visible sign anything
-    // happened; the last real message (written via writeAgentStatus() right
-    // before exit) stays on screen, so make it unmistakable the process
-    // itself is gone, not just slow.
+    // legitimately exit — a deliberate Stop click (Electron's own "■ Stop"
+    // button, which deliberately stays on this screen instead of navigating
+    // away — see renderer.js), abortRun() in dev-loop.js after a declined
+    // account-confirmation prompt, a crash, or finishing the whole backlog.
+    // Without this, the tab just silently stops updating with no visible
+    // sign anything happened, AND whichever agent was active when the
+    // connection dropped stayed lit up glowing forever — make both the
+    // connection loss AND the "nothing is actually running" state
+    // unmistakable, instead of a frozen page pretending to still be live.
     dot.classList.remove("live");
-    document.getElementById("active-updated").textContent = "Orchestrator process stopped — check the terminal, then rerun.";
+    document.querySelectorAll(".node.active").forEach((el) => el.classList.remove("active"));
+    document.querySelectorAll(".beam.active").forEach((el) => el.classList.remove("active"));
+    document.getElementById("active-updated").textContent = "Orchestrator process stopped.";
     document.getElementById("respond-box").classList.remove("active");
   }
 

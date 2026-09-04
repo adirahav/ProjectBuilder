@@ -148,39 +148,52 @@ const orchestratorConfig = loadOrchestratorConfig()
 // loop moves on to the next task. Checked once, at load time, since whether
 // a repo exists here isn't expected to change mid-run.
 let GIT_ENABLED = existsSync(".git")
-let CREATE_BRANCH_PER_TASK = GIT_ENABLED && (
-  process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
-    ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
-    : orchestratorConfig.createBranchPerTask !== false
-)
 
 function updateGitStatus() {
   GIT_ENABLED = existsSync(".git")
-  CREATE_BRANCH_PER_TASK = GIT_ENABLED && (
-    process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")
-      ? /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
-      : orchestratorConfig.createBranchPerTask !== false
-  )
 }
+
+// These three gates are read FRESH from orchestrator.config.json on every
+// call, not cached once at startup — the Electron app's "⚙️ Edit Setup"
+// panel at the dashboard stage (see electron/main.js's write-live-gates
+// handler) writes straight into that file while dev-loop.js is already
+// running, and a human flipping a gate mid-run expects the very next check
+// to honor it, not whatever was true when the process started. A CLI
+// flag/env var still overrides the file entirely for a one-off run — that
+// override is a per-process launch decision, not something meant to be
+// edited live, so it stays a one-time read.
 
 // When true, the plan-review gate never stops to wait on a human — it
 // accepts the orchestrator's own "- Recommended: ..." answer on every Open
 // Question and proceeds automatically. Questions are still asked/answered IN
 // the plan file itself (the orchestrator still reasons through them) — this
 // only skips the terminal STOP-AND-ASK wait for a human to type APPROVED.
-// A CLI flag/env var can still override the config file for a one-off run.
-const AUTO_APPROVE_PLANS = process.env.AUTO_APPROVE_PLANS != null || getArg("--auto-approve-plans")
-  ? /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_PLANS || getArg("--auto-approve-plans"))
-  : Boolean(orchestratorConfig.autoApprovePlans)
+function getAutoApprovePlans() {
+  if (process.env.AUTO_APPROVE_PLANS != null || getArg("--auto-approve-plans")) {
+    return /^(1|true|yes)$/i.test(process.env.AUTO_APPROVE_PLANS || getArg("--auto-approve-plans"))
+  }
+  return Boolean(loadOrchestratorConfig().autoApprovePlans)
+}
 
 // Separate from AUTO_APPROVE_PLANS on purpose — merging into the base branch
 // is a distinct decision from plan/feature approval (it's the one that
 // actually changes the branch the human is sitting on), so it gets its own
 // opt-in flag rather than being silently bundled into the other one. False
 // (always ask) unless explicitly turned on.
-const AUTO_MERGE_TASKS = process.env.AUTO_MERGE_TASKS != null || getArg("--auto-merge-tasks")
-  ? /^(1|true|yes)$/i.test(process.env.AUTO_MERGE_TASKS || getArg("--auto-merge-tasks"))
-  : Boolean(orchestratorConfig.autoMergeTasks)
+function getAutoMergeTasks() {
+  if (process.env.AUTO_MERGE_TASKS != null || getArg("--auto-merge-tasks")) {
+    return /^(1|true|yes)$/i.test(process.env.AUTO_MERGE_TASKS || getArg("--auto-merge-tasks"))
+  }
+  return Boolean(loadOrchestratorConfig().autoMergeTasks)
+}
+
+function getCreateBranchPerTask() {
+  if (!GIT_ENABLED) return false
+  if (process.env.CREATE_BRANCH_PER_TASK != null || getArg("--create-branch-per-task")) {
+    return /^(1|true|yes)$/i.test(process.env.CREATE_BRANCH_PER_TASK || getArg("--create-branch-per-task"))
+  }
+  return loadOrchestratorConfig().createBranchPerTask !== false
+}
 
 // Separate from AUTO_APPROVE_PLANS too — the Designer agent's output is a
 // one-time, project-wide visual decision every screen built afterward has to
@@ -204,6 +217,10 @@ const LAST_TASK_COST_PATH = "docs/cost/last-task.json"
 // dashboard's task-history list. Distinct from LAST_TASK_COST_PATH (which
 // holds the full per-agent breakdown for just the most recent task).
 const TASK_HISTORY_PATH = "docs/cost/task-history.json"
+// Staging area for an in-progress task's cost log — written to disk after
+// EVERY agent call so the current task's cost isn't lost if the orchestrator
+// crashes or is killed (e.g. session-limit block / manual restart).
+const COST_LOG_TMP_PATH = "docs/cost/.cost-log.json"
 const BACKLOG_FILE = `${PLAN_DIR}/000-backlog.md`
 const LATEST_PLAN_FILE = "docs/LAST_PLAN.md"
 const STATE_DIR = "docs/task-state"
@@ -372,6 +389,15 @@ function recordCost(role, label, rawStdout) {
     costUsd:         parsed.total_cost_usd ?? 0,
     durationMs:      parsed.duration_ms ?? 0,
   })
+  
+  // Persist incrementally to disk so costs aren't lost on crash/restart.
+  try {
+    ensureDirFor(COST_LOG_TMP_PATH)
+    writeFileSync(COST_LOG_TMP_PATH, JSON.stringify(costLog, null, 2), "utf-8")
+  } catch (e) {
+    warn(`Could not persist incremental cost log: ${e.message}`)
+  }
+
   // NOT writeLastTaskCost() here — the dashboard's cost card is meant to
   // show a completed task's final total, not a live-growing partial number
   // for whichever task is still in progress (that number isn't the real
@@ -550,6 +576,11 @@ function printCostTable(taskLabel) {
   writeLastTaskCost(taskLabel)
   appendTaskHistory(taskLabel, totalCost, totalCost * USD_TO_NIS, costLog.length)
   costLog = []
+  
+  // Task is complete — clear the incremental log.
+  if (existsSync(COST_LOG_TMP_PATH)) {
+    try { rmSync(COST_LOG_TMP_PATH) } catch { /* ignore */ }
+  }
 }
 
 // ─── Live agent-status dashboard ─────────────────────────────────────────────
@@ -897,6 +928,12 @@ function startDashboardServer() {
         claudeAccount: ACTIVE_ACCOUNT_EMAIL,
         llmProvider: ACTIVE_PROVIDER,
         llmAccount: ACTIVE_ACCOUNT_EMAIL,
+        // Lets the dashboard's "Live App" tab stay disabled until there's an
+        // actual real check behind it, instead of always being clickable
+        // and pointing at localhost:5173 whether or not anything of this
+        // project's is actually answering there yet (see FRONTEND_READY's
+        // own comment for what this can and can't guarantee).
+        frontendReady: FRONTEND_READY,
       }))
       return
     }
@@ -1215,8 +1252,27 @@ function getLoggedInCursorAccountEmail() {
   }
 }
 
+// Returns a GitHub *username*, not an email — `gh auth status` is the only
+// scriptable identity signal available (Copilot CLI itself has no `auth
+// status`/JSON output; see LLM_PROVIDERS.githubCopilot's comment). Confirmed
+// shape: `gh auth status --json hosts` -> {"hosts":{"github.com":[{"active":
+// true,"login":"...","state":"error"|absent-when-healthy,...}]}}. Only the
+// active entry counts, and only when it isn't reporting an auth error.
+function getLoggedInGithubCopilotAccount() {
+  try {
+    const out = execSync("gh auth status --json hosts", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const entries = JSON.parse(out)?.hosts?.["github.com"] || []
+    const active = entries.find((e) => e.active)
+    return active && !active.error && active.state !== "error" ? (active.login || null) : null
+  } catch {
+    return null
+  }
+}
+
 function getLoggedInEmail(provider) {
-  return provider === "cursor" ? getLoggedInCursorAccountEmail() : getLoggedInClaudeAccountEmail()
+  if (provider === "cursor") return getLoggedInCursorAccountEmail()
+  if (provider === "githubCopilot") return getLoggedInGithubCopilotAccount()
+  return getLoggedInClaudeAccountEmail()
 }
 
 function getExpectedLlm() {
@@ -1297,6 +1353,19 @@ const LLM_PROVIDERS = {
     bin: "agent",
     loginArgs: () => ["login"],
   },
+  // Deliberately NOT a third entry here: this registry doubles as the
+  // execution-engine selector (see runAgentBin()/ACTIVE_PROVIDER below) —
+  // whichever key gets pinned as expectedLlmProvider is what dev-loop.js
+  // actually spawns agents through. GitHub Copilot CLI (`copilot`) has no
+  // documented headless/non-interactive invocation at all (unlike Cursor's
+  // `agent -p`), so there is no real execution path for it to select. See
+  // getLoggedInGithubCopilotAccount() below — GitHub Copilot is detected
+  // for IDENTITY purposes only, in the setup wizard, never pinned as
+  // expectedLlmProvider here. Adding it to this registry would silently
+  // make ACTIVE_PROVIDER fall through to "claude" for real execution
+  // (runAgentBin()'s ternary only special-cases "cursor") while claiming
+  // to run through GitHub Copilot — exactly the kind of quiet, misleading
+  // bug this comment exists to head off.
 }
 
 // Runs a provider's login command and relays its output into the
@@ -1429,6 +1498,11 @@ function probeLoggedInProviders() {
     const email = getLoggedInCursorAccountEmail()
     if (email) loggedIn.cursor = email
   }
+  // GitHub Copilot is deliberately NOT probed here — this function feeds
+  // checkLlmAccount()'s pinning/execution-selection flow, and there is no
+  // real execution path for Copilot CLI to select (see LLM_PROVIDERS'
+  // comment above). getLoggedInGithubCopilotAccount() is still used, just
+  // only from the setup wizard's separate identity-only detection step.
   return loggedIn
 }
 
@@ -1577,6 +1651,19 @@ async function main() {
   // Electron build) that can show the human why. Nothing below can rely on
   // a terminal being present or watched.
   await startDashboardServer()
+  
+  // Recover costs from a previous (crashed/restarted) run if possible.
+  if (existsSync(COST_LOG_TMP_PATH)) {
+    try {
+      const saved = JSON.parse(readFileSync(COST_LOG_TMP_PATH, "utf-8"))
+      if (Array.isArray(saved)) {
+        costLog = saved
+        log(`Recovered ${costLog.length} agent cost record(s) from previous run.`)
+      }
+    } catch (e) {
+      warn(`Could not recover cost log: ${e.message}`)
+    }
+  }
 
   // Prompt to initialize git if missing — version control is highly
   // recommended for agent safety and context.
@@ -1584,7 +1671,8 @@ async function main() {
     banner("GIT IS NOT INITIALIZED")
     const answer = await askUserInput(
       "This project has no git repo. Agents work better and are safer with git (for diffs/rollbacks). " +
-      "Initialize git now? (y/N): "
+      "Initialize git now? (y/N): ",
+      { choices: [{ label: "Yes, initialize git", value: "y" }, { label: "No", value: "n" }] }
     )
     if (answer.trim().toLowerCase() === "y") {
       try {
@@ -1618,25 +1706,29 @@ async function main() {
   acquireLock()
   await checkLlmAccount()
   ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
+  startFrontendHealthPolling()
 
   banner("DEV LOOP ORCHESTRATOR")
   emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
-  // Sacred-main and no-git both mean: do not create a per-task branch.
-  // CREATE_BRANCH_PER_TASK is already forced off when there's no .git;
-  // main/master additionally skips even if the config asked for branches,
-  // instead of refusing to run at all.
-  const createBranchPerTask = CREATE_BRANCH_PER_TASK
+  // Startup banner only — informational, uses whatever the setting is at
+  // this exact moment. The real per-task decision is recomputed fresh
+  // inside the loop below (getCreateBranchPerTask(), same reasoning as
+  // getAutoApprovePlans()/getAutoMergeTasks() above it), so a change made
+  // through the dashboard's "⚙️ Edit Setup" live-gates panel mid-run takes
+  // effect on the very next task picked up, not just the next dev-loop.js
+  // process.
+  const createBranchPerTaskAtStartup = getCreateBranchPerTask()
     && BASE_BRANCH !== "main"
     && BASE_BRANCH !== "master"
-  if (GIT_ENABLED && (BASE_BRANCH === "main" || BASE_BRANCH === "master") && CREATE_BRANCH_PER_TASK) {
+  if (GIT_ENABLED && (BASE_BRANCH === "main" || BASE_BRANCH === "master") && getCreateBranchPerTask()) {
     warn(`Current branch is '${BASE_BRANCH}' — skipping per-task branch creation. main/master is sacred: this loop will not branch from or merge into it. Tasks will work on '${BASE_BRANCH}' directly.`)
   }
   log(
     GIT_ENABLED
       ? `Base branch: '${BASE_BRANCH}'` +
-          (createBranchPerTask
+          (createBranchPerTaskAtStartup
             ? " — every task branches from here and merges back here, only after your approval."
             : " — tasks commit directly onto this branch, no per-task branch/merge this run.")
       : "No git repo — agents write files straight to disk, nothing gets branched/committed/merged."
@@ -1666,6 +1758,9 @@ async function main() {
       banner("NO MORE TODO TASKS — LOOP COMPLETE")
       break
     }
+    // Recomputed fresh per task, not hoisted above the loop — see the
+    // startup-banner comment above for why.
+    const createBranchPerTask = getCreateBranchPerTask() && BASE_BRANCH !== "main" && BASE_BRANCH !== "master"
 
     loopCount += 1
     banner(`LOOP ${loopCount} · ${task.title}`)
@@ -1682,7 +1777,15 @@ async function main() {
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })
 
     let state = loadTaskState(task.slug)
-    const planResumable = Boolean(state?.approved && state?.planPath && existsSync(state.planPath))
+    // A plan silently rubber-stamped while the gate was OFF (state.autoApproved)
+    // shouldn't stay treated as "reviewed" forever once a human turns the gate
+    // back ON before this task's plan has actually been acted on — a stored
+    // `approved: true` from a moment when nobody was asked is not the same
+    // thing as a human having actually seen it. Only a plan a human genuinely
+    // typed/clicked APPROVED on (autoApproved: false), or one auto-approved
+    // under whatever the gate says *right now*, gets reused without asking again.
+    const needsGateRecheck = Boolean(state?.approved) && Boolean(state?.autoApproved) && !getAutoApprovePlans()
+    const planResumable = Boolean(state?.approved && state?.planPath && existsSync(state.planPath) && !needsGateRecheck)
     const draftResumable = Boolean(!planResumable && state?.planPath && existsSync(state.planPath))
     // A saved `tickets`/`reports` object from before a backend service was
     // added/renamed (e.g. discoverBackendServices() found a different set
@@ -1698,13 +1801,17 @@ async function main() {
       if (planResumable) {
         log(`Resuming task '${task.slug}' from saved state — reusing approved plan${ticketsResumable ? " and existing task ids" : ""}.`)
       } else if (draftResumable) {
-        log(`Resuming task '${task.slug}' — reusing unapproved draft plan (still needs your APPROVED).`)
+        log(
+          needsGateRecheck
+            ? `Resuming task '${task.slug}' — its plan was auto-approved while the gate was off; the gate is on now, so it needs your APPROVED again.`
+            : `Resuming task '${task.slug}' — reusing unapproved draft plan (still needs your APPROVED).`
+        )
       } else {
         log(`Found partial state for '${task.slug}' but the plan file is missing — starting this task's setup over.`)
       }
     }
 
-    const userInstructions = planResumable || AUTO_APPROVE_PLANS
+    const userInstructions = planResumable || getAutoApprovePlans()
       ? ""
       : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ")
 
@@ -1744,7 +1851,10 @@ async function main() {
       }
       writeFileSync(LATEST_PLAN_FILE, readFileSync(planPath, "utf-8"), "utf-8")
       await reviewPlanUntilApproved({ task, prd, planPath, userInstructions })
-      state = { slug: task.slug, planPath, approved: true }
+      // Records whether this approval was a silent auto-accept (gate off) or
+      // a real human APPROVED — see needsGateRecheck above, which reads this
+      // back to decide whether a resumed task still needs to ask again.
+      state = { slug: task.slug, planPath, approved: true, autoApproved: getAutoApprovePlans() }
       saveTaskState(task.slug, state)
     }
     await markPlanStatus(planPath, "active")
@@ -1925,6 +2035,7 @@ async function main() {
       writeSkippedReport(reports.security, "Security Agent")
     }
     emitEvent("agent-back", "orchestrator")
+    printCostTable(task.title)
 
     await markPlanStatus(planPath, "done")
     markBacklogTaskDone(task)
@@ -1940,15 +2051,6 @@ async function main() {
     openBrowserForTask(task)
     await pushAndMergeTaskBranch(task, branchName, BASE_BRANCH)
     printCostTable(task.title)
-    // printCostTable() just wrote cost files to disk — at this point we're
-    // already back on BASE_BRANCH (pushAndMergeTaskBranch left us there),
-    // so these writes are UNCOMMITTED changes sitting on that branch. Left
-    // as-is, the very next task's `git checkout -b <new-branch>` reliably
-    // fails ("local changes would be overwritten" / untracked-file
-    // conflicts) the moment it tries to switch away from BASE_BRANCH with
-    // this dirty state present. Committing immediately closes that window
-    // for good, regardless of exactly when/where a future cost write happens.
-    commitCostArtifacts(task, BASE_BRANCH)
     log(`Task complete: ${task.title}`)
     emitEvent("task-done", null, task.title)
   }
@@ -2326,8 +2428,8 @@ ${userInstructions ? `\nUser instructions for this run:\n${userInstructions}` : 
 }
 
 async function reviewPlanUntilApproved({ task, prd, planPath, userInstructions }) {
-  if (AUTO_APPROVE_PLANS) {
-    log("Plan gate: AUTO_APPROVE_PLANS is on — accepting the orchestrator's own Recommended answers, no terminal wait.")
+  if (getAutoApprovePlans()) {
+    log("Plan gate: autoApprovePlans is on — accepting the orchestrator's own Recommended answers, no terminal wait.")
     return
   }
 
@@ -3087,8 +3189,8 @@ async function pushAndMergeTaskBranch(task, branch, baseBranch) {
     log(`No separate task branch was used — '${task.title}' is already committed directly on '${baseBranch}'.`)
     return
   }
-  if (AUTO_MERGE_TASKS) {
-    log(`Merge gate: AUTO_MERGE_TASKS is on — merging '${branch}' into '${baseBranch}' automatically, no terminal wait.`)
+  if (getAutoMergeTasks()) {
+    log(`Merge gate: autoMergeTasks is on — merging '${branch}' into '${baseBranch}' automatically, no terminal wait.`)
   } else {
     emitEvent("waiting-approval", "orchestrator", "Merge approval")
     const answer = await askUserInput(
@@ -3137,6 +3239,25 @@ async function waitForApproval(prompt) {
   }
 }
 
+// Backs /status.json's frontendReady, which the dashboard's "Live App" tab
+// gates on (see agent-dashboard.html) — a real (if imperfect) improvement
+// over the tab being unconditionally clickable regardless of whether
+// anything is actually answering at FRONTEND_DEV_URL yet. Refreshed on an
+// interval (not per /status.json poll — that route is hit every ~1s from
+// the dashboard and this check has its own 2s timeout, so doing it inline
+// there would make every poll as slow as the health check itself).
+// IMPORTANT LIMITATION: this only confirms *something* Vite-shaped answers
+// at that URL — it cannot tell THIS project's dev server apart from an
+// unrelated one a previous project left running on the same port (Vite's
+// own HTTP response gives no project identity to check). A stray server
+// from another project can still make this — and the tab — report ready.
+let FRONTEND_READY = false
+function startFrontendHealthPolling() {
+  const tick = () => { checkFrontendHealth().then((ok) => { FRONTEND_READY = ok }) }
+  tick()
+  setInterval(tick, 4000)
+}
+
 async function checkFrontendHealth() {
   try {
     const res = await fetch(FRONTEND_DEV_URL, { signal: AbortSignal.timeout(2000) })
@@ -3162,8 +3283,8 @@ async function checkFrontendHealth() {
 }
 
 async function waitForApprovalWithChat({ task, tickets, planPath }) {
-  if (AUTO_APPROVE_PLANS) {
-    log("Feature-done gate: AUTO_APPROVE_PLANS is on — auto-approving, no terminal wait.")
+  if (getAutoApprovePlans()) {
+    log("Feature-done gate: autoApprovePlans is on — auto-approving, no terminal wait.")
     return
   }
 
@@ -3171,7 +3292,9 @@ async function waitForApprovalWithChat({ task, tickets, planPath }) {
   const isHealthy = await checkFrontendHealth()
   if (!isHealthy) {
     warn(`Frontend dev server (http://localhost:5173) is not responding.`)
-    const answer = await askUserInput("Attempt to restart the frontend dev server? (Y/n): ")
+    const answer = await askUserInput("Attempt to restart the frontend dev server? (Y/n): ", {
+      choices: [{ label: "Yes, restart it", value: "y" }, { label: "No", value: "n" }],
+    })
     if (answer.trim().toLowerCase() !== "n") {
       await ensureFrontendDevServerRunning()
       log("Restarted frontend dev server. Checking again...")
@@ -3245,6 +3368,14 @@ function localEnvPath(dir) {
 // Cosmetic, per-service keys (PORT, FRONTEND_ORIGIN, expiry durations) are
 // fine to trust from each service's own scaffold default, no prompt needed.
 const ALWAYS_CONFIRM_KEY_PATTERN = /URI|SECRET|CONNECTION|PASSWORD|_KEY$/i
+
+// "SEED_ADMIN_PASSWORD" read out loud as "Seed Admin Password" in the actual
+// prompt, instead of a bare env-var-cased string sitting alone with no other
+// context — the raw key still follows in parentheses so it's unambiguous
+// which .env entry this is, for anyone who wants to go edit the file by hand.
+function humanizeEnvKey(key) {
+  return key.toLowerCase().split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+}
 
 // A MongoDB connection string with no database-name path segment (e.g.
 // "mongodb+srv://user:pass@cluster0.mongodb.net/" — nothing between the
@@ -3369,7 +3500,7 @@ async function ensureBackendEnv(serviceDir) {
         continue
       }
 
-      banner(`⚠️  ${key} NEEDS A REAL VALUE — REQUIRED, SHARED ACROSS EVERY BACKEND SERVICE`)
+      banner(`⚠️  ${humanizeEnvKey(key)} needed — shared across every backend service (env var: ${key})`)
       // No "press Enter to accept" escape hatch — the scaffold's own
       // placeholder (e.g. a localhost connection string) is exactly the
       // value that must never be silently accepted as real.
@@ -3382,7 +3513,8 @@ async function ensureBackendEnv(serviceDir) {
           )
         }
         answer = await askUserInput(
-          `>>> ${key}  (REQUIRED, real value — the scaffold placeholder "${defaultValue}" will NOT be accepted): `,
+          `We need a real ${humanizeEnvKey(key)} — the scaffold's placeholder ("${defaultValue}") can't be used as-is. ` +
+          `Enter one now (env var: ${key}): `,
         )
       }
       shared[key] = answer.trim()

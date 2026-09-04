@@ -1,4 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron")
+// Without this, Chromium's default autoplay policy blocks the dashboard's
+// voice cues (agent-dashboard.html's playCue()) until a real user click has
+// happened on that exact page — inside a <webview>, that's an extra,
+// confusing "why is there no sound" step. This is a self-contained desktop
+// app playing its own bundled cue sounds, not a random web page trying to
+// autoplay ads, so the usual reason for the policy doesn't apply here.
+// Must be set before app.whenReady() — Chromium reads command-line switches
+// at startup, not on demand.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required")
 const path = require("path")
 const fs = require("fs")
 const crypto = require("crypto")
@@ -153,6 +162,30 @@ ipcMain.handle("upload-ai-studio-export", async (event, workspacePath) => {
   return { folderName: AI_STUDIO_EXPORT_DIR, fileCount }
 })
 
+// Backs the config wizard's "External APIs" question (see setup-wizard.js's
+// CLI equivalent for why this lives here rather than a link: one real YAML
+// file per external API under docs/api-contract/external/, same convention
+// as the per-service contract files the Frontend Agent already writes for
+// owned services, so an agent reads a real file instead of having to go
+// fetch a URL that could change or go stale).
+ipcMain.handle("upload-external-api-spec", async (event, { workspacePath, slug }) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [{ name: "OpenAPI/YAML", extensions: ["yaml", "yml", "json"] }],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+
+  const destDir = path.join(workspacePath, "docs", "api-contract", "external")
+  fs.mkdirSync(destDir, { recursive: true })
+  const destPath = path.join(destDir, `${slug}.yaml`)
+  try {
+    fs.copyFileSync(result.filePaths[0], destPath)
+  } catch (e) {
+    return { error: `Failed to copy the file: ${e.message}` }
+  }
+  return { fileName: path.basename(result.filePaths[0]) }
+})
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -260,8 +293,34 @@ function ensureWorkspace(visibleFolderPath) {
 // human who closed the app mid-interview (before Part 1 finished) won't
 // have it yet either, which is exactly the case CHAT_STARTED_MARKER below
 // exists to still tell apart from a genuinely brand-new project.
+// `.setup-progress.md`'s existence is NOT the right signal here — per
+// NEW-PROJECT-SETUP-PROMPT.md's own "Resuming" section, that file is
+// created early (as soon as Part 1's product description is confirmed,
+// long before any real template file gets filled in) and only deleted at
+// the very end, once every phase — including writing orchestrator.config.json
+// — is actually done. Using its existence as "setup is finished" had it
+// backwards: the moment Part 1 finished, this returned true and the app
+// skipped straight to "Ready to start" with orchestrator.config.json still
+// an empty/nonexistent stub, Phase 0-D never actually done.
+//
+// orchestrator.config.json itself is the right marker: per that document's
+// Phase D item 37, this file "doesn't exist in this template repo at all
+// until setup creates it" — the template ships with no such file, and it
+// only gets written (with real keys) near the very end of the process.
+// `.plan/000-backlog.md` looks tempting too (Phase E, generated even
+// later) but doesn't work — the template repo ships one already (a worked
+// example, meant to be emptied during setup, not created from scratch), so
+// every fresh project already has that file present. Same non-empty check
+// start-dev-loop's own orchestrator.config.json sanity check already uses,
+// below — kept consistent on purpose.
 function isProjectConfigured(workspacePath) {
-  return fs.existsSync(path.join(workspacePath, ".setup-progress.md"))
+  const configPath = path.join(workspacePath, "orchestrator.config.json")
+  if (!fs.existsSync(configPath)) return false
+  try {
+    return Object.keys(JSON.parse(fs.readFileSync(configPath, "utf-8"))).length > 1
+  } catch {
+    return false
+  }
 }
 
 // Written the first time setup-chat-start actually runs for a workspace —
@@ -321,6 +380,13 @@ function prepareProject(folderPath) {
     valid: true,
     workspacePath,
     setupNeeded: !configured,
+    // Only meaningful when setupNeeded is true — the renderer's Step 1
+    // shows the deterministic config-wizard screen first when this is true
+    // (a fresh project, .setup-config.json not written yet), and skips
+    // straight to the chat step when it's already been done (resuming a
+    // project that got as far as the config wizard, or further, before the
+    // app was last closed).
+    configNeeded: !configured && !fs.existsSync(path.join(workspacePath, ".setup-config.json")),
     // Only meaningful when setupNeeded is true — tells the renderer whether
     // to send the fresh Part-1 opener or a plain "continue where we left
     // off" turn against the already-existing Claude session.
@@ -335,6 +401,208 @@ ipcMain.handle("pick-project-folder", async () => {
 })
 
 ipcMain.handle("select-recent-project", (event, folderPath) => prepareProject(folderPath))
+
+// Step 1's config-wizard screen (real radio buttons, no LLM) needs to know
+// up front whether to show its git-branching question at all — `.git` is a
+// filesystem fact, not a preference, checked the exact same way
+// development/dev-loop.js's own GIT_ENABLED does. Mirrors
+// development/setup-wizard.js's CLI equivalent of this same check.
+ipcMain.handle("check-git-status", (event, workspacePath) => {
+  return fs.existsSync(path.join(workspacePath, ".git"))
+})
+
+// Same detection development/dev-loop.js's own checkLlmAccount() uses at
+// build time (getLoggedInClaudeAccountEmail/getLoggedInCursorAccountEmail)
+// — duplicated here rather than shared since main.js and dev-loop.js are
+// separate Node processes with no shared module today. Never launches a
+// login flow itself, only reads whoever's already logged in; a real OAuth
+// popup belongs to the chat step / dev-loop.js's own attemptLogin(), not a
+// background detection call.
+ipcMain.handle("detect-llm-accounts", () => {
+  const result = { claude: null, cursor: null, githubCopilot: null }
+  try {
+    execSync("claude --version", { stdio: "ignore" })
+    const out = execSync("claude auth status --json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const parsed = JSON.parse(out)
+    if (parsed?.loggedIn) result.claude = parsed.email || null
+  } catch {
+    // Not installed, not logged in, or unparseable output — leave null.
+  }
+  try {
+    execSync("agent --version", { stdio: "ignore" })
+    const out = execSync("agent status --format json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const parsed = JSON.parse(out)
+    if (parsed?.isAuthenticated) result.cursor = parsed.userInfo?.email || null
+  } catch {
+    // Same as above.
+  }
+  // Reference-only — see development/setup-wizard.js's
+  // getLoggedInGithubCopilotAccount() for why this is a GitHub *username*
+  // (via `gh auth status`, not Copilot CLI itself, which has no `auth
+  // status`) and why it's never treated as pinnable the way claude/cursor
+  // are: dev-loop.js has no headless invocation for `copilot` to actually
+  // run agents through, unlike Claude's `-p` or Cursor's `agent -p`.
+  try {
+    const out = execSync("gh auth status --json hosts", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const entries = JSON.parse(out)?.hosts?.["github.com"] || []
+    const active = entries.find((e) => e.active)
+    if (active && !active.error && active.state !== "error") result.githubCopilot = active.login || null
+  } catch {
+    // gh not installed / not authenticated / unparseable — leave null.
+  }
+  return result
+})
+
+// The Electron equivalent of development/setup-wizard.js — same questions,
+// same deterministic outputs (.setup-config.json, .setup-secrets.json's
+// MONGODB_URI, the conditional file deletions that don't need product
+// judgment), just collected via the renderer's radio-button form instead of
+// a terminal prompt. Keep both in sync if either changes — see that file's
+// own header comment for why these particular questions live here and not
+// in the LLM chat step.
+// Fired on every change in the config-wizard form (see renderer.js's
+// saveConfigDraft()) so .setup-config.json on disk never goes stale while
+// someone is still filling the form out or revisiting an earlier answer —
+// deliberately just the plain write, none of write-setup-config's side
+// effects (.setup-secrets.json, the conditional file deletions), which
+// only make sense once, on actual submit, not replayed on every keystroke.
+// Lets the config-wizard screen prefill from whatever was already answered
+// — needed for "⚙️ Edit Setup" (see renderer.js's openConfigStep()), which
+// reopens this screen after it's already been completed once, and must
+// show the existing answers instead of resetting everyone back to defaults.
+// Backs the run-area's "⚙️ Edit Setup" panel (see renderer.js's
+// live-gates-* elements) — the ONLY three orchestrator.config.json fields
+// that still mean something once dev-loop.js is already running (it
+// re-reads them fresh on every check — see dev-loop.js's
+// getAutoApprovePlans()/getAutoMergeTasks()/getCreateBranchPerTask()), as
+// opposed to the full Step 2 config wizard, which edits .setup-config.json
+// and is already fully consumed by the time a project reaches this stage.
+ipcMain.handle("read-live-gates", (event, workspacePath) => {
+  const configPath = path.join(workspacePath, "orchestrator.config.json")
+  if (!fs.existsSync(configPath)) return null
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"))
+    return {
+      autoApprovePlans: Boolean(parsed.autoApprovePlans),
+      autoMergeTasks: Boolean(parsed.autoMergeTasks),
+      createBranchPerTask: parsed.createBranchPerTask !== false,
+    }
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle("write-live-gates", (event, { workspacePath, gates }) => {
+  const configPath = path.join(workspacePath, "orchestrator.config.json")
+  const existing = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, "utf-8")) : {}
+  const updated = {
+    ...existing,
+    autoApprovePlans: gates.autoApprovePlans,
+    autoMergeTasks: gates.autoMergeTasks,
+    createBranchPerTask: gates.createBranchPerTask,
+  }
+  fs.writeFileSync(configPath, JSON.stringify(updated, null, 2) + "\n", "utf-8")
+  return { ok: true }
+})
+
+// Backs the "Picking up where we left off…" resume message (see
+// renderer.js's proceedToChat()) — instead of that bare placeholder with no
+// content, show what Claude actually understood about the product so far.
+// .setup-progress.md already holds exactly this (its own documented
+// format, from NEW-PROJECT-SETUP-PROMPT.md's "Resuming" section: a "## Part
+// 1 answers" section, one line per question, written once Part 1 is
+// confirmed) — reading it directly is free (no extra LLM call) and more
+// reliable than asking Claude to regenerate a summary from a session it's
+// only just resuming.
+// Backs the chat step's "📄 View Files" panel — lets a human watch the
+// files Claude is actually drafting (PRD, rules, skills, agent configs)
+// without leaving this window to dig through the hidden internal workspace
+// (see ensureWorkspace() — it's not the visible project folder the human
+// picked, only frontend/backend are junctioned out there). Read-only,
+// scoped to the directories NEW-PROJECT-SETUP-PROMPT.md's Phase 0-C
+// actually write to.
+const VIEWABLE_FILE_DIRS = ["docs", ".doc", ".rule", ".claude/skills", "agents"]
+
+function listProjectFilesRecursive(dir, baseDir, out) {
+  if (!fs.existsSync(dir)) return
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      listProjectFilesRecursive(full, baseDir, out)
+    } else {
+      out.push(path.relative(baseDir, full).split(path.sep).join("/"))
+    }
+  }
+}
+
+ipcMain.handle("list-project-files", (event, workspacePath) => {
+  const out = []
+  for (const dir of VIEWABLE_FILE_DIRS) {
+    listProjectFilesRecursive(path.join(workspacePath, dir), workspacePath, out)
+  }
+  return out.sort()
+})
+
+ipcMain.handle("read-project-file", (event, { workspacePath, relPath }) => {
+  const root = path.resolve(workspacePath)
+  const full = path.resolve(workspacePath, relPath)
+  // Must resolve to somewhere inside the workspace — blocks ../ escaping
+  // out to read arbitrary files on the human's machine via a crafted path.
+  if (!full.startsWith(root + path.sep) && full !== root) return { error: "Invalid path." }
+  if (!fs.existsSync(full)) return { error: "File not found." }
+  try {
+    return { content: fs.readFileSync(full, "utf-8") }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle("read-part1-summary", (event, workspacePath) => {
+  const progressPath = path.join(workspacePath, ".setup-progress.md")
+  if (!fs.existsSync(progressPath)) return null
+  try {
+    const text = fs.readFileSync(progressPath, "utf-8")
+    const match = text.match(/## Part 1 answers[^\n]*\n([\s\S]*?)(?:\n##\s|$)/)
+    return match ? match[1].trim() : null
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle("read-setup-config", (event, workspacePath) => {
+  const configPath = path.join(workspacePath, ".setup-config.json")
+  if (!fs.existsSync(configPath)) return null
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf-8"))
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle("save-config-draft", (event, { workspacePath, config }) => {
+  fs.writeFileSync(path.join(workspacePath, ".setup-config.json"), JSON.stringify(config, null, 2) + "\n", "utf-8")
+  return { ok: true }
+})
+
+ipcMain.handle("write-setup-config", (event, { workspacePath, config }) => {
+  if (config.mongoUri) {
+    const secretsPath = path.join(workspacePath, ".setup-secrets.json")
+    const existing = fs.existsSync(secretsPath) ? JSON.parse(fs.readFileSync(secretsPath, "utf-8")) : {}
+    existing.MONGODB_URI = config.mongoUri
+    fs.writeFileSync(secretsPath, JSON.stringify(existing, null, 2) + "\n", "utf-8")
+  }
+
+  const rm = (relPath) => {
+    const full = path.join(workspacePath, relPath)
+    if (fs.existsSync(full)) fs.rmSync(full, { recursive: true, force: true })
+  }
+  if (!config.targetsNative) rm(".claude/skills/native-navigation-layer")
+  if (config.designSource !== "Designer agent") rm("agents/designer/CLAUDE.md")
+  if (config.issueTracker !== "Linear") rm("team-members.json")
+
+  fs.writeFileSync(path.join(workspacePath, ".setup-config.json"), JSON.stringify(config, null, 2) + "\n", "utf-8")
+  return { ok: true }
+})
 
 // Matches development/dev-loop.js's own quoteArgForCmd() exactly (doubled
 // internal quotes, not backslash-escaped) — cmd.exe's quoting rules are not
@@ -564,13 +832,19 @@ ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
     if (match) approvalMode = match[1].toLowerCase()
   }
 
-  // stdin is intentionally left with nothing writing to it — dev-loop.js's
-  // terminal prompts (askUserInput) are also answerable through its own
-  // dashboard /respond endpoint (see dev-loop.js's pendingHumanInput), which
-  // is the intended path here: this window IS the dashboard, once loaded.
+  // stdin is piped (not ignored) as a FALLBACK path only — dev-loop.js's
+  // terminal prompts (askUserInput) are normally answered through its own
+  // dashboard /respond endpoint (see dev-loop.js's pendingHumanInput) once
+  // the <webview> below loads it. But the dashboard server can fail to
+  // start entirely (confirmed live: a previous run's orphaned node.exe was
+  // still holding port 4949, so this run's own dashboard never bound, and
+  // a human was stuck staring at a "git init? (y/N)" prompt in the
+  // read-only log with no way to answer it at all). See the
+  // "send-dev-loop-input" handler below, wired to the log view's own
+  // fallback input box in the renderer.
   devLoopProcess = spawn("node", ["development/dev-loop.js"], {
     cwd: workspacePath,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       // DEV_LOOP_NO_AUTO_OPEN: this window's own <webview> already shows the
@@ -608,6 +882,18 @@ ipcMain.handle("start-dev-loop", (event, visibleFolderPath) => {
   })
 
   return { started: true }
+})
+
+// Fallback for when dev-loop.js's own dashboard never loaded into the
+// <webview> (its server failed to bind, or hasn't started yet this early
+// in the run) — the log view's own input box sends straight to this
+// process's stdin, exactly what a terminal running dev-loop.js directly
+// would do. Text, not JSON — dev-loop.js's askUserInput() reads plain
+// readline lines.
+ipcMain.handle("send-dev-loop-input", (event, text) => {
+  if (!devLoopProcess || !devLoopProcess.stdin.writable) return { sent: false }
+  devLoopProcess.stdin.write(text + "\n")
+  return { sent: true }
 })
 
 ipcMain.handle("stop-dev-loop", () => {

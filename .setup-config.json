@@ -1,0 +1,14 @@
+{
+  "approvalMode": "gated",
+  "projectName": "2",
+  "direction": "LTR",
+  "platforms": "Web only",
+  "targetsNative": false,
+  "targetsWeb": true,
+  "designSource": "AI-Studio export",
+  "designSourceFolder": "11",
+  "issueTracker": "Linear",
+  "mongoUri": "11",
+  "createBranchPerTask": false,
+  "autoMergeTasks": false
+}

@@ -70,7 +70,7 @@ async function askRequired(prompt) {
   }
 }
 
-// Same detection dev-loop.js's own checkLlmAccount()/probeLoggedInProviders()
+// Same detection task-builder.js's own checkLlmAccount()/probeLoggedInProviders()
 // use at runtime (getLoggedInClaudeAccountEmail/getLoggedInCursorAccountEmail)
 // — duplicated here rather than imported since this script has to run
 // standalone, before development/ is necessarily even the final copy in
@@ -111,7 +111,7 @@ function getLoggedInCursorAccountEmail() {
 // and Copilot CLI does honor gh's stored credentials (GH_TOKEN/GITHUB_TOKEN
 // precedence, documented). Confirmed shape: {"hosts":{"github.com":[{
 // "active":true,"login":"...","state":"error"|absent-when-healthy,...}]}}.
-// Detection only — dev-loop.js does NOT run agents through Copilot CLI
+// Detection only — task-builder.js does NOT run agents through Copilot CLI
 // (no documented headless/print mode to invoke it non-interactively, unlike
 // Claude's `-p` or Cursor's `agent -p`), so this is never offered as
 // something to pin as expectedLlmProvider, only shown for reference.
@@ -150,20 +150,20 @@ async function main() {
   // Two DIFFERENT gates, deliberately not derived from one another — one
   // for standing up the infrastructure (PRD, .rule/*.md, skills, agents/*.md
   // — NEW-PROJECT-SETUP-PROMPT.md's own file-by-file drafting), one for
-  // building the actual product afterward (development/dev-loop.js's
+  // building the actual product afterward (development/task-builder.js's
   // per-task plan approval, once real features start getting built). A
   // project can reasonably want a human reviewing every scaffolding file
   // yet let routine feature tasks fly through unattended, or the reverse —
   // conflating them into a single answer was the earlier version's mistake.
   const infraChoice = await askChoice(
-    next("Setting up the infrastructure (PRD, rules, agent configs, ...) — after each file is drafted, do you want to…"),
-    ["Stop and approve it before continuing (gated)", "Keep going and review everything at the end (ungated)"]
+    next("SETUP PHASE — before any code is written, this process drafts 4 core product documents one at a time (what the product is, its entities, its architecture, its screens). After each one is drafted, do you want to…"),
+    ["Stop and let me approve it before moving to the next one (gated)", "Keep going and let me review everything together at the end (ungated)"]
   )
   config.approvalMode = infraChoice.startsWith("Stop") ? "gated" : "ungated"
 
   const buildChoice = await askChoice(
-    next("Building the actual project (dev-loop.js) — after each task's plan is drafted, do you want to…"),
-    ["Stop and approve it before continuing (gated)", "Let it proceed automatically (ungated)"]
+    next("BUILD PHASE — once setup is done, the AI agents start actually building your product, one feature/task at a time. Before each task's work begins, do you want to…"),
+    ["Stop and let me approve the plan first (gated)", "Let it proceed automatically without waiting for me (ungated)"]
   )
   config.buildApprovalMode = buildChoice.startsWith("Stop") ? "gated" : "ungated"
 
@@ -216,7 +216,7 @@ async function main() {
   // rule as Figma's file key above — added to .mcp.json as an env var
   // during the next (LLM) step instead. NOTE: as of this writing, only
   // Linear actually has any working integration code in this template
-  // (team-members.json, dev-loop.js's ticket-assignment logic) — Jira and
+  // (team-members.json, task-builder.js's ticket-assignment logic) — Jira and
   // GitHub Issues are asked for consistency/future-proofing, but picking
   // them doesn't wire up anything yet; NEW-PROJECT-SETUP-PROMPT.md should
   // say so plainly rather than imply otherwise.
@@ -237,18 +237,18 @@ async function main() {
     : `mongodb://localhost:27017/${slugify(config.projectName)}`
 
   // `.git` is a filesystem fact, not a preference — checked the same way
-  // dev-loop.js's own GIT_ENABLED does (existsSync(".git")), not asked as a
+  // task-builder.js's own GIT_ENABLED does (existsSync(".git")), not asked as a
   // question the user could get wrong or that could go stale the moment
   // they run `git init` a minute later. When it's missing, the two
   // branching questions below are skipped entirely rather than asked about
   // a git workflow that doesn't exist yet — createBranchPerTask/
-  // autoMergeTasks are simply never consulted by dev-loop.js without a repo
+  // autoMergeTasks are simply never consulted by task-builder.js without a repo
   // (see "Version control is optional" in NEW-PROJECT-SETUP-PROMPT.md), so
   // asking them here would be asking about nothing.
   const gitEnabled = existsSync(".git")
   if (!gitEnabled) {
     console.log(
-      next("No .git found here — every git-specific setting below is skipped; run 'git init' before or after this setup if you want version control (see NEW-PROJECT-SETUP-PROMPT.md's \"Version control is optional\").")
+      next("No .git found here — every git-specific setting below is skipped; run 'git init' before or after this setup if you want version control (local only — no GitHub/GitLab account or remote needed; see NEW-PROJECT-SETUP-PROMPT.md's \"Version control is optional\").")
     )
     config.createBranchPerTask = false
     config.autoMergeTasks = false
@@ -300,11 +300,11 @@ async function main() {
 
   // Detects whoever's ALREADY logged in (claude auth status / agent status)
   // — this never launches a login flow itself (that's real interactive
-  // OAuth, which belongs to dev-loop.js's checkLlmAccount()/attemptLogin()
+  // OAuth, which belongs to task-builder.js's checkLlmAccount()/attemptLogin()
   // at build time, with dashboard support under Electron; a plain wizard
   // question isn't the place for a browser popup). If nothing's detected,
   // or the human doesn't want to pin one yet, this is simply left unset —
-  // dev-loop.js's own first run asks then, exactly as it already does for
+  // task-builder.js's own first run asks then, exactly as it already does for
   // a project with no wizard-set value at all.
   const claudeEmail = cliOnPath("claude") ? getLoggedInClaudeAccountEmail() : null
   const cursorEmail = cliOnPath("agent") ? getLoggedInCursorAccountEmail() : null
@@ -322,18 +322,18 @@ async function main() {
       config.expectedLlmAccount = cursorEmail
     }
   } else {
-    console.log(next("No LLM account (Claude or Cursor) detected as logged in — skipped; dev-loop.js will ask the first time it runs."))
+    console.log(next("No LLM account (Claude or Cursor) detected as logged in — skipped; you'll be asked the first time a build starts."))
   }
 
   // GitHub Copilot is detected but never offered as a pin above — unlike
-  // Claude/Cursor, dev-loop.js has no way to actually RUN agents through it
+  // Claude/Cursor, task-builder.js has no way to actually RUN agents through it
   // (see getLoggedInGithubCopilotAccount()'s comment), so pinning it as
   // expectedLlmProvider would silently mean something different from what
   // it says. Stored separately, reference-only.
   const githubCopilotAccount = cliOnPath("gh") ? getLoggedInGithubCopilotAccount() : null
   if (githubCopilotAccount) {
     config.githubCopilotAccount = githubCopilotAccount
-    console.log(`  (Also detected: GitHub Copilot as ${githubCopilotAccount} — reference only, dev-loop.js doesn't run agents through it.)`)
+    console.log(`  (Also detected: GitHub Copilot as ${githubCopilotAccount} — reference only, agents can't run through it.)`)
   }
 
   rl.close()
@@ -353,7 +353,7 @@ async function main() {
   // Deterministic file deletions — these follow mechanically from a single
   // closed-form answer above, with no product judgment involved, so there's
   // no reason to make the LLM agent re-derive and re-confirm them.
-  // seat-concurrency-layer is NOT deleted here — whether a contested
+  // resource-concurrency-layer is NOT deleted here — whether a contested
   // resource exists needs the product interview (Part 1 Q1-3), which this
   // wizard deliberately doesn't do; NEW-PROJECT-SETUP-PROMPT.md's Phase B
   // item 13 still owns that deletion once it actually knows the answer.

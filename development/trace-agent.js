@@ -4,7 +4,7 @@
  * --output-format stream-json and prints every tool call as it happens
  * (file paths read/written, commands run), then a final cost/usage summary.
  *
- * This is deliberately separate from dev-loop.js: dev-loop.js also uses
+ * This is deliberately separate from task-builder.js: task-builder.js also uses
  * --output-format stream-json and prints the agent's text live, but it never
  * looks at the tool_use events in that stream - it only cares about the
  * final STATUS: DONE text. This script parses those same events to print

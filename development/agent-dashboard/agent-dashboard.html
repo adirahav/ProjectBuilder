@@ -209,11 +209,34 @@
   }
   #session-limit-banner:empty { display: none; }
 
+  /* Everything else in this panel (the orange dot, the gold "orchestrator"
+     accent color used throughout) means "something is happening" — none of
+     it stands out as "this specific thing needs YOU," which was easy to
+     miss entirely while it sat quietly waiting. Green + a slow pulse is
+     used nowhere else in this UI, on purpose, so this one state reads as
+     unmistakably different at a glance. Shown/hidden in poll() alongside
+     #respond-box itself (data.awaitingInput). */
+  #awaiting-input-banner {
+    display: none;
+    margin-top: 10px; padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(34, 197, 94, 0.18);
+    border: 1px solid #22c55e;
+    color: #4ade80;
+    font-size: 13px; font-weight: 700;
+    animation: awaiting-input-pulse 1.6s ease-in-out infinite;
+  }
+  #awaiting-input-banner.active { display: block; }
+  @keyframes awaiting-input-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+
   /* Lets a human answer the terminal's blocking prompt (session-limit retry,
      design-review APPROVED/feedback, etc.) from the dashboard instead of
      having to switch to the terminal window. Two distinct modes, driven by
      /status.json's awaitingInput.expectsText (see askUserInput() in
-     dev-loop.js) — NOT always both a textbox and a button: a "fix it, then
+     task-builder.js) — NOT always both a textbox and a button: a "fix it, then
      press Enter to retry exactly where it stopped" prompt never reads the
      answer text at all, so showing an empty textbox next to it was actively
      misleading (looked like typing something would matter, when only the
@@ -224,8 +247,12 @@
     display: none;
     margin-top: 12px; padding: 12px;
     border-radius: 10px;
-    background: rgba(240, 180, 41, 0.08);
-    border: 1px solid rgba(240, 180, 41, 0.3);
+    /* Green, matching #awaiting-input-banner above — was the same gold used
+       everywhere else in this UI for "something's happening," which made
+       this box (the one place that specifically needs a human) too easy to
+       mistake for routine activity and scroll right past. */
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.35);
   }
   #respond-box.active { display: block; }
   #respond-box:not(.text-mode) #respond-text,
@@ -234,6 +261,22 @@
   #respond-prompt { font-size: 12px; color: var(--text); margin-bottom: 8px; line-height: 1.5; white-space: pre-wrap; }
   #respond-choices { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
   #respond-choices:empty { display: none; margin-bottom: 0; }
+  #pending-notes-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 8px; padding: 8px 12px;
+    border: 1px solid rgba(240, 180, 41, 0.4); border-radius: 10px;
+    background: rgba(240, 180, 41, 0.08);
+    font-size: 12px;
+  }
+  #pending-notes-address-btn {
+    flex-shrink: 0;
+    font-size: 12px; padding: 5px 10px;
+    border-radius: 8px; border: 1px solid var(--orchestrator);
+    background: rgba(240, 180, 41, 0.15); color: var(--text);
+    cursor: pointer;
+  }
+  #pending-notes-address-btn:hover { background: rgba(240, 180, 41, 0.3); }
+  #pending-notes-address-btn:disabled { opacity: 0.5; cursor: default; }
   .respond-choice-btn {
     font-size: 12px; font-weight: 700;
     padding: 7px 14px;
@@ -272,6 +315,185 @@
   }
   #respond-continue { flex: 1; color: var(--orchestrator); border-color: rgba(240, 180, 41, 0.4); }
   #respond-send:hover, #respond-continue:hover { border-color: var(--orchestrator); }
+  #view-plan-btn {
+    font-size: 12px; font-weight: 600;
+    padding: 6px 12px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--orchestrator);
+    background: rgba(240, 180, 41, 0.1);
+    color: var(--orchestrator);
+    cursor: pointer;
+  }
+  #view-plan-btn:hover { background: rgba(240, 180, 41, 0.2); }
+
+  /* Its own tab (see #tab-chat) rather than a permanent fixture next to
+     #respond-box — confirmed live, a permanently-visible box there (even a
+     single slim row) still crowded the fixed-height status card and shrank
+     the tab panels below it. As a tab it only takes space while actually
+     open, same as Cost/Live App/Reports. */
+  #chat-empty { color: var(--dim); font-size: 12px; padding: 14px 0; }
+  #chat-log { flex: 1; min-height: 0; overflow-y: auto; }
+  .chat-log-entry {
+    font-size: 12px; line-height: 1.5;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .chat-log-entry:last-child { border-bottom: none; }
+  .chat-log-time { color: var(--dim); font-size: 10px; margin-bottom: 2px; }
+  .chat-log-entry.pending { opacity: 0.85; }
+  .chat-log-status-row { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+  .chat-log-status { font-size: 10px; }
+  .chat-log-status.pending { color: #f0b429; }
+  .chat-log-status.addressed { color: var(--dim); }
+  .chat-log-status.running { color: #4fc3f7; }
+  .chat-note-run-btn {
+    font-size: 10px; padding: 2px 8px;
+    border-radius: 8px; border: 1px solid var(--orchestrator);
+    background: rgba(240, 180, 41, 0.12); color: var(--text);
+    cursor: pointer;
+  }
+  .chat-note-run-btn:hover:not(:disabled) { background: rgba(240, 180, 41, 0.28); }
+  .chat-note-run-btn:disabled { opacity: 0.4; cursor: default; border-color: var(--border); background: none; }
+  #chat-history-toggle {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; border-bottom: 1px solid var(--border);
+    color: var(--dim); font-size: 11px; padding: 6px 0; margin-bottom: 4px;
+    cursor: pointer;
+  }
+  #chat-history-toggle:hover { color: var(--text); }
+  #chat-pending-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 15px; height: 15px; padding: 0 4px; margin-left: 5px;
+    border-radius: 8px; background: #f0b429; color: #1a1a1a;
+    font-size: 10px; font-weight: 700; vertical-align: middle;
+  }
+  #chat-controls { display: flex; gap: 6px; flex-shrink: 0; margin-top: 10px; }
+  #chat-text {
+    flex: 1; min-width: 0;
+    font-size: 13px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  #chat-text:focus { outline: none; border-color: var(--orchestrator); }
+  #chat-send {
+    font-size: 12px; font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #chat-send:hover { border-color: var(--orchestrator); }
+  #chat-send:disabled { opacity: 0.5; cursor: default; }
+  #chat-status { font-size: 11px; color: var(--dim); margin-top: 6px; flex-shrink: 0; }
+  #chat-status:empty { display: none; }
+
+  #plan-view-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+  }
+  #plan-view-overlay.active { display: flex; }
+  #plan-view-panel {
+    width: 680px; max-width: calc(100vw - 48px);
+    height: calc(100vh - 80px);
+    display: flex; flex-direction: column;
+    background: var(--bg, #0b0b10);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  #plan-view-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  #plan-view-header button { background: none; border: none; color: var(--text); font-size: 16px; cursor: pointer; }
+  #plan-view-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px; }
+  .plan-question-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+  }
+  .plan-question-text { font-size: 13px; font-weight: 600; margin-bottom: 8px; line-height: 1.5; }
+  .plan-question-recommended { font-size: 12px; color: var(--dim); margin-bottom: 8px; line-height: 1.5; }
+  .plan-question-answered { font-size: 12px; color: #4ade80; margin-bottom: 8px; line-height: 1.5; }
+  .plan-question-controls { display: flex; gap: 8px; align-items: center; }
+  .plan-use-recommended-btn {
+    font-size: 12px; font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+    color: #4ade80;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .plan-custom-answer-input {
+    flex: 1; min-width: 0;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  #plan-raw-note { font-size: 11px; color: var(--dim); margin: 0 0 6px; }
+  #plan-open-questions-heading { font-size: 13px; font-weight: 700; margin: 16px 0 8px; }
+  #plan-raw-content, #plan-after-content {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 200px;
+    white-space: pre-wrap;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px; line-height: 1.6;
+    color: #c8c8d0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 8px 0 0;
+  }
+  #plan-raw-content:focus, #plan-after-content:focus { outline: none; border-color: var(--orchestrator); }
+  #plan-view-footer {
+    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #plan-view-error { font-size: 12px; color: #f87171; flex: 1; }
+  #plan-view-submit-btn {
+    font-size: 13px; font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--orchestrator);
+    background: rgba(240, 180, 41, 0.12);
+    color: var(--orchestrator);
+    cursor: pointer;
+  }
+  #plan-view-submit-btn:hover { background: rgba(240, 180, 41, 0.2); }
+  #plan-view-approve-btn {
+    font-size: 13px; font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+    color: #4ade80;
+    cursor: pointer;
+  }
+  #plan-view-approve-btn:hover { background: rgba(34, 197, 94, 0.22); }
   #respond-send:disabled, #respond-continue:disabled { opacity: 0.5; cursor: default; }
   #respond-cancel-login { color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
   #respond-cancel-login:hover { background: rgba(248, 113, 113, 0.12); border-color: #f87171; }
@@ -344,7 +566,7 @@
     cursor: pointer;
   }
   .panel-refresh:hover { border-color: var(--orchestrator); }
-  #mockup-select {
+  #mockup-select, #report-select, #plan-select {
     font-size: 11px;
     padding: 3px 8px;
     border-radius: 12px;
@@ -352,6 +574,22 @@
     background: var(--panel);
     color: var(--text);
   }
+  #report-content, #plan-content {
+    flex: 1; min-height: 0;
+    overflow: auto;
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #report-empty, #plan-empty { color: var(--dim); font-size: 12px; padding: 14px; }
   .panel-frame {
     flex: 1; min-height: 0;
     width: 100%;
@@ -408,14 +646,20 @@
   <div id="right-panel">
     <div id="status-card">
       <div class="label"><span id="dot"></span> &nbsp;<span id="status-label">Live status</span> <span id="status-progress" class="progress-badge"></span> <span id="status-task-name"></span></div>
-      <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/images/orchestrator-agent.png" alt=""><span id="active-name">orchestrator</span></div>
+      <div id="awaiting-input-banner">🟢 Waiting for you</div>
+      <div class="agent-line"><img id="active-icon-img" class="sidebar-avatar" src="/assets/images/orchestrator-agent.png" alt=""><img id="active-icon-img-2" class="sidebar-avatar" style="display:none" alt=""><span id="active-name">orchestrator</span></div>
       <div class="message" id="active-message">Waiting for the loop to start…</div>
       <div class="thinking" id="active-thinking"></div>
       <div class="updated" id="active-updated"></div>
       <div id="session-limit-banner"></div>
       <div id="respond-box">
         <div id="respond-prompt"></div>
+        <button id="view-plan-btn" style="display:none">📄 View Plan</button>
         <div id="respond-choices"></div>
+        <div id="pending-notes-banner" style="display:none">
+          <span id="pending-notes-text"></span>
+          <button id="pending-notes-address-btn">📝 Address now</button>
+        </div>
         <div id="respond-controls">
           <input type="text" id="respond-text" placeholder="Type feedback/notes…" autocomplete="off">
           <button id="respond-send">Send</button>
@@ -430,6 +674,9 @@
       <button class="right-tab active" id="tab-cost" data-panel="panel-cost">📜 Cost</button>
       <button class="right-tab" id="tab-liveapp" data-panel="panel-liveapp" disabled title="Waiting for the frontend dev server to respond…">🌐 Live App</button>
       <button class="right-tab" id="tab-design" data-panel="panel-design" style="display:none">🖌️ Design</button>
+      <button class="right-tab" id="tab-plan" data-panel="panel-plan">📋 Plan</button>
+      <button class="right-tab" id="tab-reports" data-panel="panel-reports">📄 Reports</button>
+      <button class="right-tab" id="tab-chat" data-panel="panel-chat">💬 Chat<span id="chat-pending-badge" style="display:none"></span></button>
     </div>
 
     <div class="right-tab-panel active" id="panel-cost">
@@ -447,8 +694,11 @@
 
     <div class="right-tab-panel" id="panel-liveapp">
       <div class="panel-header">
-        http://localhost:5173
-        <button id="iframe-refresh" class="panel-refresh" title="Reload the preview">↻ Refresh</button>
+        <span id="liveapp-url-label">http://localhost:5173</span>
+        <div style="display:flex; gap:8px;">
+          <button id="iframe-open-browser" class="panel-refresh" title="Open in your default browser">🌐 Open in Browser</button>
+          <button id="iframe-refresh" class="panel-refresh" title="Reload the preview">↻ Refresh</button>
+        </div>
       </div>
       <!-- No src here — set once frontendReady is confirmed (see poll()'s
            own handling below), not eagerly on page load, so this never
@@ -463,6 +713,72 @@
         <button id="mockup-refresh" class="panel-refresh" title="Reload the preview">↻ Refresh</button>
       </div>
       <iframe class="panel-frame" id="mockup-frame" title="Design mockup preview"></iframe>
+    </div>
+
+    <div class="right-tab-panel" id="panel-plan">
+      <div class="panel-header">
+        <select id="plan-select"></select>
+        <button id="plan-refresh" class="panel-refresh" title="Reload the list and the current file">↻ Refresh</button>
+      </div>
+      <div id="plan-empty">No PRD or plan files written yet.</div>
+      <pre id="plan-content" style="display:none"></pre>
+    </div>
+
+    <div class="right-tab-panel" id="panel-reports">
+      <div class="panel-header">
+        <select id="report-select"></select>
+        <button id="report-refresh" class="panel-refresh" title="Reload the list and the current report">↻ Refresh</button>
+      </div>
+      <div id="report-empty">No agent reports written yet.</div>
+      <pre id="report-content" style="display:none"></pre>
+    </div>
+
+    <!-- Always sendable, regardless of #respond-box's own awaitingInput
+         state — for anything that isn't a direct answer to whatever
+         specific question (if any) the orchestrator currently happens to be
+         asking. Typing that into #respond-text instead only makes sense as
+         feedback on THE CURRENT prompt (plan review, feature-done chat, ...)
+         and confuses the model when it's actually unrelated. Queued via
+         POST /note and addressed at the next real checkpoint — see
+         takePendingNotes() in task-builder.js. -->
+    <div class="right-tab-panel" id="panel-chat">
+      <div id="chat-empty">Nothing sent yet. Addressed at the next checkpoint, not instantly.</div>
+      <div id="chat-log"></div>
+      <div id="chat-controls">
+        <input type="text" id="chat-text" placeholder="Message the orchestrator…" autocomplete="off">
+        <button id="chat-send">Send</button>
+      </div>
+      <div id="chat-status"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Lets a human actually read the plan the "Review <file>.md" prompt
+     refers to, and answer its Open Questions one at a time, without leaving
+     this window or knowing the file's path. Fetches docs/LAST_PLAN.md (see
+     task-builder.js's LATEST_PLAN_FILE — always mirrors whichever plan is
+     currently under review, kept fresh on every revision) via the existing
+     /docs/** static route, no new server endpoint needed. Answers submit
+     through the SAME /respond endpoint the free-text feedback box already
+     uses (sendRespond()) — this is a friendlier way to build that same
+     feedback text, not a separate mechanism. -->
+<div id="plan-view-overlay">
+  <div id="plan-view-panel">
+    <div id="plan-view-header">
+      <span>Plan review</span>
+      <button id="plan-view-close-btn">✕</button>
+    </div>
+    <div id="plan-view-body">
+      <div id="plan-raw-note">Edit the plan directly, or answer the Open Questions below (right where they appear in the document) — both are sent together.</div>
+      <textarea id="plan-raw-content" spellcheck="false"></textarea>
+      <div id="plan-open-questions-heading">## Open Questions</div>
+      <div id="plan-open-questions"></div>
+      <textarea id="plan-after-content" spellcheck="false"></textarea>
+    </div>
+    <div id="plan-view-footer">
+      <div id="plan-view-error"></div>
+      <button id="plan-view-approve-btn">✅ Approve as-is</button>
+      <button id="plan-view-submit-btn">Submit</button>
     </div>
   </div>
 </div>
@@ -620,7 +936,12 @@ let currentThinkingCategory = "orchestrator";
 // needs attention). The rotating terms would be misleading there, so they're
 // suppressed until a real agent-start/agent-back moment resumes them.
 let thinkingPaused = false;
-const PAUSE_ON_EVENTS = new Set(["waiting-approval", "session-limit", "attention-needed", "task-done"]);
+// "orchestrator-idle" (backlog empty, nothing left to build — see
+// task-builder.js's main loop) belongs here too: confirmed live, without
+// it the rotating label kept cycling through words like "Queuing…" forever
+// after the entire run had already finished, with nothing actually
+// happening — misleading in exactly the way this set exists to prevent.
+const PAUSE_ON_EVENTS = new Set(["waiting-approval", "session-limit", "attention-needed", "task-done", "orchestrator-idle", "orchestrator-idle-notes-pending"]);
 
 function tickThinking() {
   const dot = document.getElementById("dot");
@@ -646,6 +967,7 @@ const CATEGORY_TO_KEYS = {
   qa: ["qa"],
   security: ["security"],
   orchestrator: ["orchestrator"],
+  "qa-security": ["qa", "security"],
 };
 
 // event -> audio file. "agent-start"/"agent-skip" additionally key off
@@ -655,6 +977,8 @@ const AUDIO_MAP = {
   "orchestrator-start": "orchestrator-start.mp3",
   "picking-next-task": "picking-next-task.mp3",
   "task-done": "task-done.mp3",
+  "orchestrator-idle": "no-tasks-left-in-backlog.mp3",
+  "orchestrator-idle-notes-pending": "no-tasks-left-in-backlog-but-still-have-pending-notes.mp3",
   "agent-back": "agent-orchestrator.mp3",
   "session-limit": "session-limit.mp3",
   "attention-needed": "attention-needed.mp3",
@@ -664,6 +988,12 @@ const AUDIO_MAP = {
   "agent-start:backend": "agent-backend.mp3",
   "agent-start:qa": "agent-qa.mp3",
   "agent-start:security": "agent-security.mp3",
+  // QA and Security run concurrently (task-builder.js's own Promise.all) —
+  // this fires once, instead of either agent's own solo cue, exactly when
+  // both are actually running together for this task (see parallelActiveKeys
+  // in task-builder.js). If only one of the two is in scope, that one still
+  // gets its own ordinary agent-start:qa / agent-start:security cue.
+  "agent-start:qa-security": "agents-qa-and-security.mp3",
   "agent-skip:frontend": "agent-frontend-skip.mp3",
   "agent-skip:backend": "agent-backend-skip.mp3",
   "agent-skip:qa": "agent-qa-skip.mp3",
@@ -722,12 +1052,19 @@ soundToggleBtn.addEventListener("click", () => {
   }
 });
 
-// Answers dev-loop.js's currently-blocking terminal prompt from here — POSTs
+// Answers task-builder.js's currently-blocking terminal prompt from here — POSTs
 // to /respond, which resolves the SAME pendingHumanInput the terminal's own
-// readline is waiting on (see dev-loop.js's askUserInput()). Empty text is a
+// readline is waiting on (see task-builder.js's askUserInput()). Empty text is a
 // legitimate answer (equivalent to bare Enter), so this always sends
 // whatever it's given rather than treating "" as "don't send."
-async function sendRespond(text) {
+// `sourceBtn`, when given, is the exact element the human clicked — used to
+// show unambiguous feedback on THAT button specifically (its own label
+// changes to "Sending…"), not just the generic disabled-opacity dimming
+// every button already got. Confirmed live: a fast localhost round-trip
+// made the plain disabled state flash by too quickly to notice, so a click
+// that genuinely registered still looked like "did anything happen?" with
+// nothing to look back at once the box updates on the next poll.
+async function sendRespond(text, sourceBtn) {
   const sendBtn = document.getElementById("respond-send");
   const continueBtn = document.getElementById("respond-continue");
   const choiceBtns = document.querySelectorAll(".respond-choice-btn");
@@ -738,6 +1075,9 @@ async function sendRespond(text) {
   continueBtn.disabled = true;
   choiceBtns.forEach((b) => { b.disabled = true; });
   errorEl.textContent = "";
+
+  const originalLabel = sourceBtn ? sourceBtn.textContent : null;
+  if (sourceBtn) sourceBtn.textContent = "Sending…";
 
   try {
     const res = await fetch("/respond", {
@@ -750,6 +1090,21 @@ async function sendRespond(text) {
       respondText.value = "";
       respondText.placeholder = "Sent!";
       setTimeout(() => { respondText.placeholder = "Type feedback/notes…"; }, 2000);
+      // Left as "✓ Sent" rather than restored immediately — the very next
+      // poll tick normally replaces this whole box (a new prompt, or none),
+      // but if that takes a moment, this is what's still on screen in the
+      // meantime, so it should say something reassuring, not silently go
+      // back to looking exactly like it did before the click.
+      if (sourceBtn) sourceBtn.textContent = "✓ Sent";
+      // Deliberately NOT re-enabling anything here (contrast the two catch
+      // branches below, which do) — a successful send is expected to be
+      // followed almost immediately by the whole box either disappearing or
+      // being rebuilt with a fresh prompt's own fresh (enabled) buttons, so
+      // re-enabling these first would only produce a visible flash back to
+      // "looks fully clickable again" for however long that takes, exactly
+      // the "wait, is this actually disabled or not?" confusion reported
+      // live — a real click already succeeded and should visibly stay done.
+      return;
     } else {
       // An inline message, not alert() — a blocking native dialog for what's
       // usually a harmless race (e.g. a double-click landing after the
@@ -759,15 +1114,18 @@ async function sendRespond(text) {
       const data = await res.json().catch(() => ({}));
       errorEl.textContent = data.error || `Server returned ${res.status}`;
       setTimeout(() => { errorEl.textContent = ""; }, 4000);
+      if (sourceBtn) sourceBtn.textContent = originalLabel;
     }
   } catch (e) {
     errorEl.textContent = `Dashboard connection error: ${e.message}`;
     setTimeout(() => { errorEl.textContent = ""; }, 4000);
-  } finally {
-    sendBtn.disabled = false;
-    continueBtn.disabled = false;
-    choiceBtns.forEach((b) => { b.disabled = false; });
+    if (sourceBtn) sourceBtn.textContent = originalLabel;
   }
+  // Only reached on a failed/errored send (the success path returns early
+  // above) — re-enable so the human can actually retry.
+  sendBtn.disabled = false;
+  continueBtn.disabled = false;
+  choiceBtns.forEach((b) => { b.disabled = false; });
 }
 document.getElementById("respond-send").addEventListener("click", () => {
   sendRespond(document.getElementById("respond-text").value);
@@ -775,9 +1133,484 @@ document.getElementById("respond-send").addEventListener("click", () => {
 document.getElementById("respond-continue").addEventListener("click", () => {
   sendRespond("");
 });
-// Kills the stuck `claude auth login` child on the server (see dev-loop.js's
+
+// POST /note — always available (unlike #respond-box, never gated on
+// awaitingInput), for anything that isn't a direct answer to whatever
+// specific question the orchestrator currently happens to be asking. See
+// startDashboardServer()'s own POST /note handler and takePendingNotes() in
+// task-builder.js for how/when it actually gets addressed. The log itself
+// is now read from /chat-log.json (backed by CHAT_LOG_FILE on disk) rather
+// than kept only in this tab's DOM — confirmed live: a human sent a note,
+// reloaded the dashboard hours later, and had no way to tell whether it was
+// still pending or had already been read, since the in-memory log reset on
+// reload and the reply (once it comes) only ever appears in LIVE STATUS,
+// which had long since moved on to other messages.
+// Client-side only, keyed by note ts — the server has no "in progress"
+// status (only pending/addressed), and can't: task-builder.js doesn't learn
+// a note is even being worked on until its own turn actually starts
+// (emitEvent("agent-back", ...) inside runNoteAddressingTurn), which can be
+// a couple of seconds after the click. Marking it here, the instant the
+// button is clicked, closes that gap — requested directly: a clicked note
+// still showing bare "⏳ Pending" gave no sign the click had done anything.
+// Cleared as soon as a poll shows this entry is no longer "pending"
+// (renderChatLog below) — if the turn fails and re-queues it, status stays
+// "pending" and this reverts back to a plain, clickable "▶ Run now".
+const inFlightNoteTs = new Set();
+
+function makeChatLogEntry(e) {
+  const entry = document.createElement("div");
+  entry.className = "chat-log-entry" + (e.status === "pending" ? " pending" : "");
+  const timeEl = document.createElement("div");
+  timeEl.className = "chat-log-time";
+  timeEl.textContent = `${e.from === "human" ? "You" : "Orchestrator"} · ${new Date(e.ts).toLocaleString()}`;
+  const textEl = document.createElement("div");
+  textEl.textContent = e.text;
+  entry.appendChild(timeEl);
+  entry.appendChild(textEl);
+  if (e.from === "human") {
+    const running = e.status === "pending" && inFlightNoteTs.has(e.ts);
+    const statusRow = document.createElement("div");
+    statusRow.className = "chat-log-status-row";
+    const statusEl = document.createElement("span");
+    statusEl.className = "chat-log-status " + (running ? "running" : e.status);
+    statusEl.textContent = running ? "▶ Running…" : (e.status === "pending" ? "⏳ Pending — not yet addressed" : "✓ Addressed");
+    statusRow.appendChild(statusEl);
+    if (e.status === "pending") {
+      // Per-item action, requested directly in place of packing this into
+      // the respond-box itself (confirmed too cluttered there, with one
+      // button per pending note alongside Send/APPROVED/etc.) — this sends
+      // exactly ONE note, reconstructing NOTES_FILE's own line format
+      // ("- [ts] text") so takeSingleNoteLine() in task-builder.js can find
+      // and remove just this one, exact-match. Only enabled while a gate is
+      // actually open (see awaitingInputActive, updated from poll()) —
+      // there's nothing for this to resolve otherwise; task-builder.js
+      // isn't blocked waiting on anything to send it to.
+      // While running, the blue status text above is already the "it's
+      // running" signal — a second "Running…" on the button itself was
+      // redundant (confirmed live, looked like two different things).
+      if (!running) {
+        const runBtn = document.createElement("button");
+        runBtn.className = "chat-note-run-btn";
+        runBtn.textContent = "▶ Run now";
+        runBtn.disabled = !awaitingInputActive;
+        runBtn.title = awaitingInputActive ? "" : "The orchestrator isn't waiting for input right now.";
+        runBtn.addEventListener("click", () => {
+          inFlightNoteTs.add(e.ts);
+          renderChatLog(lastChatLogData);
+          const line = `- [${e.ts}] ${e.text}`;
+          sendRespond(`__ADDRESS_SINGLE_NOTE__:${line}`, runBtn);
+        });
+        statusRow.appendChild(runBtn);
+      }
+    }
+    entry.appendChild(statusRow);
+  }
+  return entry;
+}
+
+// Addressed entries (both sides of a resolved note) stay recorded forever —
+// deliberately not deleted, so "did my note from last week ever get
+// answered?" always has a real answer (see CHAT_LOG_FILE in task-builder.js)
+// — but showing every one of them by default doesn't scale: confirmed live,
+// with a handful of addressed notes already in the log, the still-pending
+// ones needed scrolling past a wall of resolved history to find. Addressed
+// entries are collapsed under a toggle by default; only pending ones (and
+// the toggle itself, when there's history to reveal) show up-front.
+let showAddressedChat = false;
+let lastChatLogData = null;
+
+function renderChatLog(data) {
+  lastChatLogData = data;
+  const log = document.getElementById("chat-log");
+  const empty = document.getElementById("chat-empty");
+  const badge = document.getElementById("chat-pending-badge");
+  const entries = (data && data.log) || [];
+  // A note stops being "in flight" the moment the server's own record of it
+  // is no longer "pending" — either it got addressed for real, or a failed
+  // attempt re-queued it and it's back to plain pending (see
+  // runNoteAddressingTurn()'s failure path in task-builder.js), which should
+  // revert its button to clickable again rather than stay stuck "Running…"
+  // forever.
+  for (const ts of [...inFlightNoteTs]) {
+    const match = entries.find((e) => e.from === "human" && e.ts === ts);
+    if (!match || match.status !== "pending") inFlightNoteTs.delete(ts);
+  }
+  log.innerHTML = "";
+  if (entries.length === 0) {
+    empty.style.display = "";
+  } else {
+    empty.style.display = "none";
+    const pendingEntries = entries.filter((e) => e.from === "human" && e.status === "pending");
+    // The single most recent orchestrator message, if there is one, stays
+    // visible even though every OTHER orchestrator reply collapses into
+    // history — otherwise a fresh explanation (e.g. "this note's turn
+    // failed, here's why, re-queued") was getting buried behind "Show
+    // addressed history" exactly when it mattered most: right after
+    // clicking something and watching nothing visible happen. Confirmed
+    // live: every orchestrator entry, including one written seconds ago
+    // about a note that's STILL pending right above it, was equally hidden.
+    const lastEntry = entries[entries.length - 1];
+    const pinnedLatest = lastEntry && lastEntry.from === "orchestrator" ? lastEntry : null;
+    const addressedEntries = entries.filter((e) => !(e.from === "human" && e.status === "pending") && e !== pinnedLatest);
+
+    if (addressedEntries.length > 0) {
+      const toggle = document.createElement("button");
+      toggle.id = "chat-history-toggle";
+      toggle.type = "button";
+      toggle.textContent = showAddressedChat
+        ? "▾ Hide addressed history"
+        : `▸ Show addressed history (${addressedEntries.length})`;
+      toggle.addEventListener("click", () => {
+        showAddressedChat = !showAddressedChat;
+        renderChatLog(lastChatLogData);
+      });
+      log.appendChild(toggle);
+    }
+    if (showAddressedChat) {
+      for (const e of addressedEntries) log.appendChild(makeChatLogEntry(e));
+    }
+    if (pinnedLatest) log.appendChild(makeChatLogEntry(pinnedLatest));
+    for (const e of pendingEntries) log.appendChild(makeChatLogEntry(e));
+
+    if (pendingEntries.length === 0 && !showAddressedChat && addressedEntries.length > 0) {
+      const allClear = document.createElement("div");
+      allClear.id = "chat-empty";
+      allClear.textContent = "Nothing pending — everything sent so far has been addressed.";
+      log.appendChild(allClear);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+  const pendingCount = (data && data.pendingCount) || 0;
+  if (pendingCount > 0) {
+    badge.textContent = String(pendingCount);
+    badge.style.display = "";
+  } else {
+    badge.style.display = "none";
+  }
+  updatePendingNotesBanner(pendingCount);
+}
+
+// A discoverable, explicit "address this now" action, instead of relying on
+// someone knowing that typing anything at the approval prompt happens to
+// also flush pending notes as a side effect — real, direct feedback: "you
+// know to do this because I told you; how would my own end users guess it?"
+// Only shown while the respond-box itself is actually open (awaitingInput),
+// since there's nothing to send it to otherwise. Sends a reserved sentinel
+// (see ADDRESS_NOTES_SENTINEL in task-builder.js) via the normal /respond
+// channel — recognized and consumed there, never forwarded to the model as
+// if it were a real message.
+// Tracks whether task-builder.js is actually blocked waiting on an answer
+// right now (data.awaitingInput in poll()) — a per-note "▶ Run now" button
+// (see makeChatLogEntry()) only makes sense while that's true, since
+// there's otherwise nothing for it to resolve.
+let awaitingInputActive = false;
+function setAwaitingInputActive(active) {
+  awaitingInputActive = active;
+  document.querySelectorAll(".chat-note-run-btn").forEach((btn) => {
+    btn.disabled = !active;
+    btn.title = active ? "" : "The orchestrator isn't waiting for input right now.";
+  });
+}
+let lastPendingNotesCount = 0;
+function updatePendingNotesBanner(pendingCount) {
+  if (typeof pendingCount === "number") lastPendingNotesCount = pendingCount;
+  const banner = document.getElementById("pending-notes-banner");
+  const respondBox = document.getElementById("respond-box");
+  const show = lastPendingNotesCount > 0 && respondBox.classList.contains("active");
+  banner.style.display = show ? "" : "none";
+  if (show) {
+    document.getElementById("pending-notes-text").textContent =
+      lastPendingNotesCount === 1 ? "1 note is waiting for the orchestrator." : `${lastPendingNotesCount} notes are waiting for the orchestrator.`;
+  }
+}
+document.getElementById("pending-notes-address-btn").addEventListener("click", (e) => {
+  sendRespond("__ADDRESS_PENDING_NOTES__", e.target);
+});
+
+async function loadChatLog() {
+  try {
+    const res = await fetch("/chat-log.json", { cache: "no-store" });
+    const data = await res.json();
+    renderChatLog(data);
+  } catch (e) {
+    // Silent — the next poll tick will retry; a transient fetch failure
+    // here shouldn't disturb whatever's currently shown.
+  }
+}
+
+async function sendChat() {
+  const input = document.getElementById("chat-text");
+  const btn = document.getElementById("chat-send");
+  const statusEl = document.getElementById("chat-status");
+  const text = input.value.trim();
+  if (!text) return;
+  btn.disabled = true;
+  statusEl.textContent = "Sending…";
+  try {
+    const res = await fetch("/note", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (res.ok) {
+      input.value = "";
+      statusEl.textContent = "✓ Queued — the orchestrator will see it at the next checkpoint.";
+      await loadChatLog();
+      setTimeout(() => { statusEl.textContent = ""; }, 4000);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      statusEl.textContent = data.error || `Server returned ${res.status}`;
+    }
+  } catch (e) {
+    statusEl.textContent = `Connection error: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById("chat-send").addEventListener("click", sendChat);
+document.getElementById("chat-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendChat();
+});
+loadChatLog();
+
+// Matches reviewPlanUntilApproved()'s exact prompt text in task-builder.js
+// (`Review ${planPath}. Type APPROVED to continue, ...`) — the "📄 View
+// Plan" button only makes sense while THIS specific prompt is showing, not
+// every awaitingInput state (a design-review or session-limit prompt has no
+// plan file to show).
+function isPlanReviewPrompt(prompt) {
+  return /^Review \S+\.md\. Type APPROVED/.test(prompt || "");
+}
+
+// Splits a plan into { before, questionsSection, after } around its "##
+// Open Questions" heading — `before` and `after` are what the two editable
+// textareas show (a real plan has real content on BOTH sides: Status/Goal
+// before, Steps/Validation/Risks/Rollout Order after — confirmed live: an
+// earlier version of this only split off `before` and silently dropped
+// everything after Open Questions, both from the editor's view AND from
+// what got sent back on submit). `questionsSection` is kept verbatim
+// (unedited) so it can be spliced back in when reconstructing the full text
+// for submission — the question cards are the editing surface for THAT
+// part, not this raw text. No heading found returns the whole text as
+// `before` with empty questionsSection/after.
+function splitPlanSections(planText) {
+  const headingMatch = planText.match(/\n##\s*Open Questions\b/i);
+  if (!headingMatch) return { before: planText, questionsSection: "", after: "" };
+  const before = planText.slice(0, headingMatch.index);
+  const afterHeadingStart = headingMatch.index + headingMatch[0].length;
+  const rest = planText.slice(afterHeadingStart);
+  const nextHeadingMatch = rest.match(/\n##\s|\n---/);
+  const questionsSection = planText.slice(headingMatch.index, afterHeadingStart + (nextHeadingMatch ? nextHeadingMatch.index : rest.length));
+  const after = nextHeadingMatch ? rest.slice(nextHeadingMatch.index) : "";
+  return { before, questionsSection, after };
+}
+
+// Splits the "## Open Questions" section into individual questions, each
+// pulled apart into { question, recommended, humanAnswer }. Handles both
+// shapes seen in real plans: a numbered list ("1. <question>" followed by
+// an indented "- Recommended: <answer>" line — task-builder.js's actual
+// planning-rules format) and a flatter single-bullet form ("- <question>
+// Recommended: <answer>." all on one line, seen in older plans/examples).
+// An already-answered question gets an indented "*HUMAN ANSWER:* ..." line
+// near it, per askClaudeToRevisePlan()'s own instructions. Returns [] if
+// the section is missing/empty rather than throwing — a plan with no open
+// questions is a normal, expected shape, not a parsing failure.
+function parseOpenQuestions(planText) {
+  const sectionMatch = planText.match(/##\s*Open Questions\s*\n([\s\S]*?)(?:\n##\s|\n---|$)/i);
+  if (!sectionMatch) return [];
+  const lines = sectionMatch[1].split("\n");
+  const questions = [];
+  let current = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Strip a leading "- " before checking — "- Recommended: ..." (the
+    // indented sub-bullet under a numbered question) IS a continuation
+    // line, but starts with a dash just like a real new bullet would, so
+    // checking the raw trimmed text missed it and let it become its own
+    // empty-question card instead of attaching to the question above it.
+    const dashStripped = trimmed.replace(/^-\s*/, "");
+    const isContinuationLine = /^Recommended:/i.test(dashStripped) || /^\*HUMAN ANSWER:\*/i.test(dashStripped);
+    const numberedMatch = !isContinuationLine && line.match(/^\s*\d+\.\s+(.+)$/);
+    const dashMatch = !isContinuationLine && !numberedMatch && line.match(/^\s*-\s*(.+)$/);
+    const bulletText = numberedMatch ? numberedMatch[1] : dashMatch ? dashMatch[1] : null;
+    if (bulletText) {
+      const inlineRec = bulletText.match(/^(.*?)\s*Recommended:\s*(.+?)\.?\s*$/i);
+      current = inlineRec
+        ? { question: inlineRec[1].trim(), recommended: inlineRec[2].trim(), humanAnswer: null }
+        : { question: bulletText.trim(), recommended: null, humanAnswer: null };
+      questions.push(current);
+      continue;
+    }
+    if (current) {
+      const recMatch = dashStripped.match(/^Recommended:\s*(.+)/i);
+      if (recMatch && !current.recommended) current.recommended = recMatch[1].trim();
+      const haMatch = dashStripped.match(/^\*HUMAN ANSWER:\*\s*(.+)/i);
+      if (haMatch) current.humanAnswer = haMatch[1].trim();
+    }
+  }
+  return questions;
+}
+
+// { question -> answer string } for whatever the human typed into each
+// question's own input — "Use recommended" just pre-fills that same input
+// (see renderOpenQuestions() below) rather than being a separate exclusive
+// state, so this only ever needs to read one thing per card, and the human
+// can freely edit a recommended answer before submitting it. Read fresh
+// when Submit is clicked, not kept in sync live.
+//
+// A question NEVER answered before, left untouched now, defaults to its own
+// recommended answer rather than being skipped — the orchestrator already
+// vetted that recommendation as reasonable when it wrote the plan, so
+// silence shouldn't mean "no answer at all," it should mean "the
+// recommendation stands." But a question ALREADY answered in an earlier
+// round, left untouched now, is skipped entirely rather than re-defaulting
+// — confirmed live: resending the exact same already-answered text as
+// "feedback" every time this panel opens triggered a whole revision cycle
+// for content that hadn't actually changed, just to land back on the exact
+// same review prompt a minute later. Only a genuinely NEW/changed answer
+// (typed text that differs from what was already recorded) is worth another
+// round.
+function collectPlanAnswers() {
+  const answers = [];
+  document.querySelectorAll(".plan-question-card").forEach((card) => {
+    const question = card.dataset.question;
+    const input = card.querySelector(".plan-custom-answer-input");
+    const typed = input ? input.value.trim() : "";
+    const alreadyAnswered = card.dataset.humanAnswer || "";
+    if (typed) {
+      if (typed !== alreadyAnswered) answers.push({ question, answer: typed });
+    } else if (!alreadyAnswered && card.dataset.recommended) {
+      answers.push({ question, answer: card.dataset.recommended });
+    }
+  });
+  return answers;
+}
+
+function renderOpenQuestions(questions) {
+  const container = document.getElementById("plan-open-questions");
+  container.innerHTML = "";
+  if (questions.length === 0) {
+    container.innerHTML = `<div style="font-size:12px;color:var(--dim);">No Open Questions in this plan.</div>`;
+    return;
+  }
+  for (const q of questions) {
+    const card = document.createElement("div");
+    card.className = "plan-question-card";
+    card.dataset.question = q.question;
+    card.dataset.recommended = q.recommended || "";
+    card.dataset.humanAnswer = q.humanAnswer || "";
+    card.innerHTML =
+      `<div class="plan-question-text">${q.question}</div>` +
+      (q.recommended ? `<div class="plan-question-recommended">Recommended: ${q.recommended}</div>` : "") +
+      (q.humanAnswer ? `<div class="plan-question-answered">✓ Already answered: ${q.humanAnswer}</div>` : "") +
+      `<div class="plan-question-controls">` +
+      (q.recommended ? `<button type="button" class="plan-use-recommended-btn">✓ Use recommended</button>` : "") +
+      `<input type="text" class="plan-custom-answer-input" placeholder="${q.humanAnswer ? "Change the answer…" : "Type your answer…"}">` +
+      `</div>`;
+    const useBtn = card.querySelector(".plan-use-recommended-btn");
+    const input = card.querySelector(".plan-custom-answer-input");
+    // Fills the input rather than toggling a separate selected state — both
+    // affordances stay visible and usable together (click it, then tweak
+    // the wording, or ignore it and type something else entirely).
+    if (useBtn) useBtn.addEventListener("click", () => { input.value = q.recommended; input.focus(); });
+    container.appendChild(card);
+  }
+}
+
+// Tracks what the two textareas actually started with (everything before
+// and after the "## Open Questions" section — see splitPlanSections()), so
+// Submit can tell "the human edited the prose" apart from "they left it
+// alone and only used the question cards" — compared against each
+// textarea's live value at submit time. originalQuestionsSectionText is the
+// Open Questions section verbatim, kept only so a reconstructed full plan
+// (see the submit handler) has something to splice between the two edited
+// halves — the question cards are the editing surface for that part, not
+// either textarea.
+let originalBeforeText = "";
+let originalAfterText = "";
+let originalQuestionsSectionText = "";
+
+async function openPlanView() {
+  const overlay = document.getElementById("plan-view-overlay");
+  const errorEl = document.getElementById("plan-view-error");
+  errorEl.textContent = "";
+  overlay.classList.add("active");
+  document.getElementById("plan-open-questions").innerHTML = `<div style="font-size:12px;color:var(--dim);">Loading…</div>`;
+  document.getElementById("plan-raw-content").value = "";
+  document.getElementById("plan-after-content").value = "";
+  try {
+    const res = await fetch("/docs/LAST_PLAN.md", { cache: "no-store" });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const text = await res.text();
+    const sections = splitPlanSections(text);
+    originalBeforeText = sections.before.trim();
+    originalAfterText = sections.after.trim();
+    originalQuestionsSectionText = sections.questionsSection.trim();
+    document.getElementById("plan-raw-content").value = originalBeforeText;
+    document.getElementById("plan-after-content").value = originalAfterText;
+    renderOpenQuestions(parseOpenQuestions(text));
+  } catch (e) {
+    document.getElementById("plan-open-questions").innerHTML = "";
+    errorEl.textContent = `Couldn't load the plan: ${e.message}`;
+  }
+}
+
+document.getElementById("view-plan-btn").addEventListener("click", openPlanView);
+document.getElementById("plan-view-close-btn").addEventListener("click", () => {
+  document.getElementById("plan-view-overlay").classList.remove("active");
+});
+document.getElementById("plan-view-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "plan-view-overlay") document.getElementById("plan-view-overlay").classList.remove("active"); // dim backdrop, not the panel
+});
+// A one-click path for "I reviewed it, nothing to change" — this panel's
+// own Submit always sends FEEDBACK (a revision request), never the actual
+// APPROVED that ends the review loop; without this, approving with nothing
+// to say meant closing the panel first to find the plain respond-box's own
+// ✅ APPROVED choice button underneath it.
+document.getElementById("plan-view-approve-btn").addEventListener("click", async () => {
+  await sendRespond("APPROVED");
+  document.getElementById("plan-view-overlay").classList.remove("active");
+});
+document.getElementById("plan-view-submit-btn").addEventListener("click", async () => {
+  const answers = collectPlanAnswers();
+  const errorEl = document.getElementById("plan-view-error");
+  const beforeEdited = document.getElementById("plan-raw-content").value;
+  const afterEdited = document.getElementById("plan-after-content").value;
+  const textWasEdited = beforeEdited.trim() !== originalBeforeText || afterEdited.trim() !== originalAfterText;
+
+  // Nothing new to say (every question was already answered in an earlier
+  // round and left untouched now, no text edits either) isn't an error —
+  // it just means there's nothing left to review, so Submit acts exactly
+  // like "✅ Approve as-is" instead of blocking with a confusing message
+  // asking for input that genuinely isn't needed.
+  if (answers.length === 0 && !textWasEdited) {
+    await sendRespond("APPROVED");
+    document.getElementById("plan-view-overlay").classList.remove("active");
+    return;
+  }
+
+  // Both can be sent together — a question answer names a specific point,
+  // the edited text is a full rewrite instruction. Reconstructs the WHOLE
+  // plan (edited before + the original Open Questions section, verbatim +
+  // edited after) rather than sending just the edited halves — sending
+  // only fragments risks the LLM losing track of the content in between
+  // that this panel doesn't let the human edit directly. askClaudeToRevisePlan
+  // reads "User feedback for this revision cycle" as plain prose, so this
+  // just needs to read clearly as instructions, not a special format.
+  const parts = [];
+  if (answers.length > 0) {
+    parts.push(answers.map((a) => `For "${a.question}": ${a.answer}`).join("\n"));
+  }
+  if (textWasEdited) {
+    const fullEditedText = [beforeEdited.trim(), originalQuestionsSectionText, afterEdited.trim()].filter(Boolean).join("\n\n");
+    parts.push(`I edited the plan directly — please update it to match this version exactly (keep this content, don't regenerate from scratch):\n\n${fullEditedText}`);
+  }
+  await sendRespond(parts.join("\n\n"));
+  document.getElementById("plan-view-overlay").classList.remove("active");
+});
+// Kills the stuck `claude auth login` child on the server (see task-builder.js's
 // /cancel-login route) — the only way to escape a hung/wrong-browser login
-// without a terminal. dev-loop.js's checkLlmAccount()/attemptLogin() then
+// without a terminal. task-builder.js's checkLlmAccount()/attemptLogin() then
 // offers a retry through the normal respond-box, not another dead end.
 document.getElementById("respond-cancel-login").addEventListener("click", () => {
   fetch("/cancel-login", { method: "POST" }).catch(() => {});
@@ -787,7 +1620,7 @@ document.getElementById("respond-text").addEventListener("keydown", (e) => {
 });
 
 // One-click buttons for prompts that offer a fixed set of answers (e.g.
-// dev-loop.js's account-confirmation "y"/"s" choices) — sendRespond(value)
+// task-builder.js's account-confirmation "y"/"s" choices) — sendRespond(value)
 // is exactly what typing that value + Send would do, this just saves the
 // typing. The free-text box + Send/Continue stay visible alongside these
 // for anything not covered by a button (e.g. typing "n" to decline).
@@ -797,7 +1630,7 @@ function renderRespondChoices(choices, promptText) {
   
   const effectiveChoices = Array.isArray(choices) ? [...choices] : [];
   
-  // Fallback for active runs that haven't restarted dev-loop.js yet:
+  // Fallback for active runs that haven't restarted task-builder.js yet:
   // If the prompt explicitly asks for "APPROVED" but the server didn't
   // send any choice buttons, inject it automatically.
   if (effectiveChoices.length === 0 && promptText && promptText.includes("APPROVED")) {
@@ -809,10 +1642,21 @@ function renderRespondChoices(choices, promptText) {
     const btn = document.createElement("button");
     btn.className = "respond-choice-btn";
     btn.textContent = label;
-    btn.addEventListener("click", () => sendRespond(value));
+    btn.addEventListener("click", () => sendRespond(value, btn));
     el.appendChild(btn);
   }
 }
+
+// A plain window.open(url, "_blank") — this page has no preload/IPC access
+// of its own (served over http:// by task-builder.js, not a trusted
+// Electron page), so it can't call shell.openExternal directly. The outer
+// window's own <webview> "new-window" listener (see electron/renderer/
+// renderer.js) is what actually catches this and hands the URL to a real
+// browser tab instead of Electron trying to open it as a new app window.
+document.getElementById("iframe-open-browser").addEventListener("click", () => {
+  const url = document.getElementById("liveapp-url-label").textContent.trim();
+  if (url) window.open(url, "_blank");
+});
 
 document.getElementById("iframe-refresh").addEventListener("click", async () => {
   const btn = document.getElementById("iframe-refresh");
@@ -822,7 +1666,7 @@ document.getElementById("iframe-refresh").addEventListener("click", async () => 
   try {
     // Server-side: no-ops if something's already answering on the frontend
     // URL, otherwise spawns `npm run dev` for it — same check-then-spawn
-    // logic dev-loop.js runs at startup, just triggerable on demand here.
+    // logic task-builder.js runs at startup, just triggerable on demand here.
     await fetch("/ensure-frontend", { method: "POST" });
   } catch {
     // Dashboard server itself unreachable — reload attempt below will just
@@ -844,8 +1688,110 @@ document.querySelectorAll(".right-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".right-tab").forEach((b) => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".right-tab-panel").forEach((p) => p.classList.toggle("active", p.id === btn.dataset.panel));
+    // Reports keep arriving for as long as the run continues, unlike the
+    // Design tab's fixed one-time mockup set — re-list every time this tab
+    // is opened rather than only once at page load, so a report an agent
+    // just finished writing shows up without needing a page reload.
+    if (btn.id === "tab-reports") loadReportList();
+    if (btn.id === "tab-plan") loadPlanList();
   });
 });
+
+// PRD + task plan files were already readable via /docs/** and the new
+// /plan/** static route (see startDashboardServer() in task-builder.js),
+// but same gap as the Reports panel — nothing in this UI ever told a human
+// these files existed or where to find `.plan/`'s naming convention.
+// /plan-files.json lists them (PRD, then Backlog, then each task plan in
+// file order); this panel shows whichever one is picked, raw, inline —
+// including each plan's own "Addendum (human notes)" section, which is
+// where chat-driven changes folded into an existing task actually land.
+async function loadPlanList() {
+  try {
+    const res = await fetch("/plan-files.json", { cache: "no-store" });
+    const data = await res.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+    const select = document.getElementById("plan-select");
+    const previouslySelected = select.value;
+    document.getElementById("plan-empty").style.display = files.length ? "none" : "";
+    document.getElementById("plan-content").style.display = files.length ? "" : "none";
+    if (!files.length) {
+      select.innerHTML = "";
+      return;
+    }
+    select.innerHTML = files.map((f) => `<option value="${f.path}">${f.label}</option>`).join("");
+    const stillExists = files.some((f) => f.path === previouslySelected);
+    select.value = stillExists ? previouslySelected : files[0].path;
+    await loadPlanContent(select.value);
+  } catch {
+    // Dashboard server not reachable this tick — leave whatever was already
+    // showing rather than blanking it out over a transient fetch failure.
+  }
+}
+
+async function loadPlanContent(filePath) {
+  if (!filePath) return;
+  try {
+    // docs/PRD.md and docs/.../*.md go through /docs/**; .plan/*.md files
+    // live outside docs/ and go through the separate /plan/** route.
+    const url = filePath.startsWith(".plan/")
+      ? `/plan/${encodeURIComponent(filePath.slice(".plan/".length))}`
+      : `/${filePath.split("/").map(encodeURIComponent).join("/")}`;
+    const res = await fetch(url, { cache: "no-store" });
+    document.getElementById("plan-content").textContent = res.ok ? await res.text() : `Could not load this file (server returned ${res.status}).`;
+  } catch (e) {
+    document.getElementById("plan-content").textContent = `Could not load this file: ${e.message}`;
+  }
+}
+
+document.getElementById("plan-select").addEventListener("change", (e) => loadPlanContent(e.target.value));
+document.getElementById("plan-refresh").addEventListener("click", loadPlanList);
+
+// Agent reports (frontend/backend/QA/security, per task) were already
+// readable via the generic /docs/** static route (see startDashboardServer()
+// in task-builder.js), but nothing in this UI ever told a human they existed
+// or what they were named — confirmed live: there was simply no way to find
+// them from here at all. /agent-reports.json (new) lists what's on disk;
+// this panel lets picking one show its raw content inline.
+let currentReportFiles = [];
+
+async function loadReportList() {
+  try {
+    const res = await fetch("/agent-reports.json", { cache: "no-store" });
+    const data = await res.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+    const select = document.getElementById("report-select");
+    const previouslySelected = select.value;
+    currentReportFiles = files;
+    document.getElementById("report-empty").style.display = files.length ? "none" : "";
+    document.getElementById("report-content").style.display = files.length ? "" : "none";
+    if (!files.length) {
+      select.innerHTML = "";
+      return;
+    }
+    select.innerHTML = files.map((f) => `<option value="${f}">${f}</option>`).join("");
+    // Keep whatever was already open (e.g. a manual refresh) if it still
+    // exists in the refreshed list; otherwise default to the newest one
+    // (files are sorted newest-first by the server).
+    select.value = files.includes(previouslySelected) ? previouslySelected : files[0];
+    await loadReportContent(select.value);
+  } catch {
+    // Dashboard server not reachable this tick — leave whatever was already
+    // showing rather than blanking it out over a transient fetch failure.
+  }
+}
+
+async function loadReportContent(fileName) {
+  if (!fileName) return;
+  try {
+    const res = await fetch(`/docs/agent-reports/${encodeURIComponent(fileName)}`, { cache: "no-store" });
+    document.getElementById("report-content").textContent = res.ok ? await res.text() : `Could not load this report (server returned ${res.status}).`;
+  } catch (e) {
+    document.getElementById("report-content").textContent = `Could not load this report: ${e.message}`;
+  }
+}
+
+document.getElementById("report-select").addEventListener("change", (e) => loadReportContent(e.target.value));
+document.getElementById("report-refresh").addEventListener("click", loadReportList);
 
 // Design-mockup preview — lets the human review the Designer agent's output
 // right inside the dashboard instead of hunting down and opening each
@@ -1001,7 +1947,7 @@ function shuffle(arr) {
 }
 
 // Fetches this project's actual backend-service list from the server (see
-// the /status.json route in dev-loop.js, which injects `services` fresh
+// the /status.json route in task-builder.js, which injects `services` fresh
 // from a live backend/ directory scan) and builds the ring around whatever
 // that turns out to be — no service list hardcoded client-side.
 async function initDashboard() {
@@ -1070,17 +2016,39 @@ function setActiveCategory(category, keys) {
     if (beam) beam.classList.toggle("active", isActive);
   });
 
-  // Label shows the first actually-active node's identity — accurate even
-  // for "backend", where that's now whichever specific service(s) are
-  // really in scope, not a generic stand-in.
-  const repKey = activeKeys.size ? [...activeKeys][0] : category;
+  // Label/icon shows the first actually-active node's identity — accurate
+  // even for "backend", where that's now whichever specific service(s) are
+  // really in scope, not a generic stand-in. When exactly two are active
+  // (the common real case: QA + Security running concurrently — see
+  // parallelActiveKeys in task-builder.js), show BOTH avatars and both
+  // names side by side instead of a bare "+1" next to just one icon —
+  // confirmed live: seeing only QA's face while a "+1" badge to its name
+  // was the only sign Security was also running wasn't obvious enough.
+  // Three or more active still falls back to the "+N" count, same as before.
+  const activeKeysArr = [...activeKeys];
+  const repKey = activeKeysArr.length ? activeKeysArr[0] : category;
   const info = BY_KEY[repKey] || { icon: "🤖", img: null, name: category || "idle" };
   const iconImg = document.getElementById("active-icon-img");
+  const iconImg2 = document.getElementById("active-icon-img-2");
   if (info.img) iconImg.src = `/assets/images/${info.img}`;
-  document.getElementById("active-name").textContent = activeKeys.size > 1 ? `${info.name} +${activeKeys.size - 1}` : info.name;
+  if (activeKeysArr.length === 2) {
+    const info2 = BY_KEY[activeKeysArr[1]];
+    if (info2?.img) {
+      iconImg2.src = `/assets/images/${info2.img}`;
+      iconImg2.style.display = "";
+      document.getElementById("active-name").textContent = `${info.name} + ${info2.name}`;
+    } else {
+      iconImg2.style.display = "none";
+      document.getElementById("active-name").textContent = `${info.name} +1`;
+    }
+  } else {
+    iconImg2.style.display = "none";
+    document.getElementById("active-name").textContent = activeKeysArr.length > 1 ? `${info.name} +${activeKeysArr.length - 1}` : info.name;
+  }
 }
 
 let lastSeq = 0;
+let lastFrontendUrl = null;
 
 async function poll() {
   const dot = document.getElementById("dot");
@@ -1098,15 +2066,24 @@ async function poll() {
       : account;
 
     // "Live App" tab stays disabled (and the iframe unset) until
-    // dev-loop.js's own frontendReady check has actually succeeded at
-    // least once — see /status.json's own comment for what this can and
-    // can't guarantee (it can't tell this project's dev server apart from
-    // an unrelated one left running on the same port).
+    // task-builder.js's own frontendReady check has actually succeeded at
+    // least once. The URL itself (data.frontendUrl) is read fresh from
+    // /status.json rather than hardcoded — ensureFrontendDevServerRunning()
+    // in task-builder.js can bind a different port than the default one if
+    // that port turned out to already be taken by an unrelated project's
+    // stray dev server.
     const liveAppTab = document.getElementById("tab-liveapp");
-    if (data.frontendReady && liveAppTab.disabled) {
+    const frontendUrl = data.frontendUrl || "http://localhost:5173";
+    document.getElementById("liveapp-url-label").textContent = frontendUrl;
+    if (data.frontendReady && (liveAppTab.disabled || frontendUrl !== lastFrontendUrl)) {
+      // Also re-points the iframe if the URL itself changed since the last
+      // poll (not just on the disabled->enabled transition) — the frontend
+      // dev server can land on a different port than last time (e.g. it
+      // restarted and its previous port was taken by then).
       liveAppTab.disabled = false;
       liveAppTab.title = "";
-      document.getElementById("app-frame").src = "http://localhost:5173";
+      lastFrontendUrl = frontendUrl;
+      document.getElementById("app-frame").src = frontendUrl;
     } else if (!data.frontendReady && !liveAppTab.disabled) {
       liveAppTab.disabled = true;
       liveAppTab.title = "Waiting for the frontend dev server to respond…";
@@ -1138,13 +2115,13 @@ async function poll() {
 
     // Session-limit reset time — a stable banner (not the volatile `message`
     // line, which the very next routine output line overwrites) that stays
-    // up for as long as dev-loop.js reports this field, i.e. until the human
+    // up for as long as task-builder.js reports this field, i.e. until the human
     // actually responds and the retry begins (see blockAndRetry() in
-    // dev-loop.js).
+    // task-builder.js).
     document.getElementById("session-limit-banner").textContent =
       data.sessionLimit && data.sessionLimit.resetsAt ? `⏳ Session limit hit — resets ${data.sessionLimit.resetsAt}` : "";
 
-    // "Waiting for you" box — lets a human answer dev-loop.js's blocking
+    // "Waiting for you" box — lets a human answer task-builder.js's blocking
     // terminal prompt (session-limit retry, design-review APPROVED/feedback,
     // plan approval, ...) from here instead of switching to the terminal.
     // Only touches the prompt text / visibility when the prompt itself
@@ -1152,26 +2129,46 @@ async function poll() {
     // out by the next 1-second poll.
     const respondBox = document.getElementById("respond-box");
     const respondPrompt = document.getElementById("respond-prompt");
+    document.getElementById("awaiting-input-banner").classList.toggle("active", !!data.awaitingInput);
     if (data.awaitingInput) {
       respondBox.classList.add("active");
+      updatePendingNotesBanner();
+      setAwaitingInputActive(true);
       // expectsText === false is the "press Enter to retry, text is never
-      // read" case (see askUserInput() in dev-loop.js) — show only the
+      // read" case (see askUserInput() in task-builder.js) — show only the
       // Continue button, no textbox, so it's not implying typing matters.
       respondBox.classList.toggle("text-mode", data.awaitingInput.expectsText !== false);
       respondBox.classList.toggle("enter-mode", data.awaitingInput.expectsText === false);
       // Only for the standing "claude auth login is running" state (see
-      // dev-loop.js's /status.json route) — a stuck login (wrong browser,
+      // task-builder.js's /status.json route) — a stuck login (wrong browser,
       // closed tab too early, ...) otherwise has no way out of this box
       // short of killing the whole process from a terminal.
       document.getElementById("respond-cancel-login").style.display = data.awaitingInput.cancellable ? "" : "none";
+      document.getElementById("view-plan-btn").style.display = isPlanReviewPrompt(data.awaitingInput.prompt) ? "" : "none";
       if (respondPrompt.dataset.prompt !== data.awaitingInput.prompt) {
         respondPrompt.dataset.prompt = data.awaitingInput.prompt;
         respondPrompt.textContent = data.awaitingInput.prompt;
         renderRespondChoices(data.awaitingInput.choices, data.awaitingInput.prompt);
+        // #respond-send/#respond-continue are the two buttons NOT rebuilt by
+        // renderRespondChoices() above (unlike .respond-choice-btn, these are
+        // fixed elements reused across every prompt) — sendRespond()
+        // deliberately leaves a successfully-clicked button disabled so the
+        // human can see their click actually registered (see its own
+        // comment), but that only makes sense for THIS prompt. Confirmed
+        // live: without resetting them here, a successful send on one
+        // prompt left both buttons permanently disabled on every prompt
+        // after it — looked exactly like the whole box had silently stopped
+        // working.
+        document.getElementById("respond-send").disabled = false;
+        document.getElementById("respond-continue").disabled = false;
       }
     } else {
       respondBox.classList.remove("active", "text-mode", "enter-mode");
+      updatePendingNotesBanner();
+      setAwaitingInputActive(false);
       document.getElementById("respond-cancel-login").style.display = "none";
+      document.getElementById("view-plan-btn").style.display = "none";
+      document.getElementById("plan-view-overlay").classList.remove("active");
       if (respondPrompt.dataset.prompt) {
         respondPrompt.dataset.prompt = "";
         document.getElementById("respond-text").value = "";
@@ -1180,7 +2177,7 @@ async function poll() {
     }
 
     // Audio cue — driven ONLY by `lastEvent`, which routine output can never
-    // overwrite (see emitEvent()'s comment in dev-loop.js). Only a genuinely
+    // overwrite (see emitEvent()'s comment in task-builder.js). Only a genuinely
     // NEW event (seq increased since the last poll) plays — re-fetching the
     // same still-current event on the next poll must never replay its sound.
     // While muted, `lastSeq` must NOT advance past an unplayed event — only
@@ -1202,7 +2199,7 @@ async function poll() {
     // The orchestrator process (and with it, this very dashboard server) can
     // legitimately exit — a deliberate Stop click (Electron's own "■ Stop"
     // button, which deliberately stays on this screen instead of navigating
-    // away — see renderer.js), abortRun() in dev-loop.js after a declined
+    // away — see renderer.js), abortRun() in task-builder.js after a declined
     // account-confirmation prompt, a crash, or finishing the whole backlog.
     // Without this, the tab just silently stops updating with no visible
     // sign anything happened, AND whichever agent was active when the
@@ -1217,9 +2214,9 @@ async function poll() {
   }
 
   // Task-history data is fetched straight from its own file under docs/cost/
-  // (a generic static route in dev-loop.js, not a shaped /status.json field)
+  // (a generic static route in task-builder.js, not a shaped /status.json field)
   // — so changing what's shown here, or the file's own shape, never needs a
-  // dev-loop.js restart again; only this page needs to reload. Kept in its
+  // task-builder.js restart again; only this page needs to reload. Kept in its
   // own try/catch so a hiccup here never breaks the live-status half above.
   try {
     const historyRes = await fetch("/docs/cost/task-history.json", { cache: "no-store" });
@@ -1259,8 +2256,15 @@ setActiveCategory("orchestrator");
 initDashboard().finally(() => {
   poll();
   setInterval(poll, 1000);
+  // Polled independently of poll()/status.json (and on its own slower
+  // cadence) so the Chat tab's pending badge stays accurate even while that
+  // tab isn't open — the whole point is noticing a note that's still
+  // unaddressed without having to go look.
+  setInterval(loadChatLog, 5000);
 });
 initDesignMockups();
+loadReportList();
+loadPlanList();
 </script>
 </body>
 </html>

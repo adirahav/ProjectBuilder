@@ -37,7 +37,7 @@ npm --prefix frontend run dev                            # port 5173
 
 ### 5. VSCode / Terminal setup
 - Open the project folder in VSCode
-- Open 4 terminal panes: Orchestrator (dev-loop) | user-management-service | tour-service | Frontend (`npm run dev`)
+- Open 4 terminal panes: Orchestrator (task-builder) | user-management-service | tour-service | Frontend (`npm run dev`)
 - Font size 18+ for audience readability
 
 ---
@@ -57,7 +57,7 @@ Show:
 
 In Terminal 1 (Orchestrator pane):
 ```bash
-node development/dev-loop.js
+node development/task-builder.js
 ```
 
 The orchestrator will:

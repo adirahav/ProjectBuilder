@@ -1,5 +1,6 @@
 const step1El = document.getElementById("step-1")
 const stepConfigEl = document.getElementById("step-config")
+const stepModelsEl = document.getElementById("step-models")
 const stepChatEl = document.getElementById("step-chat")
 const step2El = document.getElementById("step-2")
 const runAreaEl = document.getElementById("run-area")
@@ -24,6 +25,17 @@ const logEl = document.getElementById("log")
 const logPaneEl = document.getElementById("log-pane")
 const webviewEl = document.getElementById("dashboard-view")
 
+// agent-dashboard.html's own "🌐 Open in Browser" button just does a plain
+// `window.open(url, "_blank")` (it has no preload/IPC access of its own —
+// served over plain http:// by task-builder.js, not a trusted Electron
+// page). This USED to be handled here via the <webview> DOM "new-window"
+// event, but that's deprecated since Electron 15 and — confirmed live —
+// no longer reliably stops Electron's own default popup handling (a second
+// Electron window, inheriting this app's own menu/chrome, kept opening
+// regardless of preventDefault()). The real fix is main-process-side now:
+// see electron/main.js's "web-contents-created" + setWindowOpenHandler()
+// on the webview's own webContents — nothing needed here anymore.
+
 let selectedProjectPath = null
 let selectedWorkspacePath = null
 let detectedLlmAccounts = { claude: null, cursor: null, githubCopilot: null }
@@ -38,6 +50,7 @@ let configReturnStep = 1
 function goToStep(n) {
   step1El.classList.toggle("active", n === 1)
   stepConfigEl.classList.toggle("active", n === "config")
+  stepModelsEl.classList.toggle("active", n === "models")
   stepChatEl.classList.toggle("active", n === "chat")
   step2El.classList.toggle("active", n === 2)
   runAreaEl.classList.toggle("active", n === "run")
@@ -78,6 +91,7 @@ function addChatMessage(role, text) {
 let currentThinkingLabelEl = null
 
 function addThinkingMessage() {
+  setAttentionBadge(false) // agent is working now, not waiting on the user
   const el = document.createElement("div")
   el.className = "chat-msg thinking"
   el.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> <span class="thinking-label">Thinking…</span>`
@@ -100,26 +114,70 @@ function removeThinkingMessage(thinkingEl) {
 // plain text (e.g. "You've hit your session limit · resets 11:50pm") — this
 // used to come through as an ordinary chat bubble with no way to act on it
 // beyond typing into a box that would just fail the same way again until
-// the limit actually resets. Same pattern dev-loop.js's own
+// the limit actually resets. Same pattern task-builder.js's own
 // SESSION_LIMIT_PATTERN uses for the exact same detection elsewhere.
 function isSessionLimitMessage(text) {
   return /hit your (?:session|usage) limit|resets?\s+\d{1,2}:\d{2}\s*(?:am|pm)\b/i.test(text)
 }
 
+// A transient connection failure (laptop slept, wifi dropped mid-request,
+// ...) that Claude Code's own CLI catches internally and prints as plain
+// text — confirmed live: "API Error: The socket connection was closed
+// unexpectedly..." came back as a completely normal reply.text with exit
+// code 0, not as this app's own reply.error (see main.js's runClaudeTurn —
+// `code: resultText !== null ? 0 : code` only fires on OUR process-level
+// failures, not on an error the CLI itself already caught and reported as
+// output). Same fix as session-limit messages: recognizable prose, no
+// CHOICES line, needs a retry button instead of being treated as a real
+// answer with nothing to click.
+function isTransientApiErrorMessage(text) {
+  return /API Error:|socket connection was closed|ECONNRESET|network (?:error|timeout)/i.test(text)
+}
+
 // Shared by proceedToChat() and sendChatMessage() — both get a reply the
 // same shape and need the same handling: normally extractChoices() +
-// clickable options, but a session-limit reply instead gets a Retry button
-// (via setup-chat-resume — "re-ask your last question, don't restart") in
-// place of answer choices, since there's nothing to answer until the limit
-// actually resets.
-function renderAssistantReply(text) {
+// clickable options, but a session-limit or transient-API-error reply
+// instead gets a Retry button (via setup-chat-resume — "re-ask your last
+// question, don't restart") in place of answer choices, since there's
+// nothing to answer until the underlying condition clears.
+// Setup's closing message is generic AI prose written for a plain terminal
+// ("Run `node development/task-builder.js`...") — right for the CLI wizard,
+// but this app already has its own "Ready to start" screen with a real
+// button, so a human reading that line in the GUI has no command line to
+// type it into. Checking isProjectConfigured() (main.js) after every reply
+// lets the chat step notice setup actually finished and route there itself,
+// instead of relying on her to notice/interpret that leftover instruction.
+async function renderAssistantReply(text) {
   const { displayText, labels } = extractChoices(text)
   addChatMessage("assistant", displayText)
-  if (isSessionLimitMessage(text)) {
+  if (isSessionLimitMessage(text) || isTransientApiErrorMessage(text)) {
     renderRetryButton()
-  } else {
-    renderAnswerOptions(displayText, labels)
+    setAttentionBadge(true)
+    return
   }
+  const done = await window.devLoop.checkSetupComplete(selectedWorkspacePath).catch(() => false)
+  if (done) {
+    addChatMessage("assistant", "✅ Setup is complete — taking you to the start screen…")
+    setTimeout(() => goToStep(2), 1500)
+    return
+  }
+  renderAnswerOptions(displayText, labels)
+  setAttentionBadge(true) // reply is in, it's the user's turn
+}
+
+// Any failed turn (a timeout, a crashed child process, anything
+// setup-chat-send/resume/start can return as `reply.error`) is recoverable
+// the same way a session-limit message already was — the underlying Claude
+// Code session survives even though this one request died, so `--continue`
+// (via resumeSetupChat, same as renderRetryButton() below) can just pick up
+// again. Before this, a human had to already know to type something into
+// the box themselves to trigger that — confusing enough that it wasn't
+// obvious even to us. Showing the same 🔄 Retry button here removes that
+// guesswork entirely.
+function showChatError(errorText) {
+  addChatMessage("assistant", `Something went wrong: ${errorText}`)
+  renderRetryButton()
+  setAttentionBadge(true) // needs a click (Retry) before anything else happens
 }
 
 function renderRetryButton() {
@@ -139,7 +197,7 @@ function renderRetryButton() {
       removeThinkingMessage(thinkingEl)
       wrap.remove()
       if (reply.error) {
-        addChatMessage("assistant", `Something went wrong: ${reply.error}`)
+        showChatError(reply.error)
       } else {
         renderAssistantReply(reply.text)
       }
@@ -147,6 +205,7 @@ function renderRetryButton() {
       removeThinkingMessage(thinkingEl)
       console.error(e)
       addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
+      setAttentionBadge(true)
     } finally {
       chatSendBtn.disabled = false
     }
@@ -163,9 +222,11 @@ function renderRetryButton() {
 // prose (a bulleted list one time, "**A** or **B**?" inline the next, RTL/
 // Hebrew phrasing visually reordering the markdown asterisks in ways that
 // broke naive bold-span parsing entirely — see chat history). This strips
-// that line out of what's actually shown and returns its options; falls
-// back to the old bold-span heuristics for anything from before that
-// instruction took effect (e.g. resuming an older session).
+// that line out of what's actually shown and returns its options. Used to
+// fall back to guessing options out of arbitrary bold spans when this line
+// was missing — removed after that fallback kept mistaking recap fields,
+// filenames, and question headings for answer choices; see this function's
+// own end for what replaced it.
 function extractChoices(text) {
   const choicesMatch = text.match(/^CHOICES:\s*(.+)$/im)
   if (choicesMatch) {
@@ -174,12 +235,14 @@ function extractChoices(text) {
     return { displayText, labels }
   }
 
-  const bulleted = [...text.matchAll(/^-\s*\*\*(.+?)\*\*/gm)].map((m) => m[1].trim())
-  const allBold = [...text.matchAll(/\*\*(.+?)\*\*/g)]
-    .map((m) => m[1].trim())
-    .filter((s) => s.length <= 50 && !s.endsWith(":"))
-  const source = bulleted.length >= 2 ? bulleted : allBold
-  return { displayText: text, labels: [...new Set(source)].slice(0, 6) }
+  // No CHOICES: line means no reliable answer-option signal — this used to
+  // fall back to guessing options out of arbitrary bold spans in the prose
+  // (a bulleted recap field, a bolded filename, a bolded question-number
+  // heading — every one of these showed up live as a nonsense clickable
+  // button at some point). Free text is always available regardless via the
+  // input box below, so there's no real loss from just showing none instead
+  // of guessing wrong.
+  return { displayText: text, labels: [] }
 }
 
 // A CHOICES label like "AI-Studio export" — not the question text itself —
@@ -274,7 +337,7 @@ async function proceedToChat() {
       : await window.devLoop.startSetupChat(selectedWorkspacePath)
     removeThinkingMessage(thinkingEl)
     if (reply.error) {
-      addChatMessage("assistant", `Something went wrong: ${reply.error}`)
+      showChatError(reply.error)
     } else {
       renderAssistantReply(reply.text)
     }
@@ -285,6 +348,7 @@ async function proceedToChat() {
     removeThinkingMessage(thinkingEl)
     console.error(e)
     addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
+    setAttentionBadge(true)
   } finally {
     chatSendBtn.disabled = false
     // Continue stays disabled here, deliberately — this is only the very
@@ -295,10 +359,27 @@ async function proceedToChat() {
   }
 }
 
+// Step 1's own click-to-disable — a slow disk/network folder or an
+// accidental double-click otherwise had no visible feedback at all (see the
+// dashboard's own respond-choice-btn fix for the same underlying
+// complaint): every button here gets disabled the instant one is clicked,
+// re-enabled only if the user ends up staying on this screen (an invalid
+// folder, or the OS picker was cancelled) — moving on to the next step
+// replaces this screen's buttons entirely via renderRecentProjects()'s own
+// next render, so there's nothing stale left to re-enable in that case.
+function setStep1BtnsDisabled(disabled) {
+  pickBtnMain.disabled = disabled
+  document.querySelectorAll(".recent-project-btn, .recent-project-delete-btn").forEach((b) => { b.disabled = disabled })
+}
+
 async function handleProjectSelected(result) {
-  if (!result) return
+  if (!result) {
+    setStep1BtnsDisabled(false)
+    return
+  }
   if (!result.valid) {
     wizardErrorEl.textContent = result.reason
+    setStep1BtnsDisabled(false)
     return
   }
   wizardErrorEl.textContent = ""
@@ -308,24 +389,43 @@ async function handleProjectSelected(result) {
 
   if (result.setupNeeded) {
     pendingResumeChat = !!result.resumeChat
-    // Always through Step 2 (config wizard) then Step 3 (chat), in order,
-    // for as long as the project hasn't reached Step 4 (the dashboard) —
-    // never silently skipped, even when .setup-config.json already exists
-    // from a previous visit. initConfigStep() prefills from it (existing
-    // answers show pre-selected, e.g. "ungated" already checked) so
-    // re-confirming is quick, but the human still sees and passes through
-    // the screen itself, not just its result. Once the dashboard is
-    // actually reached, "⚙️ Edit Setup" there is the only way back in —
-    // see the run-area button, a deliberately different, narrower path
-    // (three live gates in orchestrator.config.json, not this whole wizard).
     configReturnStep = 1
-    initConfigStep()
+    if (result.configNeeded) {
+      // Nothing filled in yet for this project — Step 2 (config wizard) is
+      // genuinely the furthest point reached, so that's where it starts.
+      initConfigStep()
+    } else if (result.resumeChat) {
+      // Config AND models were already completed last time (that's the only
+      // way the chat could have started at all) — jump straight back to
+      // Step 4 and resume, instead of making her click back through the
+      // config wizard and models step she already answered. "⚙️ Edit Setup"
+      // from the chat/dashboard is still there for anyone who wants to
+      // revisit an earlier answer; there's no reason to force everyone
+      // through it just to get back to where they left off.
+      await proceedToChat()
+    } else {
+      // Config is done (`.setup-config.json` exists) but the chat was never
+      // actually started yet — the furthest point reached is the models
+      // step, so land there instead of re-showing the config wizard.
+      goToStep("models")
+      const config = await window.devLoop.readSetupConfig(selectedWorkspacePath)
+      await initModelsStep(config?.expectedLlmProvider)
+    }
   } else {
-    goToStep(2)
+    // Fully configured and the backlog's ready — there's nothing left for a
+    // "Ready to start" screen to actually confirm (the folder's already
+    // fixed, changing it means picking a different project entirely), so it
+    // was just one extra click on every single reopen. Go straight for the
+    // dashboard/log view instead — launchDevLoop() itself falls back to
+    // goToStep(2) with the real reason shown if starting fails for any
+    // reason (already running elsewhere, workspace problem, ...), so this
+    // never fails silently.
+    launchDevLoop()
   }
 }
 
 pickBtnMain.addEventListener("click", async () => {
+  setStep1BtnsDisabled(true)
   handleProjectSelected(await window.devLoop.pickProjectFolder())
 })
 
@@ -347,14 +447,49 @@ async function renderRecentProjects() {
   wrap.innerHTML = ""
   wrap.appendChild(label)
   for (const project of projects) {
+    const row = document.createElement("div")
+    row.className = "recent-project-row"
+
     const btn = document.createElement("button")
     btn.className = "recent-project-btn"
     btn.title = project.path
     btn.textContent = project.path
     btn.addEventListener("click", async () => {
+      setStep1BtnsDisabled(true)
       handleProjectSelected(await window.devLoop.selectRecentProject(project.path))
     })
-    wrap.appendChild(btn)
+
+    const deleteBtn = document.createElement("button")
+    deleteBtn.className = "recent-project-delete-btn"
+    deleteBtn.textContent = "✕"
+    deleteBtn.title = "Remove this project"
+    deleteBtn.addEventListener("click", () => {
+      // Inline confirm in place of the row's own two buttons — only deletes
+      // what this app created for the project (its hidden workspace: task
+      // history, config, .plan/, ...), never the visible folder itself
+      // (the user's real frontend/backend code).
+      row.innerHTML = ""
+      const confirmEl = document.createElement("div")
+      confirmEl.className = "recent-project-confirm"
+      confirmEl.innerHTML =
+        `<span>Remove this project and delete its build data? The frontend/backend code stays untouched.</span>` +
+        `<button type="button" class="danger" id="recent-confirm-yes">Yes, delete</button>` +
+        `<button type="button" id="recent-confirm-no">Cancel</button>`
+      row.appendChild(confirmEl)
+      confirmEl.querySelector("#recent-confirm-no").addEventListener("click", () => renderRecentProjects())
+      confirmEl.querySelector("#recent-confirm-yes").addEventListener("click", async () => {
+        const result = await window.devLoop.deleteRecentProject(project.path)
+        if (result?.error) {
+          confirmEl.innerHTML = `<span style="color:#f87171">${result.error}</span>`
+          return
+        }
+        renderRecentProjects()
+      })
+    })
+
+    row.appendChild(btn)
+    row.appendChild(deleteBtn)
+    wrap.appendChild(row)
   }
 }
 renderRecentProjects()
@@ -366,15 +501,22 @@ backBtn.addEventListener("click", () => {
   goToStep(1)
   renderRecentProjects()
 })
-// Goes to Step 2 (the config wizard), not all the way back to Step 1
-// (folder pick) — reuses openConfigStep() (defined below) exactly like
-// "⚙️ Edit Setup" does elsewhere, so Continue/Back from there return here
-// to chat instead of starting a fresh session. Folder-repicking mid-project
-// is still only reachable from the config wizard's own Back button once
-// configReturnStep is back to 1 (i.e. only for a project that was never
-// past Step 2 in the first place).
-chatBackBtn.addEventListener("click", () => {
-  openConfigStep("chat")
+// Goes to Step 3 (AI models), the step immediately before chat in the
+// forward flow (config -> models -> chat) — NOT all the way back to Step 2
+// (the config wizard), which is what this used to do before the models
+// step existed (confirmed live: after the models step was added, this was
+// never updated, so "← Back" from chat skipped straight past it, an
+// inconsistent 4->2 jump instead of a normal 4->3->2 sequential one).
+// Simple sequential back-navigation, same as models-back-btn/configBackBtn's
+// own unconditional "always the previous step" behavior — no need to track
+// where THIS click came from, since models-continue-btn already calls
+// proceedToChat() regardless, which resumes (not restarts) an in-progress
+// chat via pendingResumeChat, already set from before this button was ever
+// clicked.
+chatBackBtn.addEventListener("click", async () => {
+  goToStep("models")
+  const config = await window.devLoop.readSetupConfig(selectedWorkspacePath)
+  await initModelsStep(config?.expectedLlmProvider)
 })
 // Always Step 1, unconditionally — simple sequential back-navigation
 // (1→2→3→4), same as chat's own "← Back" goes to Step 2. configReturnStep
@@ -608,29 +750,13 @@ async function initConfigStep() {
       mongoFollowupEl.innerHTML = `<label>Connection string<input type="text" id="cfg-mongoUri" class="text-input" placeholder="mongodb://..."></label>`
     } else if (value === "none") {
       // This app bundles its own mongod.exe (see
-      // electron/resources/mongodb-win-x64/) — the "use local db" choice
-      // above only WRITES a localhost connection string; this button
-      // actually starts that bundled server so it's really there once
-      // dev-loop.js reaches the point of needing it. Optional — dev-loop.js's
-      // own ensureBackendEnv can still start it later if this is skipped.
-      mongoFollowupEl.innerHTML = `<button type="button" id="cfg-start-mongo-btn" class="config-secondary-btn">🗄️ Start the built-in local database now</button>` +
-        `<div id="cfg-start-mongo-status" class="config-note"></div>`
-      document.getElementById("cfg-start-mongo-btn").addEventListener("click", async (e) => {
-        const btn = e.currentTarget
-        const statusEl = document.getElementById("cfg-start-mongo-status")
-        btn.disabled = true
-        btn.textContent = "Starting…"
-        const result = await window.devLoop.startLocalMongo(selectedWorkspacePath)
-        if (result.error) {
-          console.error(result.error)
-          statusEl.textContent = `❌ ${result.error}`
-          btn.disabled = false
-          btn.textContent = "🗄️ Start the built-in local database now"
-        } else {
-          statusEl.textContent = `✓ Running at ${result.connectionString}`
-          btn.textContent = "✓ Started"
-        }
-      })
+      // electron/resources/mongodb-win-x64/) and starts it automatically
+      // right before the build begins whenever the configured connection
+      // string points at it (see main.js's start-dev-loop handler) — no
+      // manual step needed here anymore. This used to be a button the human
+      // had to remember to click, and nothing else ever started it if they
+      // didn't.
+      mongoFollowupEl.innerHTML = `<div class="config-note">The built-in local database starts automatically when the build begins — nothing to do here.</div>`
     } else {
       mongoFollowupEl.innerHTML = ""
     }
@@ -696,7 +822,7 @@ async function initConfigStep() {
   // so it's never typed into this config wizard, only added to .mcp.json
   // as an env var during the next (chat) step. NOTE: as of this writing,
   // only Linear actually has working integration code in this template
-  // (team-members.json, dev-loop.js's ticket-assignment logic) — Jira and
+  // (team-members.json, task-builder.js's ticket-assignment logic) — Jira and
   // GitHub Issues are asked for consistency/future-proofing, but picking
   // them doesn't wire anything up yet, hence the extra note on those two.
   function renderIssueTrackerFollowup() {
@@ -770,11 +896,30 @@ async function initConfigStep() {
 
   // `.git` is a filesystem fact, not a preference — checked once per visit
   // to this screen rather than asked, same reasoning as
-  // development/setup-wizard.js's CLI equivalent.
-  const gitEnabled = await window.devLoop.checkGitStatus(selectedWorkspacePath)
-  if (!gitEnabled) {
-    gitBodyEl.innerHTML = `<div class="config-note">No .git found here — this section is skipped. Run 'git init' before or after this setup if you want version control.</div>`
-  } else {
+  // development/setup-wizard.js's CLI equivalent. A brand-new project
+  // obviously has no .git yet, so rather than just telling the user to go
+  // run it themselves in a terminal they may not have, offer to do it right
+  // here (same convenience task-builder.js's own runtime git-init prompt
+  // already gives, just reachable one step earlier).
+  async function renderGitSection() {
+    const gitEnabled = await window.devLoop.checkGitStatus(selectedWorkspacePath)
+    if (!gitEnabled) {
+      gitBodyEl.innerHTML =
+        `<div class="config-note">No .git found here — this section is skipped until one exists. This is local version control only — no GitHub/GitLab account or remote repository needed; nothing gets pushed anywhere.</div>` +
+        `<button type="button" id="cfg-git-init-btn" class="config-secondary-btn">Initialize git now</button>` +
+        `<div id="cfg-git-init-error" style="color:#f87171;font-size:12px;margin-top:6px;"></div>`
+      document.getElementById("cfg-git-init-btn").addEventListener("click", async (e) => {
+        e.target.disabled = true
+        const result = await window.devLoop.initGit(selectedWorkspacePath)
+        if (result?.error) {
+          document.getElementById("cfg-git-init-error").textContent = result.error
+          e.target.disabled = false
+        } else {
+          renderGitSection()
+        }
+      })
+      return
+    }
     gitBodyEl.innerHTML =
       `<label class="radio-option"><input type="radio" name="branchStrategy" value="single" checked> Everything on one branch (no per-task branches)</label>` +
       `<label class="radio-option"><input type="radio" name="branchStrategy" value="perTask"> Each task gets its own branch</label>` +
@@ -794,18 +939,19 @@ async function initConfigStep() {
       setRadioChecked("autoMergeTasks", existingConfig.autoMergeTasks ? "yes" : "no")
     }
   }
+  await renderGitSection()
 
   // Detects whoever's already logged in (never launches a login flow
   // itself — that's a real OAuth popup, which belongs to the chat step /
-  // dev-loop.js's own attemptLogin(), not a background detection call on
-  // this screen). If nothing's pinned here, dev-loop.js's own first run
+  // task-builder.js's own attemptLogin(), not a background detection call on
+  // this screen). If nothing's pinned here, task-builder.js's own first run
   // asks then, exactly as it already does for a project with no
   // wizard-set value at all.
   const llmAccountBodyEl = document.getElementById("llm-account-body")
   const accounts = await window.devLoop.detectLlmAccounts()
   detectedLlmAccounts = accounts
   if (!accounts.claude && !accounts.cursor) {
-    llmAccountBodyEl.innerHTML = `<div class="config-note">No LLM account (Claude or Cursor) detected as logged in — this is skipped; dev-loop.js will ask the first time it runs.</div>`
+    llmAccountBodyEl.innerHTML = `<div class="config-note">No LLM account (Claude or Cursor) detected as logged in — this is skipped; you'll be asked the first time a build starts.</div>`
   } else {
     let optionsHtml = ""
     if (accounts.claude) optionsHtml += `<label class="radio-option"><input type="radio" name="llmAccountChoice" value="claude" checked> Claude (${accounts.claude})</label>`
@@ -814,13 +960,13 @@ async function initConfigStep() {
     llmAccountBodyEl.innerHTML = optionsHtml
     if (existingConfig?.expectedLlmProvider) setRadioChecked("llmAccountChoice", existingConfig.expectedLlmProvider)
   }
-  // Shown, never selectable as a pin — dev-loop.js has no headless way to
+  // Shown, never selectable as a pin — task-builder.js has no headless way to
   // actually run agents through Copilot CLI (no `-p`/print-mode equivalent,
   // unlike Claude/Cursor), so offering it as a radio option here would
   // claim something that isn't true. See main.js's detect-llm-accounts
   // handler for the detection mechanics (via `gh`, not `copilot` itself).
   if (accounts.githubCopilot) {
-    llmAccountBodyEl.innerHTML += `<div class="config-note">Also detected: GitHub Copilot as ${accounts.githubCopilot} — reference only, dev-loop.js doesn't run agents through it.</div>`
+    llmAccountBodyEl.innerHTML += `<div class="config-note">Also detected: GitHub Copilot as ${accounts.githubCopilot} — reference only, agents can't run through it.</div>`
   }
 
   // Delegated on the form itself (not per-input) so it also covers fields
@@ -953,10 +1099,12 @@ configFormEl.addEventListener("submit", async (e) => {
     await window.devLoop.writeSetupConfig(selectedWorkspacePath, config)
     // Opened via "⚙️ Edit Setup" (configReturnStep !== 1): just go back to
     // wherever that was — starting a fresh chat session here would throw
-    // away an in-progress conversation. Only the normal first-time flow
-    // (configReturnStep === 1) advances into chat.
+    // away an in-progress conversation, and the model review step already
+    // happened the first time through. Only the normal first-time flow
+    // (configReturnStep === 1) goes on to the model review step next.
     if (configReturnStep === 1) {
-      await proceedToChat()
+      goToStep("models")
+      await initModelsStep(config.expectedLlmProvider)
     } else {
       goToStep(configReturnStep)
     }
@@ -965,6 +1113,232 @@ configFormEl.addEventListener("submit", async (e) => {
     configErrorEl.textContent = `Something went wrong (see DevTools console): ${err.message}`
   } finally {
     continueBtn.disabled = false
+  }
+})
+
+// ─── Step 3: AI model review ────────────────────────────────────────────────
+// Lets the human see (and override) which model each build step runs under,
+// right after the config wizard and before the product-description chat
+// begins. Cursor has a real live source (`agent models`) to validate
+// against — an id no longer in that list blocks Continue until replaced.
+// Claude Code has no equivalent listing command (confirmed — there isn't
+// one), so its rows are plain free text with no live validation at all,
+// rather than faking a check against a source that doesn't exist.
+
+const OPERATIONS = [
+  ["planning", "Planning"],
+  ["planning-revise", "Planning (revisions)"],
+  ["designer", "Designer Agent"],
+  ["frontend", "Frontend Agent"],
+  ["qa", "QA Agent"],
+  ["security", "Security Agent"],
+  ["orchestrator-chat", "Orchestrator chat"],
+]
+
+let modelsConfigState = null // { claude: {...}, cursor: {...} } — mutated in place as the human edits rows
+let cursorModelsList = null // [{id, label}] once loaded, or null if never fetched/unavailable
+
+// Only understands this app's own naming conventions for Claude-family
+// model ids on Cursor's list ("claude-sonnet-5-high" / "claude-4.6-sonnet-
+// medium") — anything else (GPT/Gemini/Grok ids, or an unrecognized Claude
+// shape) just doesn't get a version-comparison warning. This is a soft
+// "something newer exists" nudge based only on what's visible in the same
+// live list, not a real deprecation signal (neither CLI exposes one).
+function extractClaudeFamilyVersion(id) {
+  let m = id.match(/^claude-(sonnet|opus|fable)-(\d+(?:\.\d+)?)/)
+  if (m) return { family: m[1], version: parseFloat(m[2]) }
+  m = id.match(/^claude-(\d+(?:\.\d+)?)-(sonnet|opus|fable)/)
+  if (m) return { family: m[2], version: parseFloat(m[1]) }
+  return null
+}
+
+function findNewerCursorVersionWarning(selectedId) {
+  const info = extractClaudeFamilyVersion(selectedId)
+  if (!info || !cursorModelsList) return null
+  let best = info
+  for (const m of cursorModelsList) {
+    const other = extractClaudeFamilyVersion(m.id)
+    if (other && other.family === info.family && other.version > best.version) best = other
+  }
+  return best.version > info.version ? `A newer ${best.family} version is available (v${best.version}).` : null
+}
+
+// Disables whichever "commit these choices" button belongs to the rows
+// container that changed — checked against BOTH known containers (the
+// wizard step's and the "🧠 Edit Models" overlay's) rather than tracking
+// which one is currently open, since a missing element here is a no-op and
+// only one of the two is ever actually visible at a time anyway.
+function updateModelsContinueState() {
+  for (const [rowsId, btnId] of [["models-cursor-rows", "models-continue-btn"], ["live-models-cursor-rows", "live-models-save-btn"]]) {
+    const btn = document.getElementById(btnId)
+    if (!btn) continue
+    btn.disabled = !!document.querySelector(`#${rowsId} select[data-invalid="true"]`)
+  }
+}
+
+function renderCursorModelRow(key, opLabel) {
+  const row = document.createElement("div")
+  row.className = "model-row"
+  const currentValue = modelsConfigState.cursor?.[key] || ""
+
+  if (!cursorModelsList) {
+    // Cursor CLI unavailable/not installed on this machine — no live list to
+    // validate against, so fall back to the same plain-text treatment as
+    // Claude rather than blocking a human who isn't even using Cursor.
+    row.innerHTML =
+      `<span class="model-row-label">${opLabel}</span>` +
+      `<input type="text" class="text-input" data-cursor-op="${key}" value="${currentValue}">`
+    row.querySelector("input").addEventListener("input", (e) => {
+      modelsConfigState.cursor[key] = e.target.value
+    })
+    return row
+  }
+
+  const isKnown = cursorModelsList.some((m) => m.id === currentValue)
+  let optionsHtml = ""
+  if (!isKnown && currentValue) {
+    optionsHtml += `<option value="${currentValue}" data-invalid="true" selected>⚠ ${currentValue} — no longer available, pick a replacement</option>`
+  }
+  optionsHtml += cursorModelsList
+    .map((m) => `<option value="${m.id}"${m.id === currentValue ? " selected" : ""}>${m.label} (${m.id})</option>`)
+    .join("")
+
+  row.innerHTML = `<span class="model-row-label">${opLabel}</span><select data-cursor-op="${key}">${optionsHtml}</select>`
+  const selectEl = row.querySelector("select")
+  selectEl.dataset.invalid = String(!isKnown)
+
+  const warningEl = document.createElement("div")
+  const applyRowState = () => {
+    const invalid = selectEl.selectedOptions[0]?.dataset.invalid === "true"
+    selectEl.dataset.invalid = String(invalid)
+    if (invalid) {
+      warningEl.className = "model-row-unavailable"
+      warningEl.textContent = "This model is no longer available — choose a replacement above."
+    } else {
+      const warning = findNewerCursorVersionWarning(selectEl.value)
+      warningEl.className = "model-row-warning"
+      warningEl.textContent = warning || ""
+    }
+    updateModelsContinueState()
+  }
+  applyRowState()
+  selectEl.addEventListener("change", () => {
+    modelsConfigState.cursor[key] = selectEl.value
+    // Re-selecting a real option removes the synthetic "⚠ ..." entry —
+    // it only ever exists to show what the stale value WAS.
+    const staleOption = selectEl.querySelector('option[data-invalid="true"]')
+    if (staleOption && selectEl.value !== staleOption.value) staleOption.remove()
+    applyRowState()
+  })
+
+  const wrap = document.createElement("div")
+  wrap.appendChild(row)
+  wrap.appendChild(warningEl)
+  return wrap
+}
+
+function renderClaudeModelRow(key, opLabel) {
+  const row = document.createElement("div")
+  row.className = "model-row"
+  const currentValue = modelsConfigState.claude?.[key] || ""
+  row.innerHTML =
+    `<span class="model-row-label">${opLabel}</span>` +
+    `<input type="text" class="text-input" data-claude-op="${key}" value="${currentValue}">`
+  row.querySelector("input").addEventListener("input", (e) => {
+    modelsConfigState.claude[key] = e.target.value
+  })
+  return row
+}
+
+// `provider` is the SAME choice made one screen earlier (the config
+// wizard's own "Pin which LLM account" question — see buildConfigFromForm's
+// expectedLlmProvider) — only that one provider's models are worth showing;
+// a human who picked Claude has no use for a Cursor model table (and vice
+// versa), and it was actively confusing to show both. Falls back to
+// detectedLlmAccounts (whichever CLI is actually logged in) if the wizard
+// question was left on "don't pin one now," and shows both only as a last
+// resort when neither signal exists at all.
+function resolveModelsProvider(provider) {
+  if (provider === "claude" || provider === "cursor") return provider
+  const hasClaude = !!detectedLlmAccounts.claude
+  const hasCursor = !!detectedLlmAccounts.cursor
+  if (hasClaude && !hasCursor) return "claude"
+  if (hasCursor && !hasClaude) return "cursor"
+  return "both"
+}
+
+// Shared by the Step 3 wizard screen and the "🧠 Edit Models" overlay
+// (reachable again once the build is already running) — same rows, same
+// live Cursor validation, same provider-narrowing, just rendered into
+// whichever set of containers the caller passes in. `els.cursorSectionEl`/
+// `claudeSectionEl` are optional (the overlay doesn't wrap each provider in
+// its own hideable section the way the wizard step does; passing undefined
+// just skips the show/hide toggle).
+async function loadModelsInto(els, pinnedProvider) {
+  els.cursorRowsEl.innerHTML = ""
+  els.claudeRowsEl.innerHTML = ""
+
+  const provider = resolveModelsProvider(pinnedProvider)
+  const showCursor = provider === "cursor" || provider === "both"
+  const showClaude = provider === "claude" || provider === "both"
+  if (els.cursorSectionEl) els.cursorSectionEl.hidden = !showCursor
+  if (els.claudeSectionEl) els.claudeSectionEl.hidden = !showClaude
+
+  modelsConfigState = (await window.devLoop.readModelConfig(selectedWorkspacePath)) || { claude: {}, cursor: {} }
+  modelsConfigState.claude = modelsConfigState.claude || {}
+  modelsConfigState.cursor = modelsConfigState.cursor || {}
+
+  if (showCursor) {
+    if (els.cursorStatusEl) els.cursorStatusEl.textContent = "Checking which Cursor models are currently available…"
+    const cursorResult = await window.devLoop.listCursorModels()
+    if (cursorResult?.models?.length) {
+      cursorModelsList = cursorResult.models
+      if (els.cursorStatusEl) els.cursorStatusEl.textContent = ""
+    } else {
+      cursorModelsList = null
+      if (els.cursorStatusEl) els.cursorStatusEl.textContent = "Cursor CLI not detected — showing these as plain text instead, no live check."
+    }
+  } else {
+    cursorModelsList = null
+  }
+
+  for (const [key, label] of OPERATIONS) {
+    if (showCursor) els.cursorRowsEl.appendChild(renderCursorModelRow(key, label))
+    if (showClaude) els.claudeRowsEl.appendChild(renderClaudeModelRow(key, label))
+  }
+}
+
+async function initModelsStep(pinnedProvider) {
+  const errorEl = document.getElementById("models-error")
+  errorEl.textContent = ""
+  await loadModelsInto({
+    cursorSectionEl: document.getElementById("models-cursor-section"),
+    claudeSectionEl: document.getElementById("models-claude-section"),
+    cursorRowsEl: document.getElementById("models-cursor-rows"),
+    claudeRowsEl: document.getElementById("models-claude-rows"),
+    cursorStatusEl: document.getElementById("models-cursor-status"),
+  }, pinnedProvider)
+  updateModelsContinueState()
+}
+
+document.getElementById("models-back-btn").addEventListener("click", () => goToStep("config"))
+
+document.getElementById("models-continue-btn").addEventListener("click", async (e) => {
+  const errorEl = document.getElementById("models-error")
+  errorEl.textContent = ""
+  e.target.disabled = true
+  try {
+    const result = await window.devLoop.writeModelConfig(selectedWorkspacePath, modelsConfigState)
+    if (result?.error) {
+      errorEl.textContent = result.error
+      return
+    }
+    await proceedToChat()
+  } catch (err) {
+    console.error(err)
+    errorEl.textContent = `Something went wrong (see DevTools console): ${err.message}`
+  } finally {
+    e.target.disabled = false
   }
 })
 
@@ -980,7 +1354,7 @@ async function sendChatMessage(presetText) {
     const reply = await window.devLoop.sendSetupChatMessage(selectedWorkspacePath, text)
     removeThinkingMessage(thinkingEl)
     if (reply.error) {
-      addChatMessage("assistant", `Something went wrong: ${reply.error}`)
+      showChatError(reply.error)
     } else {
       renderAssistantReply(reply.text)
     }
@@ -988,6 +1362,7 @@ async function sendChatMessage(presetText) {
     removeThinkingMessage(thinkingEl)
     console.error(e)
     addChatMessage("assistant", `Something went wrong (see DevTools console): ${e.message}`)
+    setAttentionBadge(true)
   } finally {
     chatSendBtn.disabled = false
     chatContinueBtn.disabled = false
@@ -1001,9 +1376,9 @@ chatInputEl.addEventListener("keydown", (e) => {
   }
 })
 
-// The human decides when the conversation has covered enough to move on —
-// there's no reliable automatic "setup is definitely finished" signal to
-// detect here, so this is a deliberate manual handoff rather than guessing.
+// Manual escape hatch — renderAssistantReply() above already auto-advances
+// once isProjectConfigured() says setup is genuinely done, but this stays as
+// a way out if she wants to jump to the start screen herself before that.
 chatContinueBtn.addEventListener("click", () => {
   goToStep(2)
 })
@@ -1153,8 +1528,8 @@ viewFilesOverlay.addEventListener("click", (e) => {
 
 // Live build settings — the small overlay for the three
 // orchestrator.config.json gates that still mean something once
-// dev-loop.js is already running (see main.js's read-live-gates/
-// write-live-gates and dev-loop.js's getAutoApprovePlans() etc., which
+// task-builder.js is already running (see main.js's read-live-gates/
+// write-live-gates and task-builder.js's getAutoApprovePlans() etc., which
 // re-read the file fresh on every check). This is NOT the Step 2 config
 // wizard — that edits .setup-config.json, already fully consumed by the
 // time a project reaches the dashboard.
@@ -1199,10 +1574,200 @@ document.getElementById("live-gates-save-btn").addEventListener("click", async (
       autoMergeTasks: liveGateRadioValue("liveAutoMergeTasks"),
       createBranchPerTask: liveGateRadioValue("liveCreateBranchPerTask"),
     })
-    liveGatesStatusEl.textContent = "✓ Saved — takes effect on the next gate dev-loop.js hits."
+    liveGatesStatusEl.textContent = "✓ Saved — takes effect on the next gate the build hits."
   } catch (err) {
     console.error(err)
     liveGatesErrorEl.textContent = `Something went wrong (see DevTools console): ${err.message}`
+  }
+})
+
+// "☑️ All Tasks" — a read-only view of .plan/000-backlog.md (the same
+// checklist Phase E wrote and the human is expected to prune/reorder by
+// hand before the build starts), reachable from the running dashboard where
+// there was previously no way to see the full task list at all. Never
+// editable from here — task-builder.js's own markBacklogTaskDone() is the
+// single source of truth for which checkbox is ticked; letting a human
+// toggle it from a second place risks the two drifting out of sync.
+const viewTasksOverlay = document.getElementById("view-tasks-overlay")
+const viewTasksBodyEl = document.getElementById("view-tasks-body")
+
+// Parses the exact checklist-line shape getNextBacklogTask() itself reads
+// in task-builder.js ("- [ ] Title | scope: ... | cmd: ... | url: ...") —
+// only the checked state and the title (before the first "|") matter for
+// display; the rest is metadata this view has no reason to show.
+function parseBacklogChecklist(text) {
+  const items = []
+  for (const rawLine of text.split("\n")) {
+    const match = rawLine.trim().match(/^-\s*\[( |x|X)\]\s*(.+)$/)
+    if (!match) continue
+    const done = match[1].toLowerCase() === "x"
+    const title = match[2].split("|")[0].trim()
+    items.push({ done, title })
+  }
+  return items
+}
+
+// Mirrors task-builder.js's own slugify(title) exactly (lowercase, non-
+// alphanumeric runs -> single hyphen, trimmed, truncated to 60) — report
+// filenames embed this same slug (`${date}-${TICKET}-${slug}-${agentKey}.md`),
+// so recomputing it here is how a report gets matched back to the backlog
+// line it belongs to without task-builder.js needing to expose any new
+// lookup of its own.
+function slugifyTaskTitle(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "task"
+}
+
+// A report's own filename has no delimiter marking where the slug ends and
+// the trailing `-<agentKey>.md` begins (both are just hyphen-joined), so this
+// matches by substring rather than an exact split — safe in practice since
+// the slug itself is already a highly specific, near-full-title string.
+function reportsForTaskSlug(reportPaths, slug) {
+  return reportPaths.filter((p) => p.split("/").pop().includes(slug))
+}
+
+// Report filenames end in `-<agentKey>.md` (frontend, api-gateway, qa,
+// security, ...) — pulled out just to label each option with which agent
+// wrote it, since the rest of the filename is the same slug repeated for
+// every report under one task and isn't worth showing.
+function agentKeyFromReportPath(reportPath, slug) {
+  const fileName = reportPath.split("/").pop().replace(/\.md$/, "")
+  const afterSlug = fileName.split(slug).pop().replace(/^-+/, "")
+  return afterSlug || fileName
+}
+
+// The leading `YYYY-MM-DD` a report filename always starts with — a task
+// redone on a later day (see chat history: resetting a task for a redo
+// leaves its OLD dated reports on disk alongside the new ones, since they
+// don't collide by path) produces more than one report for the same agent
+// key, which the dropdown label needs to distinguish or they're just
+// identical-looking duplicate entries.
+function dateFromReportPath(reportPath) {
+  const m = reportPath.split("/").pop().match(/^(\d{4}-\d{2}-\d{2})-/)
+  return m ? m[1] : ""
+}
+
+async function openReportViewer(relPath, label) {
+  document.getElementById("report-viewer-inline")?.remove()
+  const box = document.createElement("div")
+  box.id = "report-viewer-inline"
+  box.innerHTML = `<div class="report-viewer-header"><strong>${label}</strong><button type="button" id="report-viewer-close">✕</button></div><pre id="report-viewer-content">Loading…</pre>`
+  document.getElementById("view-tasks-panel").appendChild(box)
+  box.querySelector("#report-viewer-close").addEventListener("click", () => box.remove())
+  const result = await window.devLoop.readProjectFile(selectedWorkspacePath, relPath)
+  box.querySelector("#report-viewer-content").textContent = result?.error ? `Couldn't load this report: ${result.error}` : result.content
+}
+
+document.getElementById("view-tasks-btn").addEventListener("click", async () => {
+  viewTasksOverlay.classList.add("active")
+  viewTasksBodyEl.innerHTML = `<div style="font-size:13px;color:var(--dim);">Loading…</div>`
+  const [backlogResult, allFiles] = await Promise.all([
+    window.devLoop.readProjectFile(selectedWorkspacePath, ".plan/000-backlog.md"),
+    window.devLoop.listProjectFiles(selectedWorkspacePath),
+  ])
+  if (backlogResult?.error) {
+    viewTasksBodyEl.innerHTML = `<div style="font-size:13px;color:#f87171;">Couldn't load the task list: ${backlogResult.error}</div>`
+    return
+  }
+  const items = parseBacklogChecklist(backlogResult.content || "")
+  if (items.length === 0) {
+    viewTasksBodyEl.innerHTML = `<div style="font-size:13px;color:var(--dim);">No tasks found in the backlog.</div>`
+    return
+  }
+  const reportPaths = (Array.isArray(allFiles) ? allFiles : []).filter((p) => p.startsWith("docs/agent-reports/"))
+  viewTasksBodyEl.innerHTML = items
+    .map((item) => {
+      const slug = slugifyTaskTitle(item.title)
+      const matches = reportsForTaskSlug(reportPaths, slug)
+      const sortedMatches = [...matches].sort().reverse() // newest date first (filenames start with YYYY-MM-DD)
+      const reportsHtml = matches.length
+        ? `<div class="view-task-reports">📄 <select class="view-task-report-select">` +
+          `<option value="" selected disabled>${matches.length} report${matches.length === 1 ? "" : "s"} — pick one…</option>` +
+          sortedMatches
+            .map((p) => {
+              const agentKey = agentKeyFromReportPath(p, slug)
+              const date = dateFromReportPath(p)
+              return `<option value="${p}">${agentKey}${date ? ` (${date})` : ""}</option>`
+            })
+            .join("") +
+          `</select></div>`
+        : ""
+      return (
+        `<div class="view-task-row${item.done ? " done" : ""}">` +
+        `<span class="view-task-check">${item.done ? "✅" : "⬜"}</span>` +
+        `<span class="view-task-text">${item.title}${reportsHtml}</span>` +
+        `</div>`
+      )
+    })
+    .join("")
+  viewTasksBodyEl.querySelectorAll(".view-task-report-select").forEach((select) => {
+    select.addEventListener("change", () => {
+      const chosen = select.selectedOptions[0]
+      openReportViewer(chosen.value, `${chosen.textContent} report`)
+    })
+  })
+})
+document.getElementById("view-tasks-close-btn").addEventListener("click", () => {
+  viewTasksOverlay.classList.remove("active")
+  document.getElementById("report-viewer-inline")?.remove()
+})
+viewTasksOverlay.addEventListener("click", (e) => {
+  if (e.target === viewTasksOverlay) {
+    viewTasksOverlay.classList.remove("active") // click on the dim backdrop, not the panel
+    document.getElementById("report-viewer-inline")?.remove()
+  }
+})
+
+// "🧠 Edit Models" — the same model review as Step 3, reachable again once
+// the build is already running (people change their mind, a model gets
+// deprecated mid-project, ...). Reads the pinned provider straight from the
+// persisted .setup-config.json (not the in-memory detectedLlmAccounts the
+// wizard step relies on) since this overlay can be opened after a fresh app
+// launch that skipped straight to an already-configured project's
+// dashboard, where that in-memory state was never populated this session.
+const liveModelsOverlay = document.getElementById("live-models-overlay")
+const liveModelsErrorEl = document.getElementById("live-models-error")
+const liveModelsStatusEl = document.getElementById("live-models-status")
+
+document.getElementById("live-models-btn").addEventListener("click", async () => {
+  liveModelsErrorEl.textContent = ""
+  liveModelsStatusEl.textContent = ""
+  liveModelsOverlay.classList.add("active")
+  const config = await window.devLoop.readSetupConfig(selectedWorkspacePath)
+  await loadModelsInto({
+    cursorSectionEl: document.getElementById("live-models-cursor-section"),
+    claudeSectionEl: document.getElementById("live-models-claude-section"),
+    cursorRowsEl: document.getElementById("live-models-cursor-rows"),
+    claudeRowsEl: document.getElementById("live-models-claude-rows"),
+    cursorStatusEl: document.getElementById("live-models-cursor-status"),
+  }, config?.expectedLlmProvider)
+  updateModelsContinueState()
+})
+document.getElementById("live-models-close-btn").addEventListener("click", () => {
+  liveModelsOverlay.classList.remove("active")
+})
+liveModelsOverlay.addEventListener("click", (e) => {
+  if (e.target === liveModelsOverlay) liveModelsOverlay.classList.remove("active") // click on the dim backdrop, not the panel itself
+})
+document.getElementById("live-models-save-btn").addEventListener("click", async (e) => {
+  liveModelsErrorEl.textContent = ""
+  liveModelsStatusEl.textContent = ""
+  e.target.disabled = true
+  try {
+    const result = await window.devLoop.writeModelConfig(selectedWorkspacePath, modelsConfigState)
+    if (result?.error) {
+      liveModelsErrorEl.textContent = result.error
+    } else {
+      liveModelsStatusEl.textContent = "✓ Saved — takes effect on the next agent this build launches."
+    }
+  } catch (err) {
+    console.error(err)
+    liveModelsErrorEl.textContent = `Something went wrong (see DevTools console): ${err.message}`
+  } finally {
+    e.target.disabled = false
   }
 })
 
@@ -1211,10 +1776,10 @@ window.devLoop.onLog((text) => {
   logEl.scrollTop = logEl.scrollHeight
 })
 
-// Fallback input for when dev-loop.js's own dashboard never loaded into the
+// Fallback input for when task-builder.js's own dashboard never loaded into the
 // webview (its server failed to bind — confirmed live: a stale orphaned
 // process was still holding the port — or just hasn't started yet this
-// early in the run). Sends straight to dev-loop.js's stdin; an empty send
+// early in the run). Sends straight to task-builder.js's stdin; an empty send
 // (just pressing Enter) still goes through, matching a plain terminal's
 // bare-Enter answer to a "press Enter to continue" style prompt.
 function sendLogInput() {
@@ -1235,6 +1800,22 @@ window.devLoop.onDashboardUrl((url) => {
   webviewEl.classList.add("active")
   logPaneEl.classList.add("hidden")
   setRunStatus("Running.")
+  startTaskbarOverlayPolling(url)
+  webviewEl.focus()
+})
+
+// A <webview> is its own separate content process/frame — a click that
+// lands on it while it does NOT already have focus gets consumed just to
+// focus it (standard Electron/Chromium behavior), not delivered to the page
+// as a real click. Confirmed live: this is exactly why every "y/N" choice
+// button on the dashboard (git-init prompt, etc.) needed two clicks — the
+// window had focus, but the webview inside it didn't yet. Refocusing the
+// webview the moment this window itself regains OS focus (alt-tabbing back,
+// clicking the taskbar icon, dismissing DevTools, ...) means it's already
+// focused by the time a real click happens, so the first click actually
+// registers instead of being silently spent on focus.
+window.addEventListener("focus", () => {
+  if (webviewEl.classList.contains("active")) webviewEl.focus()
 })
 
 window.devLoop.onExit((code) => {
@@ -1252,7 +1833,90 @@ window.devLoop.onExit((code) => {
   if (!stoppedByUser) {
     setRunStatus(code === 0 ? "Finished." : "Stopped unexpectedly — check the log/dashboard above.")
   }
+  stopTaskbarOverlayPolling()
 })
+
+// Simple "you need to do something" taskbar badge — a plain red circle,
+// deliberately NOT per-agent (earlier attempt drew a colored circle + the
+// active agent's emoji; user explicitly asked for just a badge, no agent
+// picture). Shared by both the chat step (Step 4) and the Agent Dashboard.
+let attentionBadgeCanvas = null
+function renderAttentionBadge() {
+  if (!attentionBadgeCanvas) {
+    attentionBadgeCanvas = document.createElement("canvas")
+    attentionBadgeCanvas.width = 32
+    attentionBadgeCanvas.height = 32
+  }
+  const ctx = attentionBadgeCanvas.getContext("2d")
+  ctx.clearRect(0, 0, 32, 32)
+  ctx.beginPath()
+  ctx.arc(16, 16, 15, 0, Math.PI * 2)
+  ctx.fillStyle = "#e0393e"
+  ctx.fill()
+  ctx.strokeStyle = "#1a1a1a"
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.fillStyle = "#ffffff"
+  ctx.font = "bold 20px 'Segoe UI', sans-serif"
+  ctx.textAlign = "center"
+  ctx.textBaseline = "middle"
+  ctx.fillText("!", 16, 17)
+  return attentionBadgeCanvas.toDataURL("image/png")
+}
+
+let attentionBadgeOn = false
+function setAttentionBadge(on) {
+  if (on === attentionBadgeOn) return
+  attentionBadgeOn = on
+  if (on) {
+    window.devLoop.setTaskbarOverlay(renderAttentionBadge(), "Waiting for you").catch(() => {})
+  } else {
+    window.devLoop.setTaskbarOverlay(null, "").catch(() => {})
+  }
+}
+
+let taskbarOverlayPollHandle = null
+
+function stopTaskbarOverlayPolling() {
+  if (taskbarOverlayPollHandle) {
+    clearInterval(taskbarOverlayPollHandle)
+    taskbarOverlayPollHandle = null
+  }
+  setAttentionBadge(false)
+}
+
+// Polls the SAME /status.json the embedded dashboard webview itself reads
+// (see agent-dashboard.html's own poll()) — kept as a fully separate fetch
+// loop here rather than reaching into the webview's isolated content
+// process, since a <webview>'s page has no bridge back to this window's own
+// preload/IPC. Badge tracks the same `awaitingInput` field the dashboard's
+// own respond-box visibility is driven by.
+function startTaskbarOverlayPolling(dashboardUrl) {
+  stopTaskbarOverlayPolling()
+  // dashboardUrl comes from main.js's own capture of task-builder.js's
+  // "AGENT DASHBOARD — http://localhost:4949/" banner line, WITH the
+  // trailing slash (it's also used as-is for webviewEl.src, where a
+  // trailing slash is harmless). Naively appending "/status.json" here
+  // produced "http://localhost:4949//status.json" — a double slash that
+  // task-builder.js's exact `req.url === "/status.json"` route match never
+  // matches, silently falling through to the dashboard's own catch-all
+  // static route and returning its HTML instead of JSON. res.json() then
+  // threw on every single poll tick, forever, swallowed by the catch below
+  // — the badge code was never once reached. Confirmed live: zero
+  // taskbar-overlay IPC calls ever logged despite a real, open approval
+  // gate the whole time.
+  const base = dashboardUrl.replace(/\/+$/, "")
+  taskbarOverlayPollHandle = setInterval(async () => {
+    try {
+      const res = await fetch(`${base}/status.json`)
+      const data = await res.json()
+      setAttentionBadge(Boolean(data.awaitingInput))
+    } catch {
+      // Dashboard not reachable yet/anymore this tick — leave whatever
+      // badge state is currently showing rather than flicker it off.
+    }
+  }, 2500)
+}
 
 // Dev-time convenience — confirms whether mongod.exe actually landed in
 // resources/mongodb-win-x64/ (see its README) before anything tries to use

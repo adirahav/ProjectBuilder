@@ -59,7 +59,7 @@ import axios from 'axios'
 import { Preferences } from '@capacitor/preferences'
 import { Capacitor } from '@capacitor/core'
 
-const BASE_URL = import.meta.env.VITE_API_URL // or the relevant VITE_*_API_URL for the service being called
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api' // relative fallback — see the mandatory dev-server proxy below, without which this fallback silently talks to the wrong server
 
 const axiosInstance = axios.create({
     baseURL: BASE_URL,
@@ -126,6 +126,20 @@ export const httpService = {
     }
 }
 ```
+
+**Mandatory dev-server proxy (`frontend/vite.config.ts`):** `BASE_URL`'s `/api` fallback is a relative path — it resolves against the Vite dev server's OWN origin (e.g. `localhost:5173`), not against the backend/gateway, unless the dev server is explicitly told to forward it. Every project needs this regardless of whether `VITE_API_URL` also happens to be set correctly, because a missing/wrong env var must degrade to "still works via the proxy," not "silently 404s against the wrong server." Confirmed live: a project with no proxy configured had every single API call reach Vite itself instead of the backend, 404ing on a route that only existed one server over — nothing about the failure pointed at the real cause.
+```typescript
+// frontend/vite.config.ts
+export default defineConfig({
+  server: {
+    proxy: {
+      '/api': { target: 'http://localhost:<gateway-or-backend-port>', changeOrigin: true },
+    },
+  },
+  // ...existing plugins/config...
+})
+```
+Point `target` at whichever port `{{BACKEND_SERVICES}}` actually serves `/api` from (the gateway, if one exists — otherwise the single backend service).
 
 **Authentication Headers:**
 - Every request automatically includes the `Authorization` header if a token exists (web or native storage) — this is handled once, centrally, in the request interceptor above. Domain services never attach this header themselves.

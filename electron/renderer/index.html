@@ -67,6 +67,9 @@
     color: var(--accent);
   }
   #pick-btn-main:hover { background: rgba(240, 180, 41, 0.2); }
+  #pick-btn-main:disabled, .recent-project-btn:disabled, .recent-project-delete-btn:disabled {
+    opacity: 0.5; cursor: default; pointer-events: none;
+  }
   #wizard-error { margin-top: 16px; font-size: 13px; color: #f87171; }
   #wizard-error:empty { display: none; }
   #ready-error { margin: 0 0 16px; font-size: 13px; color: #f87171; text-align: left; white-space: pre-wrap; }
@@ -78,12 +81,12 @@
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--dim); margin-bottom: 10px; text-align: center;
   }
+  .recent-project-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: stretch; }
   .recent-project-btn {
-    display: block; width: 100%;
+    display: block; flex: 1; min-width: 0;
     text-align: left;
     font-size: 13px; font-weight: 500;
     padding: 10px 14px;
-    margin-bottom: 6px;
     border-radius: 8px;
     border: 1px solid var(--border);
     background: var(--panel);
@@ -92,6 +95,30 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .recent-project-btn:hover { border-color: var(--accent); }
+  .recent-project-delete-btn {
+    flex-shrink: 0;
+    width: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--dim);
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .recent-project-delete-btn:hover { border-color: #f87171; color: #f87171; }
+  .recent-project-confirm {
+    flex: 1;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--dim);
+    padding: 0 4px;
+  }
+  .recent-project-confirm button { padding: 6px 12px; font-size: 12px; }
+  .recent-project-confirm .danger { border-color: #f87171; color: #f87171; }
   .recent-project-btn .recent-project-status {
     color: var(--dim); font-size: 11px; margin-inline-start: 8px;
   }
@@ -194,6 +221,36 @@
      width. Scrolling the narrower centered box would put its scrollbar in
      the middle of the window instead of hugging the actual window edge. */
   #config-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+  /* Step 3 — AI model review/override. Same full-screen header+scroll shape
+     as #step-config, reused via shared class names below rather than
+     duplicating the layout rules. */
+  #step-models { position: absolute; inset: 0; display: none; flex-direction: column; }
+  #step-models.active { display: flex; }
+  #models-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  #models-header .step-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); }
+  #models-header h2 { font-size: 15px; margin: 0; flex: 1; }
+  #models-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  #models-content { padding: 20px 24px 32px; max-width: 640px; width: 100%; margin: 0 auto; }
+  #models-content h3 { font-size: 13px; margin: 20px 0 8px; color: var(--text); }
+  #models-content h3:first-child { margin-top: 0; }
+  .model-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .model-row-label { flex: 0 0 160px; font-size: 12px; color: var(--dim); }
+  .model-row select, .model-row input.text-input { flex: 1; min-width: 0; }
+  .model-row-warning { font-size: 11px; color: var(--accent); margin-top: 2px; }
+  .model-row-unavailable { font-size: 11px; color: #f87171; margin-top: 2px; }
+  #models-error { color: #f87171; font-size: 13px; margin-top: 12px; }
+  #models-error:empty { display: none; }
   #config-form { padding: 20px 24px 32px; max-width: 640px; width: 100%; margin: 0 auto; }
   .config-intro { font-size: 13px; color: var(--dim); line-height: 1.6; margin: 0 0 20px; }
   #config-form fieldset {
@@ -382,7 +439,7 @@
   /* Live build settings — a small overlay panel (not a wizard step; it sits
      on top of #run-area, which stays exactly as it was underneath) for the
      three orchestrator.config.json gates that still mean something once
-     dev-loop.js is already running. */
+     task-builder.js is already running. */
   #live-gates-overlay {
     position: fixed; inset: 0; z-index: 100;
     display: none;
@@ -413,6 +470,88 @@
   #live-gates-status { font-size: 13px; color: #4ade80; margin-bottom: 10px; }
   #live-gates-status:empty { display: none; margin: 0; }
   #live-gates-save-btn { border-color: var(--accent); background: rgba(240, 180, 41, 0.12); color: var(--accent); }
+
+  /* Same overlay shape as #live-gates-overlay, just wider (a model list has
+     more rows than three radio fieldsets). */
+  #live-models-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  #live-models-overlay.active { display: flex; }
+  #live-models-panel {
+    width: 560px; max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+  }
+  #live-models-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  #live-models-header h2 { font-size: 16px; margin: 0; flex: 1; }
+  #live-models-panel h3 { font-size: 13px; margin: 16px 0 8px; }
+  #live-models-panel h3:first-of-type { margin-top: 8px; }
+  #live-models-error { font-size: 13px; color: #f87171; margin-top: 10px; }
+  #live-models-error:empty { display: none; margin: 0; }
+  #live-models-status { font-size: 13px; color: #4ade80; margin-top: 10px; }
+  #live-models-status:empty { display: none; margin: 0; }
+  #live-models-save-btn { border-color: var(--accent); background: rgba(240, 180, 41, 0.12); color: var(--accent); }
+
+  #view-tasks-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  #view-tasks-overlay.active { display: flex; }
+  #view-tasks-panel {
+    width: 560px; max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+  }
+  #view-tasks-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  #view-tasks-header h2 { font-size: 16px; margin: 0; flex: 1; }
+  .view-task-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px; line-height: 1.5;
+  }
+  .view-task-row:last-child { border-bottom: none; }
+  .view-task-check { flex-shrink: 0; }
+  .view-task-row.done .view-task-text { color: var(--dim); text-decoration: line-through; }
+  .view-task-reports { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; }
+  .view-task-report-select {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .view-task-report-select:hover { border-color: var(--accent); }
+  #report-viewer-inline {
+    margin-top: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .report-viewer-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 13px; }
+  .report-viewer-header button { flex-shrink: 0; }
+  #report-viewer-content {
+    max-height: 320px; overflow: auto;
+    margin: 0; padding: 12px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel);
+    font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
 </style>
 </head>
 <body>
@@ -448,20 +587,21 @@
 
       <div class="config-question active" data-step="1">
         <fieldset>
-          <legend>[1/10] Setting up the infrastructure (PRD, rules, agent configs, ...) — after each file is drafted, do you want to…</legend>
-          <label class="radio-option"><input type="radio" name="approvalMode" value="gated" checked> Stop and approve it before continuing (gated)</label>
-          <label class="radio-option"><input type="radio" name="approvalMode" value="ungated"> Keep going and review everything at the end (ungated)</label>
+          <legend>[1/10] SETUP PHASE — before any code is written, this process drafts 4 core product documents one at a time (what the product is, its entities, its architecture, its screens). After each one is drafted, do you want to…</legend>
+          <label class="radio-option"><input type="radio" name="approvalMode" value="gated"> Stop and let me approve it before moving to the next one (gated)</label>
+          <label class="radio-option"><input type="radio" name="approvalMode" value="ungated" checked> Keep going and let me review everything together at the end (ungated)</label>
         </fieldset>
+        <div class="config-note">Only these 4 documents ever stop for your approval — everything drafted after them (rules, agent instructions, tooling) is engineering scaffolding derived from what these decide, and always proceeds automatically either way.</div>
         <div class="config-question-nav"><button type="button" class="config-next-btn">Next →</button></div>
       </div>
 
       <div class="config-question" data-step="2">
         <fieldset>
-          <legend>[2/10] Building the actual project (dev-loop.js) — after each task's plan is drafted, do you want to…</legend>
-          <label class="radio-option"><input type="radio" name="buildApprovalMode" value="gated" checked> Stop and approve it before continuing (gated)</label>
-          <label class="radio-option"><input type="radio" name="buildApprovalMode" value="ungated"> Let it proceed automatically (ungated)</label>
+          <legend>[2/10] BUILD PHASE — once setup is done, the AI agents start actually building your product, one feature/task at a time. Before each task's work begins, do you want to…</legend>
+          <label class="radio-option"><input type="radio" name="buildApprovalMode" value="gated" checked> Stop and let me approve the plan first (gated)</label>
+          <label class="radio-option"><input type="radio" name="buildApprovalMode" value="ungated"> Let it proceed automatically without waiting for me (ungated)</label>
         </fieldset>
-        <div class="config-note">A separate gate from the question above — this one governs the actual feature-building loop, not this setup process's own files. A project can reasonably want every scaffolding file reviewed but routine feature tasks flying through unattended, or the reverse.</div>
+        <div class="config-note">A separate decision from the question above — this one is about ongoing feature development after setup is finished, not the planning documents. You might want every planning document reviewed but routine feature work to fly through unattended, or the reverse.</div>
         <div class="config-question-nav"><button type="button" class="config-next-btn">Next →</button></div>
       </div>
 
@@ -575,9 +715,40 @@
     </div>
   </div>
 
+  <div id="step-models">
+    <div id="models-header">
+      <span class="step-label">Step 3</span>
+      <h2>AI models</h2>
+      <button id="models-back-btn">← Back</button>
+      <button type="button" id="models-continue-btn">Continue →</button>
+    </div>
+    <div id="models-scroll">
+      <div id="models-content">
+        <p class="config-intro">
+          Which model each build step runs under. The defaults are a reasonable cost/quality split —
+          only change these if you know what you're doing.
+        </p>
+
+        <div id="models-cursor-section">
+          <h3>Cursor models</h3>
+          <div id="models-cursor-status" class="config-note"></div>
+          <div id="models-cursor-rows"></div>
+        </div>
+
+        <div id="models-claude-section">
+          <h3>Claude models</h3>
+          <div class="config-note">No live listing exists for Claude Code — these are plain text, not validated.</div>
+          <div id="models-claude-rows"></div>
+        </div>
+
+        <div id="models-error"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="step-chat">
     <div id="chat-header">
-      <span class="step-label">Step 3</span>
+      <span class="step-label">Step 4</span>
       <h2>Tell me about your app</h2>
       <button id="view-files-btn">📄 View Files</button>
       <button id="chat-back-btn">← Back</button>
@@ -592,7 +763,7 @@
 
   <div class="wizard-step" id="step-2">
     <div class="wizard-card">
-      <div class="step-label">Step 4</div>
+      <div class="step-label">Step 5</div>
       <h1>Ready to start</h1>
       <div class="project-path-display" id="project-path"></div>
       <p>This is where your project will be built. You can go back and pick a different folder before starting.</p>
@@ -608,34 +779,40 @@
   <div id="run-area">
     <div id="run-header">
       <span id="run-status"></span>
+      <button id="view-tasks-btn">☑️ All Tasks</button>
       <button id="live-gates-btn">⚙️ Edit Setup</button>
+      <button id="live-models-btn">🧠 Edit Models</button>
       <button id="stop-btn">■ Stop</button>
       <button id="run-start-btn" style="display:none">▶ Start</button>
     </div>
     <div id="run-body">
       <div id="log-pane" class="hidden">
         <pre id="log"></pre>
-        <!-- Fallback only — normally dev-loop.js's own prompts are answered
+        <!-- Fallback only — normally task-builder.js's own prompts are answered
              through its dashboard (the <webview> below, once loaded). This
              exists for when that dashboard server itself failed to start
              (confirmed live: a stale orphaned process was still holding its
              port), leaving a prompt like "git init? (y/N)" sitting in the
              read-only log above with no way to answer it at all. Sends
-             straight to dev-loop.js's own stdin — see main.js's
+             straight to task-builder.js's own stdin — see main.js's
              send-dev-loop-input. -->
         <div id="log-input-row">
-          <input type="text" id="log-input" placeholder="Reply to dev-loop.js (only needed if the dashboard above hasn't loaded)…" autocomplete="off">
+          <input type="text" id="log-input" placeholder="Reply to the build (only needed if the dashboard above hasn't loaded)…" autocomplete="off">
           <button id="log-send-btn">Send</button>
         </div>
       </div>
-      <webview id="dashboard-view"></webview>
+      <!-- allowpopups: without it, <webview> silently blocks every
+           window.open() call from the guest page (agent-dashboard.html's
+           own "Open in Browser" button) — no error, it just does nothing,
+           which is exactly what was reported live. -->
+      <webview id="dashboard-view" allowpopups></webview>
     </div>
   </div>
 
-  <!-- Only the three gates that actually mean something once dev-loop.js is
+  <!-- Only the three gates that actually mean something once task-builder.js is
        already running — orchestrator.config.json's own fields, edited
        directly (NOT .setup-config.json/the Step 2 wizard, which is already
-       fully consumed by this point). dev-loop.js re-reads these fresh on
+       fully consumed by this point). task-builder.js re-reads these fresh on
        every check (see getAutoApprovePlans() etc.), so a save here takes
        effect on the very next gate it hits, no restart needed. -->
   <!-- Read-only viewer for the actual files Claude is drafting (PRD,
@@ -667,7 +844,7 @@
         <h2>Live build settings</h2>
         <button id="live-gates-close-btn">✕</button>
       </div>
-      <p class="config-intro">These take effect on the next gate dev-loop.js hits — no restart needed.</p>
+      <p class="config-intro">These take effect on the next gate the build hits — no restart needed.</p>
       <fieldset>
         <legend>After each task's plan is drafted</legend>
         <label class="radio-option"><input type="radio" name="liveAutoApprovePlans" value="false"> Stop and approve it before continuing (gated)</label>
@@ -688,6 +865,54 @@
       <div class="wizard-nav">
         <button id="live-gates-save-btn">Save</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Same purpose as the Step 3 model-review screen, reachable again once
+       the build is already running (people change their mind, a model gets
+       deprecated mid-project, ...) — reuses that step's own row-rendering
+       logic (see renderer.js's loadModelsInto()), just inside a small
+       overlay instead of a full wizard step, and Save-in-place instead of
+       Continue-to-chat. -->
+  <div id="live-models-overlay">
+    <div id="live-models-panel">
+      <div id="live-models-header">
+        <h2>AI models</h2>
+        <button id="live-models-close-btn">✕</button>
+      </div>
+      <div id="live-models-cursor-section">
+        <h3>Cursor models</h3>
+        <div id="live-models-cursor-status" class="config-note"></div>
+        <div id="live-models-cursor-rows"></div>
+      </div>
+      <div id="live-models-claude-section">
+        <h3>Claude models</h3>
+        <div class="config-note">No live listing exists for Claude Code — these are plain text, not validated.</div>
+        <div id="live-models-claude-rows"></div>
+      </div>
+      <div id="live-models-error"></div>
+      <div id="live-models-status"></div>
+      <div class="wizard-nav">
+        <button id="live-models-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Read-only view of .plan/000-backlog.md — the same task queue Phase E
+       wrote and the human is expected to prune/reorder by hand before the
+       build starts, but there was previously no way to see it once the
+       build was already running (only the Setup Wizard's own View Files
+       panel could reach .plan/, and only before Start). Deliberately not
+       editable here — the backlog checkbox state is task-builder.js's own
+       source of truth for what's done (markBacklogTaskDone()); editing it
+       from two places risks the two going out of sync. -->
+  <div id="view-tasks-overlay">
+    <div id="view-tasks-panel">
+      <div id="view-tasks-header">
+        <h2>All tasks</h2>
+        <button id="view-tasks-close-btn">✕</button>
+      </div>
+      <div id="view-tasks-body"></div>
     </div>
   </div>
 

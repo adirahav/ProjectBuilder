@@ -11,7 +11,7 @@
  * junctions pointing straight into the user's own chosen project folder, so
  * a Backend/Frontend Agent's output lands there directly. The end user only
  * ever sees their own product's frontend/backend/android code — never the
- * orchestration machinery (agents' prompts, dev-loop.js, rules, this app's
+ * orchestration machinery (agents' prompts, task-builder.js, rules, this app's
  * own internal working files). That separation is the whole point of this
  * script existing instead of just using the repo root as-is.
  *

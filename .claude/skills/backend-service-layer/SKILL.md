@@ -7,7 +7,7 @@ references:
   - @.rule/glossary.md
   - @.rule/naming-rules.md
   - @.rule/testing-rules.md
-  - @seat-concurrency-layer/SKILL.md
+  - @resource-concurrency-layer/SKILL.md
   - @mongoose-models-layer/SKILL.md
   - @jwt-middleware-layer/SKILL.md
 ---
@@ -66,7 +66,7 @@ Controllers never touch Mongoose directly — they call the service. Routes neve
 **See the dedicated `mongoose-models-layer` skill for full schema definitions, the soft-delete hook pattern, required indexes, and query conventions.** Models: {{MODELS}}. Naming is camelCase throughout, per `.rule/naming-rules.md`; every model exposes `id` (a `uuid`) to clients and never `_id` — a controller receiving a client `id` param must resolve it to `_id` via the service layer before querying, and any `.lean()` result returned straight from a controller must be mapped through the same `uuid`→`id` shape by hand.
 
 ## Concurrency (fill in only if a contested resource exists)
-If `{{CONTESTED_ENTITY}}` is set, this is high-risk logic. **See the dedicated `seat-concurrency-layer` skill before writing or reviewing any code that changes its status** — it covers the atomic-update pattern, the full per-action rule table, any multi-document case, and the concurrency test pattern in depth. The short version: every status-changing action is one atomic `findOneAndUpdate` with the precondition in the filter, never a separate read-then-write; a multi-document action needs a transaction or explicit rollback; no endpoint ever accepts the status field directly from the client.
+If `{{CONTESTED_ENTITY}}` is set, this is high-risk logic. **See the dedicated `resource-concurrency-layer` skill before writing or reviewing any code that changes its status** — it covers the atomic-update pattern, the full per-action rule table, any multi-document case, and the concurrency test pattern in depth. The short version: every status-changing action is one atomic `findOneAndUpdate` with the precondition in the filter, never a separate read-then-write; a multi-document action needs a transaction or explicit rollback; no endpoint ever accepts the status field directly from the client.
 
 ## JWT & Auth Middleware
 **See the dedicated `jwt-middleware-layer` skill for the full trust model, token shape, validation middleware{{JWT_COORDINATION_NOTE}}.** Short version: only the designated issuing service signs tokens; every service validates independently with the identical `JWT_SECRET`; always pin `algorithms: ['HS256']` explicitly on both sign and verify.

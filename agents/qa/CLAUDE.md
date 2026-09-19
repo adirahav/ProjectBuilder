@@ -74,6 +74,8 @@ For each criterion in `docs/PRD.md`, mark PASS or FAIL with evidence:
 
 {{ACCEPTANCE_CRITERIA}}
 
+**Clean up any data you create while checking these.** A criterion like "new user registers" verified by actually registering one through the running app writes a real row into whatever database `MONGODB_URI` currently points at — in local dev, that's very likely the SAME database a human is looking at directly (there is no separate provisioned test database unless a test file explicitly points at one, e.g. a distinct `<name>-test` database — see `.rule/testing-rules.md`). Confirmed live: QA accounts (`qa5@example.com`, `qa6@example.com`, auto-generated `owner-<timestamp>@...` emails, ...) were left behind after manual AC verification, sitting in a human's real local database with nothing having ever deleted them. Delete (or, if the schema uses one, soft-delete via its own real endpoint) every record you create purely to verify a criterion, in the same turn you created it — not as a follow-up, not left for someone else to notice.
+
 ### Step 8: Write QA report
 End your final response with the report below (the orchestrator saves your full response to the report file — do not write the report file yourself):
 
@@ -102,10 +104,13 @@ STATUS: DONE | BLOCKED
 ```
 
 If anything fails: list it with file + line number + expected vs actual.
-Never mark STATUS: DONE if any criterion fails.
+**Always use the exact report structure above (Test Results / Acceptance Criteria / Findings / STATUS) — never a free-form prose summary instead of it.** A defect described only in prose, outside the Findings section, is easy to lose track of even by you, a few lines later, when you write the final STATUS line.
+Never mark STATUS: DONE if any criterion fails, OR if you found any real defect at all during ANY step — including ones you noticed incidentally, not just a failed AC (e.g. a broken proxy/route you found while checking something else). A defect found is a Finding; a Finding means BLOCKED. There is no "found a blocking issue, but still DONE" outcome. This is not just a formatting rule — the orchestrator reads ONLY the literal final STATUS line, never the prose above it. Writing "blocked" or "cannot pass" or "blocking defect" anywhere in the report body and then still ending with `STATUS: DONE` is a direct self-contradiction that the orchestrator cannot detect: it will treat the task as finished and move on regardless of what the report actually says. Confirmed live: a report described a fully diagnosed, genuinely blocking defect (uploaded images unreachable end-to-end) in its own summary prose, then still ended STATUS: DONE — the ticket was never reopened and the bug shipped. Before finalizing the report, re-read your own last paragraph and confirm the STATUS line matches its conclusion.
 
 ## Rules
 - A criterion is PASS only if a test proves it — not if the code "looks right".
+- **Verify through the REAL client-facing path, not just directly against a backend service.** For anything that crosses a gateway/proxy — a publicly-served static path (uploaded files, images), a proxied API route, anything the frontend reaches via `/api/...` — a request made directly to the backend service is not equivalent to the actual request the browser makes, and can pass while the real path fails. Confirmed live: a photo-upload fix tested fine calling `user-service` directly, but 404'd every single time through the actual gateway the frontend uses, because the gateway strips `/api` before forwarding and the service's own static mount didn't account for that. Route the check through the same proxy/gateway a real client uses, at least once, before calling it verified.
+- **A restart is not proof the fix is live.** After restarting a service to apply a fix, confirm by making the exact real request (not just checking the process started without an error) — a stale process from before the fix can keep holding the port while a newer one silently fails to bind or never gets started at all. Check what's actually listening, not just what you tried to start.
 - Never modify non-test source files.
 - **Concurrency check is non-negotiable** (only if {{CONTESTED_ENTITY}} applies): the contested-resource acceptance criterion must be verified with a true concurrent/simultaneous request test (e.g. two parallel requests for the same {{CONTESTED_ENTITY}}), not two sequential calls — a sequential test can pass even when the underlying atomic-update guard is missing. Flag immediately if only one succeeds via sequencing rather than a real race.
 - Any {{FORBIDDEN_TERMS}} found anywhere in the built app or its output (components, routes, copy) is an automatic FAIL — flag immediately, this is not a style nitpick.

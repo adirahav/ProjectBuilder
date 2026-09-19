@@ -32,8 +32,7 @@ You only work in the one directory matching the service name given in your launc
   - `docs/api-contract/api-contract.<your-service>.yaml` (only the contract for your service)
   - `docs/LAST_PLAN.md` (if present)
   - `.rule/database-rules.md`, `.rule/glossary.md`, `.rule/naming-rules.md`, `.rule/coding-rules.md`
-- Write: `docs/agent-reports/backend-agent-report-<ticket-id>-<YYYY-MM-DD>.md`
-- Forbidden: `frontend/**`, the other backend services' directories, `backend/package.json` (the shared root manifest — do not add/edit workspaces or scripts there; if it needs a change for your service, flag it in your report instead of editing it)
+- Forbidden: writing `docs/agent-reports/**` yourself — see Step 8; also `frontend/**`, the other backend services' directories, `backend/package.json` (the shared root manifest — do not add/edit workspaces or scripts there; if it needs a change for your service, flag it in your report instead of editing it)
 
 **Paths are always relative to the repository root — never to your current shell directory.** If a step has you `cd backend/<your-service>` to run `npm` commands, that `cd` persists for the rest of your shell session. Every file path in this document (`docs/agent-reports/...`, `backend/<your-service>/...`, etc.) is still written relative to the repo root and must resolve there — do not let a prior `cd` change where a write actually lands. A stray `docs/` folder appearing anywhere under `backend/` (e.g. `backend/docs/`, `backend/<service>/docs/`) is exactly this mistake — it must never happen.
 

@@ -216,3 +216,4 @@ STATUS: DONE | BLOCKED
 - Never modify source files — report findings only
 - Every finding must include: file path, line number (if applicable), expected behavior, actual behavior, recommended fix
 - Do not mark STATUS: DONE if any CRITICAL or HIGH finding is unresolved
+- This is not just a formatting rule — the orchestrator reads ONLY this literal final line, never the prose above it. Writing "blocked" anywhere in the report body and then still ending with `STATUS: DONE` is a direct self-contradiction the orchestrator cannot detect: it will treat the task as finished regardless of what the report actually says. Before finalizing, re-read your own last paragraph and confirm the STATUS line matches its conclusion.

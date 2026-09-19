@@ -6,7 +6,7 @@
 // tool_input for every call, so reading a real env file via cat, Read, or
 // grep is all caught the same way.
 //
-// Runs even when CLAUDE_PERMISSION_MODE=bypassPermissions (dev-loop.js's
+// Runs even when CLAUDE_PERMISSION_MODE=bypassPermissions (task-builder.js's
 // default for the FE/BE/QA sub-agents) - hooks are a separate enforcement
 // layer from the permission system, which is exactly why this demo relies
 // on them instead of permissions.deny alone.

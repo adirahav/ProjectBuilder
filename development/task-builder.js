@@ -30,9 +30,9 @@
  *   8) Mark backlog item done and continue to next task
  */
 
-import { execSync, spawn } from "child_process"
+import { execSync, spawn, spawnSync } from "child_process"
 import dotenv from "dotenv"
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs"
+import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from "fs"
 import http from "http"
 import { dirname, join, resolve, sep } from "path"
 import { createInterface } from "readline"
@@ -44,42 +44,56 @@ process.chdir(__projectRoot)
 dotenv.config({ path: `.env.${process.env.NODE_ENV || "development"}` })
 
 // ─── Model mapping ──────────────────────────────────────────────────────────
-// Which model each operation uses, per LLM provider. Opus (or Cursor's
-// opus-thinking equivalent) is reserved for the operations that write
-// multi-file production code end-to-end (frontend, backend x3) — that's
+// Which model each operation uses, per LLM provider — read from
+// development/model-config.json (a plain committed JSON file, editable by
+// hand or by an agent, without touching this script's own code) rather than
+// hardcoded here. Opus/Gemini-Pro-class models (whichever the current
+// config picks) are meant for the operations that write multi-file
+// production code end-to-end (designer, frontend, backend x N) — that's
 // where extra reasoning actually pays for itself. Everything else (planning,
-// QA, security review, chat) is judgment/analysis over work already reviewed
-// downstream, so Sonnet-class models get equivalent real-world quality at a
-// fraction of the cost. Single place to retune cost/quality per operation
-// without hunting through every spawnLlm() call site.
-const MODEL_FOR = {
-  planning:            "claude-sonnet-5", // askClaudeForPlan — initial plan draft (architecture reasoning, not code)
-  "planning-revise":   "claude-sonnet-5", // askClaudeToRevisePlan — plan feedback rounds
-  designer:            "claude-opus-5",   // Designer Agent — establishes the whole visual system once; worth the extra reasoning
-  frontend:            "claude-opus-5",   // Frontend Agent — multi-file code generation
-  qa:                  "claude-sonnet-5", // QA Agent — runs/reads existing tests, not creative code
-  security:            "claude-sonnet-5", // Security Agent — checklist/scan-driven audit; bump to claude-opus-5 if audits need deeper adversarial reasoning
-  "orchestrator-chat": "claude-sonnet-5", // waitForApprovalWithChat — short free-form chat during approval wait
+// QA, security review, chat) is judgment/analysis over work already
+// reviewed downstream, so a lighter/cheaper model is expected to give
+// equivalent real-world quality at a fraction of the cost — that split is a
+// tuning decision for whoever edits the JSON, not something this script
+// enforces. The hardcoded fallback below only kicks in if the file is
+// missing/corrupt, so a damaged config can't silently stop every agent from
+// launching.
+const MODEL_CONFIG_PATH = "development/model-config.json"
+const DEFAULT_MODEL_FOR = {
+  planning: "claude-sonnet-5",
+  "planning-revise": "claude-sonnet-5",
+  designer: "claude-opus-5",
+  frontend: "claude-opus-5",
+  qa: "claude-sonnet-5",
+  security: "claude-sonnet-5",
+  "orchestrator-chat": "claude-sonnet-5",
 }
-
-// Cursor CLI (`agent --model`) names — same quality split as MODEL_FOR, mapped
-// onto the ids `agent models` actually lists. Used only when ACTIVE_PROVIDER
-// is "cursor"; Claude Code still uses MODEL_FOR above.
-const CURSOR_MODEL_FOR = {
-  planning:            "claude-sonnet-5-thinking-high",
-  "planning-revise":   "claude-sonnet-5-thinking-high",
-  designer:            "claude-opus-5-thinking-high",
-  frontend:            "claude-opus-5-thinking-high",
-  qa:                  "claude-sonnet-5-thinking-high",
-  security:            "claude-sonnet-5-thinking-high",
-  "orchestrator-chat": "claude-sonnet-5-thinking-high",
+// Called on every modelFor() invocation (see below) — no logging in the
+// catch here, unlike a one-time startup read, since a genuinely missing/
+// corrupt file would otherwise spam the log on every single agent launch
+// for the rest of the run.
+function loadModelConfig() {
+  try {
+    return JSON.parse(readFileSync(MODEL_CONFIG_PATH, "utf-8"))
+  } catch {
+    return null
+  }
 }
-
-// Any backend service key (discovered per-project, not listed here by name)
-// falls through to the frontend row, i.e. Opus-class — backend code generation
-// gets the same treatment as frontend regardless of the service's name.
+// Cursor CLI (`agent --model`) names — model ids `agent models` actually
+// lists, not Claude Code's own model names. Used only when ACTIVE_PROVIDER
+// is "cursor"; Claude Code always uses the "claude" table regardless of
+// what the JSON file's "cursor" key contains.
+//
+// Read FRESH from disk on every call, not cached once at startup — same
+// reasoning as getAutoApprovePlans()/getAutoMergeTasks()/
+// getCreateBranchPerTask() above: the Electron app's "🧠 Edit Models" panel
+// (see electron/main.js's write-model-config handler) writes straight into
+// this file while task-builder.js is already running, and a human changing
+// a model mid-run expects the very next agent launch to use it, not
+// whatever was on disk when this process started.
 function modelFor(operation) {
-  const table = ACTIVE_PROVIDER === "cursor" ? CURSOR_MODEL_FOR : MODEL_FOR
+  const config = loadModelConfig()
+  const table = (ACTIVE_PROVIDER === "cursor" ? config?.cursor : config?.claude) || DEFAULT_MODEL_FOR
   return table[operation] || table.frontend
 }
 
@@ -156,7 +170,7 @@ function updateGitStatus() {
 // These three gates are read FRESH from orchestrator.config.json on every
 // call, not cached once at startup — the Electron app's "⚙️ Edit Setup"
 // panel at the dashboard stage (see electron/main.js's write-live-gates
-// handler) writes straight into that file while dev-loop.js is already
+// handler) writes straight into that file while task-builder.js is already
 // running, and a human flipping a gate mid-run expects the very next check
 // to honor it, not whatever was true when the process started. A CLI
 // flag/env var still overrides the file entirely for a one-off run — that
@@ -209,7 +223,7 @@ const COST_DIR = "docs/cost"
 // The dashboard's "last completed task" cost card reads from here, not from
 // the ephemeral docs/agent-status.json — that file is live/transient by
 // design (safe to delete, gets rebuilt from scratch), but a finished task's
-// final cost is real historical data that should survive a dev-loop.js
+// final cost is real historical data that should survive a task-builder.js
 // restart or a status-file cleanup, same as the per-task .txt files already
 // written into COST_DIR.
 const LAST_TASK_COST_PATH = "docs/cost/last-task.json"
@@ -271,7 +285,7 @@ function camelKey(kebabKey) {
 
 // `let`, not `const` — refreshBackendServiceKeys() (defined below, after
 // API_CONTRACTS/BACKEND_PORTS/AGENT_IDENTITY exist to extend) reassigns this
-// as new backend services are discovered mid-run, so a long dev-loop.js
+// as new backend services are discovered mid-run, so a long task-builder.js
 // session self-heals without needing a restart every time a service becomes
 // known (scaffolded on disk, or newly named in the backlog's `scope:`).
 let BACKEND_SERVICE_KEYS = discoverBackendServices()
@@ -411,7 +425,7 @@ function recordCost(role, label, rawStdout) {
 // Mirrors the terminal's cost table (console.table in logLastCost/
 // printCostTable) into a small persistent file the dashboard reads — NOT
 // into docs/agent-status.json, which is ephemeral/rebuildable by design.
-// A finished task's cost is real history and should survive a dev-loop.js
+// A finished task's cost is real history and should survive a task-builder.js
 // restart or that file being deleted, exactly like the per-task .txt/JSON
 // records already written into COST_DIR.
 function writeLastTaskCost(taskLabel) {
@@ -596,14 +610,138 @@ const AGENT_STATUS_PATH = "docs/agent-status.json"
 const DASHBOARD_PORT = Number(process.env.DASHBOARD_PORT) || 4949
 const DASHBOARD_DIR = "development/agent-dashboard"
 
+// Queue for the dashboard's always-available "note" box (POST /note, see
+// startDashboardServer()) — a general aside the human can leave at ANY
+// time, not just as a direct answer to whatever the orchestrator currently
+// happens to be asking. Read and cleared by takePendingNotes(), called at
+// the start of the next real checkpoint (waitForApprovalWithChat()'s
+// feature-done chat, reviewPlanUntilApproved()'s plan-review gate).
+const NOTES_FILE = "docs/orchestrator-notes.md"
+
+// Sent by the dashboard's explicit "Address now" button (not typed by a
+// human) via the normal /respond channel, when the human wants pending
+// notes actioned right now instead of waiting for it to happen as a side
+// effect of answering something else — see its handling in
+// waitForApprovalWithChat()'s while loop.
+const ADDRESS_NOTES_SENTINEL = "__ADDRESS_PENDING_NOTES__"
+
+// Sent by a specific note's own "▶ Run" button in the Chat tab (see
+// makeChatLogEntry() in agent-dashboard.html) — addresses exactly ONE
+// queued note, identified by its exact NOTES_FILE line text appended after
+// this prefix, instead of the whole queue. Only enabled client-side while
+// a gate is actually open (awaitingInput truthy) — there's nowhere for
+// this to go otherwise, task-builder.js isn't blocked on anything to
+// resolve it with. Requested directly: a human wanted a per-item action
+// right next to each pending item, not just a single combined "address
+// everything" button, and not buried in a whole separate row of buttons on
+// the respond-box itself (confirmed too cluttered there).
+const ADDRESS_SINGLE_NOTE_PREFIX = "__ADDRESS_SINGLE_NOTE__:"
+
+// Persistent record of every note sent and every reply, surviving dashboard
+// reloads/restarts — NOTES_FILE alone only tells the orchestrator what's
+// still unread; it can't answer "did my note from earlier ever get seen?"
+// once the dashboard's own in-memory chat-log resets. Confirmed live: a
+// human sent a note, later reloaded the page, and had no way to tell it was
+// still sitting unaddressed versus lost entirely.
+const CHAT_LOG_FILE = "docs/orchestrator-chat-log.json"
+
+function readChatLog() {
+  if (!existsSync(CHAT_LOG_FILE)) return []
+  try { return JSON.parse(readFileSync(CHAT_LOG_FILE, "utf-8")) } catch { return [] }
+}
+
+function appendChatLog(entry) {
+  const log = readChatLog()
+  log.push(entry)
+  if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+  writeFileSync(CHAT_LOG_FILE, JSON.stringify(log, null, 2))
+}
+
+// Marks every still-pending human entry as addressed and records the
+// orchestrator's reply, all in one go — takePendingNotes() below hands back
+// every queued note as a single blob per checkpoint, so there's no per-note
+// id to match against; one reply always closes out everything that was
+// pending at that moment.
+function markChatLogAddressed(replyText) {
+  const log = readChatLog()
+  let changed = false
+  for (const entry of log) {
+    if (entry.from === "human" && entry.status === "pending") { entry.status = "addressed"; changed = true }
+  }
+  if (replyText) { log.push({ ts: new Date().toISOString(), from: "orchestrator", text: replyText, status: "addressed" }) }
+  if (changed || replyText) writeFileSync(CHAT_LOG_FILE, JSON.stringify(log, null, 2))
+}
+
+function takePendingNotes() {
+  if (!existsSync(NOTES_FILE)) return null
+  const content = readFileSync(NOTES_FILE, "utf-8").trim()
+  if (!content) return null
+  rmSync(NOTES_FILE)
+  return content
+}
+
+// One line per queued note, e.g. "- [2026-09-18T20:34:02.566Z] when owner
+// upload his dog image, the image not seen". Used by the post-backlog
+// checkpoint (see the main loop's "no more tasks" branch) to offer each
+// still-pending note as its own individually runnable choice, rather than
+// only ever being able to address the whole queue as one combined blob.
+function listPendingNoteLines() {
+  if (!existsSync(NOTES_FILE)) return []
+  return readFileSync(NOTES_FILE, "utf-8").split("\n").map((l) => l.trim()).filter(Boolean)
+}
+
+// Removes exactly one note line (by its own literal text, an exact match —
+// safe because these lines are never edited after being written, only
+// appended or fully consumed) and rewrites NOTES_FILE with whatever's left,
+// leaving every OTHER queued note untouched.
+function takeSingleNoteLine(lineText) {
+  const lines = listPendingNoteLines()
+  const remaining = lines.filter((l) => l !== lineText)
+  if (remaining.length === lines.length) return null // not found — nothing removed
+  if (remaining.length) writeFileSync(NOTES_FILE, remaining.join("\n") + "\n")
+  else if (existsSync(NOTES_FILE)) rmSync(NOTES_FILE)
+  // Strip the leading "- [timestamp] " so callers get just the note's own text.
+  return lineText.replace(/^-\s*\[[^\]]*\]\s*/, "")
+}
+
+// Marks only the ONE matching pending human chat-log entry as addressed
+// (by its text — same exact-match reasoning as takeSingleNoteLine above),
+// instead of markChatLogAddressed()'s all-pending-at-once behavior, which
+// would incorrectly close out every other still-genuinely-unaddressed note
+// just because one specific one was individually run.
+function markSingleChatLogAddressed(noteText, replyText) {
+  const log = readChatLog()
+  for (const entry of log) {
+    if (entry.from === "human" && entry.status === "pending" && entry.text === noteText) {
+      entry.status = "addressed"
+      break
+    }
+  }
+  if (replyText) log.push({ ts: new Date().toISOString(), from: "orchestrator", text: replyText, status: "addressed" })
+  writeFileSync(CHAT_LOG_FILE, JSON.stringify(log, null, 2))
+}
+
 // Maps every backend service key this project actually has (ALL_AGENT_KEYS,
 // minus orchestrator/frontend/qa/security) to the single generic "backend"
 // voice/visual category — the dashboard doesn't need a distinct cue per
 // service name, and the project's service list varies per project anyway.
 function voiceCategory(agentKey) {
-  if (["designer", "frontend", "qa", "security", "orchestrator"].includes(agentKey)) return agentKey
+  if (["designer", "frontend", "qa", "security", "orchestrator", "qa-security"].includes(agentKey)) return agentKey
   return "backend"
 }
+
+// Set only while QA and Security are genuinely both running (Promise.all
+// below), cleared the moment either finishes — not a general-purpose flag.
+// Without this, even after emitting one combined agent-start event with
+// keys ["qa","security"], the very next per-output-line writeAgentStatus()
+// call from whichever agent happens to print first (every runAgent() call
+// makes many of these while streaming) would immediately narrow status.keys
+// back down to its own single key, undoing the combined ring highlight
+// within the same second it appeared. Confirmed live: QA and Security run
+// concurrently (see the Promise.all below), but the dashboard's "currently
+// active" ring only ever showed Security, because Security's own
+// agent-start event (and then its own output lines) kept overwriting QA's.
+let parallelActiveKeys = null
 
 // Monotonically increasing — lets the dashboard tell "a new event just
 // happened, play its cue" apart from "the poll just re-fetched the same
@@ -659,7 +797,7 @@ function writeStatus(status) {
 function emitEvent(eventType, agentKey, message, keys) {
   eventSeq += 1
   const lastLine = message ? String(message).split("\n").map((l) => l.trim()).filter(Boolean).pop() || "" : ""
-  const resolvedKeys = keys || (agentKey ? [agentKey] : [])
+  const resolvedKeys = keys || (parallelActiveKeys && parallelActiveKeys.includes(agentKey) ? parallelActiveKeys : (agentKey ? [agentKey] : []))
   const status = readStatus()
   if (lastLine) status.message = lastLine
   status.category = agentKey ? voiceCategory(agentKey) : status.category || null
@@ -688,62 +826,305 @@ function writeAgentStatus(agentKey, message) {
   const status = readStatus()
   status.message = lastLine
   status.category = agentKey ? voiceCategory(agentKey) : status.category || null
-  status.keys = agentKey ? [agentKey] : status.keys || []
+  status.keys = parallelActiveKeys && parallelActiveKeys.includes(agentKey) ? parallelActiveKeys : (agentKey ? [agentKey] : status.keys || [])
   status.task = currentTaskTitle
   status.taskProgress = currentTaskProgress
   status.updatedAt = new Date().toISOString()
   writeStatus(status)
 }
 
+// Records which port ensureFrontendDevServerRunning() actually bound last
+// time it started a server for THIS project — the only thing that makes it
+// safe to reuse an already-answering port on a later call (a resumed run:
+// the detached server from before is still alive) without also blindly
+// trusting the DEFAULT port just because something responds there. Before
+// this, "something answers on 5173" was treated as "this project's frontend
+// must already be up" unconditionally — in practice that included a
+// completely unrelated stray dev server left running by a DIFFERENT
+// project, silently taking over this project's dashboard preview with no
+// error or warning.
+const FRONTEND_PORT_MARKER = "docs/frontend-dev-server.port"
+
 // Auto-starts the frontend dev server in the background so the dashboard's
 // live-preview iframe always has something to show, without ever risking
 // blocking this script: spawned detached + unref'd, never awaited by the
-// caller, and skipped entirely if something is already answering on
-// FRONTEND_DEV_URL (including a dev server left running by a previous
-// dev-loop.js run — detached processes outlive this script's own exit).
+// caller. Reuses a server this same project already started (via
+// FRONTEND_PORT_MARKER) if it's still reachable; otherwise tries to bind a
+// real port for THIS project specifically, walking forward from
+// FRONTEND_DEV_URL's default one (--strictPort makes Vite fail fast instead
+// of silently picking a different port itself) rather than assuming
+// whatever's on the default port already belongs to this project.
 async function ensureFrontendDevServerRunning() {
   const frontendDir = "frontend"
   if (!existsSync(join(frontendDir, "package.json"))) return
 
-  try {
-    await fetch(FRONTEND_DEV_URL, { signal: AbortSignal.timeout(1500) })
-    return // something's already serving there — leave it alone
-  } catch {
-    // not reachable — fall through and start it
+  if (existsSync(FRONTEND_PORT_MARKER)) {
+    const recordedPort = Number(readFileSync(FRONTEND_PORT_MARKER, "utf-8").trim())
+    if (recordedPort) {
+      const candidateUrl = `http://localhost:${recordedPort}`
+      // Identity-checked, not just liveness — confirmed live: our own
+      // server had died and something from a DIFFERENT project ended up
+      // bound to this exact recorded port by the time this ran again; a
+      // bare fetch() would have "reused" that unrelated server instead of
+      // noticing it wasn't ours anymore.
+      if (await isOurFrontendAt(candidateUrl)) {
+        FRONTEND_DEV_URL = candidateUrl
+        return // our own previously-started server is still up — reuse it
+      }
+      // Recorded server no longer reachable, or something else is there
+      // now — fall through and start a fresh one below, same as a
+      // brand-new run.
+    }
+  }
+
+  if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+  const logPath = "docs/frontend-dev-server.log"
+  const basePort = Number(new URL(FRONTEND_DEV_URL).port) || 5173
+  const MAX_PORT_ATTEMPTS = 10
+
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt += 1) {
+    const port = basePort + attempt
+    try {
+      const logFd = openSync(logPath, "a")
+      const spawnOpts = {
+        cwd: frontendDir,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        windowsHide: true,
+        env: { ...process.env, CI: "1" },
+      }
+      const portArgs = ["--strictPort", "--port", String(port)]
+
+      // Windows only: `npm run dev` needs npm.cmd, a batch file, which forces
+      // either shell:true or (per a confirmed Node/Windows bug) an EINVAL crash
+      // if spawned directly with detached:true. shell:true wraps this in an
+      // extra cmd.exe that — despite detached:true — was observed staying
+      // attached to this script's own console: a Ctrl+C sent to THIS process
+      // reached that wrapper too, which then hung forever at an unanswerable
+      // "Terminate batch job (Y/N)?" prompt (stdin is "ignore") instead of the
+      // frontend ever actually starting. Bypassing npm entirely — spawning
+      // Vite's own JS entrypoint directly via node.exe, a real executable, no
+      // shell/batch-file involved at all — sidesteps both problems. Falls back
+      // to the npm/shell route (with the known Ctrl+C caveat) if that
+      // entrypoint isn't where expected, e.g. a non-Vite frontend tool.
+      const viteBin = join(frontendDir, "node_modules", "vite", "bin", "vite.js")
+      const child = process.platform === "win32" && existsSync(viteBin)
+        ? spawn(process.execPath, [join("node_modules", "vite", "bin", "vite.js"), ...portArgs], spawnOpts)
+        : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev", "--", ...portArgs], { ...spawnOpts, shell: process.platform === "win32" })
+
+      // --strictPort makes Vite exit immediately (nonzero) rather than
+      // silently rebinding elsewhere if `port` turns out to be taken —
+      // give it a couple seconds to either fail fast (port conflict, or any
+      // other startup error) or still be alive, rather than declaring
+      // success the instant spawn() returns (which only means the OS
+      // accepted the exec call, not that Vite itself actually bound the
+      // port yet).
+      const survived = await new Promise((resolve) => {
+        let settled = false
+        child.on("exit", () => { if (!settled) { settled = true; resolve(false) } })
+        setTimeout(() => { if (!settled) { settled = true; resolve(true) } }, 2500)
+      })
+
+      if (survived) {
+        child.unref()
+        FRONTEND_DEV_URL = `http://localhost:${port}`
+        writeFileSync(FRONTEND_PORT_MARKER, String(port), "utf-8")
+        log(`Started the frontend dev server in the background (PID ${child.pid}, port ${port}) for the dashboard preview — output logged to ${logPath}.`)
+        return
+      }
+      warn(`Port ${port} didn't work for the frontend dev server (likely already in use by something else) — trying ${port + 1}.`)
+    } catch (e) {
+      warn(`Could not auto-start the frontend dev server on port ${port} (${e.message}).`)
+    }
+  }
+  warn(`Could not find a free port for the frontend dev server after ${MAX_PORT_ATTEMPTS} attempts (from ${basePort} to ${basePort + MAX_PORT_ATTEMPTS - 1}) — the dashboard preview may stay blank until you run 'npm run dev' in frontend/ yourself.`)
+}
+
+// Auto-starts each backend service's own dev server in the background —
+// same reasoning as ensureFrontendDevServerRunning() above, but nothing
+// like this existed for backend/ at all until now. Confirmed live: a fully
+// scaffolded, fully-implemented backend service (real Express code, real
+// routes, everything a Backend Agent wrote) just sat there as source files
+// with nothing actually listening on its assigned port — the frontend's own
+// API calls, routed through the gateway, had no live process to reach.
+// Each service gets a FIXED port (BACKEND_PORTS) that the gateway and
+// frontend were already told about when THEIR code was written — unlike
+// the frontend dev server, there's no "try the next port" fallback here: a
+// taken port is a real conflict other services' code assumes doesn't
+// exist, not something safe to silently route around.
+// Tracks services this process has already spawned (or is in the middle of
+// spawning) a dev server for — checked/set synchronously, before the first
+// `await` in the loop body below. Confirmed live: this function is called
+// fire-and-forget (no `await`) both at startup and once per task-loop
+// iteration; without this guard, calling it twice in quick succession (e.g.
+// the very first task-loop iteration landing before startup's own call had
+// gotten past its `await fetch(...)` liveness check) meant BOTH calls saw
+// "nothing answering on that port yet" and both spawned it — every backend
+// service ended up running twice at once. Same race, same fix shape, as
+// Electron main.js's own devLoopStartingLock for start-dev-loop.
+const backendServiceStartAttempted = new Set()
+
+// `tsx watch` (the scaffold's own "dev" script) is a supervisor that, on
+// every file change, respawns the actual worker AS ITS OWN CHILD, using
+// tsx's own internal child_process call — not ours. Confirmed live: that
+// internal respawn doesn't set windowsHide, so every single edit a Backend
+// Agent makes (which is constant, mid-task) flashed a fresh visible console
+// window, no matter how carefully OUR OWN spawn calls were configured —
+// this was never reachable by fixing anything on our side, since by the
+// time tsx's watcher fires, we're no longer the one calling spawn(). The
+// fix: don't use tsx's "watch" subcommand at all. Run tsx once per file
+// (a plain, one-shot invocation — tsx never watches or respawns anything
+// itself), and do the "restart on change" part ourselves with a plain
+// fs.watch, so every respawn is OUR spawn() call, with OUR windowsHide,
+// exactly like the very first launch.
+function startSelfWatchedBackendService(key, dir, tsxCli, devEntry, spawnOpts, port, logPath) {
+  let current = spawn(process.execPath, [join("node_modules", "tsx", "dist", "cli.mjs"), devEntry], spawnOpts)
+  current.unref()
+  log(`Started ${key}'s dev server in the background (PID ${current.pid}, port ${port}) — output logged to ${logPath}.`)
+
+  let restartTimer = null
+  const scheduleRestart = () => {
+    clearTimeout(restartTimer)
+    restartTimer = setTimeout(() => {
+      killProcessTree(current)
+      current = spawn(process.execPath, [join("node_modules", "tsx", "dist", "cli.mjs"), devEntry], spawnOpts)
+      current.unref()
+    }, 300) // debounced — an agent's own edit is rarely a single isolated file write
   }
 
   try {
-    if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
-    const logPath = "docs/frontend-dev-server.log"
-    const logFd = openSync(logPath, "a")
-    const spawnOpts = {
-      cwd: frontendDir,
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-      windowsHide: true,
-      env: { ...process.env, CI: "1" },
-    }
-
-    // Windows only: `npm run dev` needs npm.cmd, a batch file, which forces
-    // either shell:true or (per a confirmed Node/Windows bug) an EINVAL crash
-    // if spawned directly with detached:true. shell:true wraps this in an
-    // extra cmd.exe that — despite detached:true — was observed staying
-    // attached to this script's own console: a Ctrl+C sent to THIS process
-    // reached that wrapper too, which then hung forever at an unanswerable
-    // "Terminate batch job (Y/N)?" prompt (stdin is "ignore") instead of the
-    // frontend ever actually starting. Bypassing npm entirely — spawning
-    // Vite's own JS entrypoint directly via node.exe, a real executable, no
-    // shell/batch-file involved at all — sidesteps both problems. Falls back
-    // to the npm/shell route (with the known Ctrl+C caveat) if that
-    // entrypoint isn't where expected, e.g. a non-Vite frontend tool.
-    const viteBin = join(frontendDir, "node_modules", "vite", "bin", "vite.js")
-    const child = process.platform === "win32" && existsSync(viteBin)
-      ? spawn(process.execPath, [join("node_modules", "vite", "bin", "vite.js"), "--strictPort"], spawnOpts)
-      : spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev", "--", "--strictPort"], { ...spawnOpts, shell: process.platform === "win32" })
-    child.unref()
-    log(`Started the frontend dev server in the background (PID ${child.pid}) for the dashboard preview — output logged to ${logPath}.`)
+    watch(dir, { recursive: true }, (_eventType, filename) => {
+      if (!filename) return
+      const normalized = filename.split(sep).join("/")
+      if (normalized.includes("node_modules/") || normalized.includes("dist/")) return
+      if (!/\.(ts|tsx|json)$/.test(normalized)) return
+      scheduleRestart()
+    })
   } catch (e) {
-    warn(`Could not auto-start the frontend dev server (${e.message}) — the dashboard preview may stay blank until you run 'npm run dev' in frontend/ yourself.`)
+    warn(`Could not watch ${dir} for changes (${e.message}) — ${key}'s dev server won't auto-restart on file edits; restart it manually if needed.`)
+  }
+}
+
+async function ensureBackendServicesRunning() {
+  for (const key of BACKEND_SERVICE_KEYS) {
+    if (backendServiceStartAttempted.has(key)) continue
+    const dir = `backend/${key}`
+    if (!existsSync(join(dir, "package.json"))) continue // not scaffolded yet — nothing to start
+    const port = BACKEND_PORTS[camelKey(key)]
+    if (!port) continue
+    const url = `http://localhost:${port}`
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(1500) })
+      backendServiceStartAttempted.add(key)
+      continue // something's already answering there — leave it alone
+    } catch {
+      // not reachable — fall through and start it
+    }
+    backendServiceStartAttempted.add(key)
+    try {
+      if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+      const logPath = `docs/backend-${key}-dev-server.log`
+      const logFd = openSync(logPath, "a")
+      const spawnOpts = {
+        cwd: dir,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        windowsHide: true,
+        env: { ...process.env, CI: "1", PORT: String(port) },
+      }
+
+      // Windows only: same reasoning as the frontend's own Vite bypass
+      // above — npm.cmd is a batch file, so running it needs shell:true,
+      // which spawns a real cmd.exe. windowsHide is supposed to keep that
+      // hidden but doesn't reliably in practice (confirmed live: a visible
+      // "C:\WINDOWS\system32\cmd." window popped up per backend service —
+      // exactly the no-terminal-at-all point of this whole app defeated).
+      // The scaffold's own "dev" script is always `tsx watch <entry>` (per
+      // .rule/coding-rules.md's backend convention) — parse that entry path
+      // out of package.json. Falls back to the npm/shell route (with the
+      // known visible-window caveat) for any scaffold that doesn't match
+      // this exact expected shape.
+      const tsxCli = join(dir, "node_modules", "tsx", "dist", "cli.mjs")
+      let devEntry = null
+      try {
+        const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"))
+        const devMatch = (pkg.scripts?.dev || "").match(/^tsx\s+watch\s+(\S+)/)
+        if (devMatch) devEntry = devMatch[1]
+      } catch {
+        // Malformed package.json — fall through to the npm/shell route below.
+      }
+      if (process.platform === "win32" && devEntry && existsSync(tsxCli)) {
+        // See startSelfWatchedBackendService()'s own comment — this does its
+        // own spawning/restarting/logging entirely, deliberately not tsx's
+        // "watch" subcommand, so skip the generic child.unref()/log() below.
+        startSelfWatchedBackendService(key, dir, tsxCli, devEntry, spawnOpts, port, logPath)
+        continue
+      }
+      let child
+      if (process.platform === "win32") {
+        child = spawn("npm.cmd", ["run", "dev"], { ...spawnOpts, shell: true })
+      } else {
+        child = spawn("npm", ["run", "dev"], spawnOpts)
+      }
+      child.unref()
+      log(`Started ${key}'s dev server in the background (PID ${child.pid}, port ${port}) — output logged to ${logPath}.`)
+    } catch (e) {
+      warn(`Could not auto-start ${key}'s dev server (${e.message}) — run 'npm run dev' in ${dir}/ yourself.`)
+    }
+  }
+}
+
+// Runs each backend service's own `npm run seed` once per process, if it has
+// one — the reference-data bootstrap `.rule/database-rules.md` requires
+// (role/permission documents, a default groomer/admin account, ...) never
+// runs on its own; it's an idempotent script meant to be invoked, not
+// something the dev server start triggers automatically. Confirmed live: a
+// human had no reason to know this manual step existed at all — the schema
+// and the seed script were both written correctly, the collections were
+// just empty because nothing had ever run it. Idempotent by the seed
+// script's own contract (every write there is an upsert), so running it
+// again on a later restart is always safe.
+const backendServiceSeeded = new Set()
+
+async function ensureBackendSeeded() {
+  for (const key of BACKEND_SERVICE_KEYS) {
+    if (backendServiceSeeded.has(key)) continue
+    const dir = `backend/${key}`
+    const pkgPath = join(dir, "package.json")
+    if (!existsSync(pkgPath)) continue
+    backendServiceSeeded.add(key)
+    let pkg
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, "utf-8"))
+    } catch {
+      continue
+    }
+    const seedScript = pkg.scripts?.seed
+    if (!seedScript) continue // this service doesn't define one — nothing to run
+    try {
+      if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+      const logPath = `docs/backend-${key}-seed.log`
+      const tsxCli = join(dir, "node_modules", "tsx", "dist", "cli.mjs")
+      const seedMatch = seedScript.match(/^tsx\s+(\S+)/)
+      const spawnOpts = { cwd: dir, windowsHide: true, env: { ...process.env } }
+      let result
+      if (process.platform === "win32" && seedMatch && existsSync(tsxCli)) {
+        result = spawnSync(process.execPath, [join("node_modules", "tsx", "dist", "cli.mjs"), seedMatch[1]], spawnOpts)
+      } else if (process.platform === "win32") {
+        result = spawnSync("npm.cmd", ["run", "seed"], { ...spawnOpts, shell: true })
+      } else {
+        result = spawnSync("npm", ["run", "seed"], spawnOpts)
+      }
+      const output = `${result.stdout || ""}${result.stderr || ""}`
+      writeFileSync(logPath, output)
+      if (result.status === 0) {
+        log(`Seeded ${key}'s reference data (roles/permissions/etc, if defined) — output logged to ${logPath}.`)
+      } else {
+        warn(`${key}'s seed script exited with code ${result.status} — check ${logPath}.`)
+      }
+    } catch (e) {
+      warn(`Could not run ${key}'s seed script (${e.message}) — run 'npm run seed' in ${dir}/ yourself.`)
+    }
   }
 }
 
@@ -870,6 +1251,20 @@ function startDashboardServer() {
   const assetsDir = `${DASHBOARD_DIR}/assets`
 
   const server = http.createServer((req, res) => {
+    // Without this, every fetch() this SAME dashboard's data makes is fine
+    // (agent-dashboard.html is served FROM this origin, so its own poll() is
+    // same-origin) — but the outer Electron window's separate taskbar-badge
+    // poll (startTaskbarOverlayPolling() in renderer.js, loaded from a
+    // file:// origin) is cross-origin, and with no CORS header the browser
+    // silently blocks reading the response, throwing on every single tick.
+    // That exception was always swallowed by that poll's own empty catch
+    // block (deliberately, to avoid flicker on a transient miss) — so the
+    // "waiting for you" taskbar badge never turned on even once, with no
+    // visible error anywhere. Confirmed live: the dashboard itself worked
+    // perfectly the whole time; only this second, separate consumer was
+    // blocked. Safe to allow any origin — this only ever serves localhost.
+    res.setHeader("Access-Control-Allow-Origin", "*")
+
     // Lets the dashboard show the Designer agent's mockups in-page (a select
     // of screen names + an iframe pointed at /docs/design/mockups/<file> via
     // the generic /docs/** route below) instead of the human having to open
@@ -886,12 +1281,68 @@ function startDashboardServer() {
       return
     }
 
+    // Backs the dashboard's "📋 Plan" panel — lists the PRD and every task
+    // plan file so a human can actually read them in-app instead of having
+    // to know `.plan/`'s naming convention and dig through the project
+    // folder in a separate editor. Confirmed live: a human genuinely didn't
+    // know how to find these. PRD first, backlog second, then task plans in
+    // file order (which is already numeric-prefixed, so it's also
+    // chronological) — task plans include their own "Addendum (human
+    // notes)" section inline, so this is also where chat-driven changes
+    // that got folded into an existing task's plan actually show up.
+    if (req.url === "/plan-files.json") {
+      const files = []
+      if (existsSync("docs/PRD.md")) files.push({ path: "docs/PRD.md", label: "PRD" })
+      if (existsSync(".plan/000-backlog.md")) files.push({ path: ".plan/000-backlog.md", label: "Backlog" })
+      if (existsSync(".plan")) {
+        for (const f of readdirSync(".plan").filter((f) => f.endsWith(".md") && f !== "000-backlog.md").sort()) {
+          files.push({ path: `.plan/${f}`, label: f })
+        }
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ files }))
+      return
+    }
+
+    // Backs the dashboard's "📄 Reports" panel — lists every agent report on
+    // disk so the human can actually find and read them without knowing the
+    // filename convention or leaving this page. The reports themselves were
+    // already servable via the generic /docs/** route below (nothing new
+    // there) — what was missing was any way to discover WHICH files exist,
+    // since a plain directory listing was never exposed anywhere. Confirmed
+    // live: a human had no idea these were even reachable.
+    if (req.url === "/agent-reports.json") {
+      const reportsDir = "docs/agent-reports"
+      const files = existsSync(reportsDir)
+        ? readdirSync(reportsDir)
+            .filter((f) => f.endsWith(".md"))
+            .map((f) => ({ name: f, mtime: statSync(join(reportsDir, f)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime)
+            .map((f) => f.name)
+        : []
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ files }))
+      return
+    }
+
+    // Backs the Chat tab's persistent history/badge — CHAT_LOG_FILE survives
+    // dashboard reloads and process restarts, unlike the tab's in-memory DOM
+    // log, so "is my note from earlier still unanswered?" always has a real
+    // answer instead of just whatever happens to still be on screen.
+    if (req.url === "/chat-log.json") {
+      const log = readChatLog()
+      const pendingCount = log.filter((e) => e.from === "human" && e.status === "pending").length
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ log, pendingCount }))
+      return
+    }
+
     if (req.url === "/status.json") {
       // `services` is injected fresh on every request — refreshBackendServiceKeys()
       // re-scans (disk + backlog `scope:`) right here, not just once at
       // startup, so a service that gets scaffolded (or newly named in the
       // backlog) mid-session appears on the ring within a second, no
-      // dev-loop.js restart needed.
+      // task-builder.js restart needed.
       refreshBackendServiceKeys()
       const base = existsSync(AGENT_STATUS_PATH)
         ? JSON.parse(readFileSync(AGENT_STATUS_PATH, "utf-8"))
@@ -934,6 +1385,10 @@ function startDashboardServer() {
         // project's is actually answering there yet (see FRONTEND_READY's
         // own comment for what this can and can't guarantee).
         frontendReady: FRONTEND_READY,
+        // The dashboard used to hardcode localhost:5173 for its "Live App"
+        // iframe/label — wrong as soon as that port turned out to be taken
+        // and ensureFrontendDevServerRunning() moved to a different one.
+        frontendUrl: FRONTEND_DEV_URL,
       }))
       return
     }
@@ -981,6 +1436,60 @@ function startDashboardServer() {
       return
     }
 
+    // A general aside for the orchestrator, decoupled from whatever specific
+    // question (if any) is currently blocking — /respond above only makes
+    // sense as a direct answer to THE CURRENT prompt (plan feedback,
+    // feature-done chat, ...), and typing something unrelated there
+    // confuses the model, since its own instructions for that turn are
+    // scoped to judging that one specific artifact. Confirmed live: a human
+    // had a genuinely unrelated request ("let me see the password on the
+    // login screen") while being asked "any feedback on THIS task?" — with
+    // nowhere neutral to put it. This always accepts a note, whether or not
+    // anything is currently pending, and queues it in NOTES_FILE; the next
+    // gate that opens (see takePendingNotes(), used by
+    // waitForApprovalWithChat()/reviewPlanUntilApproved()) reads and clears
+    // it, explicitly labeled as a side note so the model doesn't conflate
+    // it with the thing it's actually being asked to judge right now.
+    if (req.url === "/note" && req.method === "POST") {
+      let body = ""
+      req.on("data", (chunk) => { body += chunk })
+      req.on("end", () => {
+        let text = ""
+        try {
+          text = String(JSON.parse(body || "{}").text ?? "").trim()
+        } catch (e) {
+          res.writeHead(400)
+          res.end()
+          return
+        }
+        if (!text) {
+          res.writeHead(400, { "Content-Type": "application/json" })
+          res.end(JSON.stringify({ error: "Empty note." }))
+          return
+        }
+        try {
+          if (!existsSync("docs")) mkdirSync("docs", { recursive: true })
+          // One timestamp, reused for both writes — the dashboard's per-note
+          // "run this one" button reconstructs the exact NOTES_FILE line
+          // client-side as `- [${entry.ts}] ${entry.text}` to remove just
+          // that one note via takeSingleNoteLine()'s exact-text match; two
+          // independently-computed timestamps could in principle differ by
+          // a millisecond and silently break that match.
+          const ts = new Date().toISOString()
+          const existing = existsSync(NOTES_FILE) ? readFileSync(NOTES_FILE, "utf-8") : ""
+          appendFileSync(NOTES_FILE, `${existing ? "\n" : ""}- [${ts}] ${text}\n`)
+          appendChatLog({ ts, from: "human", text, status: "pending" })
+          log(`Note received from dashboard (queued for the next checkpoint): "${text}"`)
+          res.writeHead(200, { "Content-Type": "application/json" })
+          res.end(JSON.stringify({ status: "ok" }))
+        } catch (e) {
+          res.writeHead(500, { "Content-Type": "application/json" })
+          res.end(JSON.stringify({ error: e.message }))
+        }
+      })
+      return
+    }
+
     // Kills a stuck `claude auth login` (closed the browser tab too early,
     // signed into the wrong account, the CLI just hung, ...) so the human
     // isn't stuck retyping into a dead prompt forever with no way out except
@@ -1012,7 +1521,7 @@ function startDashboardServer() {
     // Generic static passthrough for docs/** (cost history, agent reports,
     // API contracts, ...) — reads straight from disk on every request, no
     // server-side route logic involved at all. Unlike /status.json (which
-    // computes/shapes data and therefore needs a dev-loop.js restart to pick
+    // computes/shapes data and therefore needs a task-builder.js restart to pick
     // up any change to that logic), this route's own code never needs to
     // change again just because the SHAPE of some file under docs/ changes —
     // the dashboard can just fetch whatever JSON it wants directly.
@@ -1034,6 +1543,35 @@ function startDashboardServer() {
       const ext = fullPath.split(".").pop().toLowerCase()
       const CONTENT_TYPES = { json: "application/json", md: "text/markdown; charset=utf-8", txt: "text/plain; charset=utf-8", html: "text/html; charset=utf-8" }
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "no-store" })
+      res.end(readFileSync(fullPath))
+      return
+    }
+
+    // Same pattern as the /docs/** route above, for .plan/** — task plan
+    // files live outside docs/, so they need their own traversal-safe
+    // static route rather than being reachable through that one.
+    if (req.url && req.url.startsWith("/plan/")) {
+      // The URL segment is "plan" (no dot) but the real directory on disk is
+      // ".plan" (with one) — resolving the URL's own text directly (as the
+      // /docs/** route above correctly does, since that one's segment name
+      // matches its real directory) pointed at a nonexistent "plan/" folder
+      // that could never pass the traversal check below, so every request
+      // here 403'd unconditionally. Confirmed live. Must join the requested
+      // filename onto ".plan" explicitly instead of resolving the URL as-is.
+      const requestedFile = decodeURIComponent(req.url.slice("/plan/".length).split("?")[0])
+      const planRoot = resolve(".plan")
+      const fullPath = resolve(".plan", requestedFile)
+      if (!fullPath.startsWith(planRoot + sep) && fullPath !== planRoot) {
+        res.writeHead(403, { "Content-Type": "text/plain" })
+        res.end("Forbidden")
+        return
+      }
+      if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
+        res.writeHead(404, { "Content-Type": "text/plain" })
+        res.end("Not found")
+        return
+      }
+      res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" })
       res.end(readFileSync(fullPath))
       return
     }
@@ -1077,7 +1615,7 @@ function startDashboardServer() {
     server.on("error", (e) => {
       warn(`Dashboard server failed to start on port ${DASHBOARD_PORT} (${e.message}). The loop itself is unaffected — this only disables the visual dashboard for this run.`)
       if (e.code === "EADDRINUSE") {
-        warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous dev-loop.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
+        warn(`Something is already listening on ${DASHBOARD_PORT} — likely a previous task-builder.js run that didn't shut down cleanly. Set DASHBOARD_PORT to a different port and rerun if you want the dashboard back.`)
       }
       resolveStarted(null)
     })
@@ -1099,7 +1637,7 @@ function startDashboardServer() {
           process.platform === "darwin" ? `open "${url}"` :
           `xdg-open "${url}"`
         try {
-          execSync(openCmd, { stdio: "ignore" })
+          execSync(openCmd, { stdio: "ignore", windowsHide: true })
         } catch (e) {
           warn(`Could not auto-open the dashboard (${e.message}) — open ${url} manually.`)
         }
@@ -1112,13 +1650,13 @@ function startDashboardServer() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 // Two instances of this script running at once (e.g. two terminals, each
-// running `node development/dev-loop.js`) will independently claim different
+// running `node development/task-builder.js`) will independently claim different
 // backlog tasks, branch/work/merge in parallel with no coordination, and
 // reliably produce a git merge conflict on .plan/000-backlog.md's checkbox
 // lines when both try to merge back — exactly what happened before this
 // guard existed. A simple PID lock file prevents a second instance from
 // starting at all while one is already running.
-const LOCK_PATH = ".dev-loop.lock"
+const LOCK_PATH = ".task-builder.lock"
 
 function isProcessAlive(pid) {
   try {
@@ -1133,7 +1671,7 @@ function acquireLock() {
   if (existsSync(LOCK_PATH)) {
     const heldPid = Number(readFileSync(LOCK_PATH, "utf-8").trim())
     if (Number.isFinite(heldPid) && isProcessAlive(heldPid)) {
-      printRed(`Refusing to start: another dev-loop.js is already running (PID ${heldPid}).`)
+      printRed(`Refusing to start: another task-builder.js is already running (PID ${heldPid}).`)
       printRed(`Running two instances at once will race on the same backlog and reliably produce a git merge conflict.`)
       printRed(`Finish or stop that one first (or delete ${LOCK_PATH} if you're certain it's not actually running anymore), then rerun.`)
       process.exit(1)
@@ -1158,7 +1696,7 @@ function acquireLock() {
 
 function cliOnPath(bin) {
   try {
-    execSync(`${bin} --version`, { stdio: "ignore" })
+    execSync(`${bin} --version`, { stdio: "ignore", windowsHide: true })
     return true
   } catch {
     return false
@@ -1188,7 +1726,7 @@ function ensureCursorCliOnPath() {
 // Async, and every failure exits via abortRun() rather than a raw
 // printRed()+process.exit(), so the reason reaches the dashboard's message
 // pane too — not just stdout. This currently runs under a terminal, but
-// dev-loop.js is also meant to run headless under Electron eventually, where
+// task-builder.js is also meant to run headless under Electron eventually, where
 // there is no terminal at all; a message only a terminal can show is a
 // message nobody sees there. startDashboardServer() is deliberately the
 // very first thing main() does, before this, so that channel already exists
@@ -1202,7 +1740,7 @@ async function checkPrerequisites() {
 
   if (GIT_ENABLED) {
     try {
-      execSync("git --version", { stdio: "ignore" })
+      execSync("git --version", { stdio: "ignore", windowsHide: true })
     } catch {
       await abortRun("git is not installed or not on PATH — this script runs real git commands (branch, commit, merge). Install git, then rerun.")
       return
@@ -1233,7 +1771,7 @@ async function checkPrerequisites() {
 // Legacy expectedClaudeAccount is still read as provider=claude.
 function getLoggedInClaudeAccountEmail() {
   try {
-    const out = execSync("claude auth status --json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const out = execSync("claude auth status --json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
     const parsed = JSON.parse(out)
     return parsed?.loggedIn ? (parsed.email || null) : null
   } catch {
@@ -1243,7 +1781,7 @@ function getLoggedInClaudeAccountEmail() {
 
 function getLoggedInCursorAccountEmail() {
   try {
-    const out = execSync("agent status --format json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const out = execSync("agent status --format json", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
     const parsed = JSON.parse(out)
     if (!parsed?.isAuthenticated) return null
     return parsed.userInfo?.email || null
@@ -1260,7 +1798,7 @@ function getLoggedInCursorAccountEmail() {
 // active entry counts, and only when it isn't reporting an auth error.
 function getLoggedInGithubCopilotAccount() {
   try {
-    const out = execSync("gh auth status --json hosts", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+    const out = execSync("gh auth status --json hosts", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
     const entries = JSON.parse(out)?.hosts?.["github.com"] || []
     const active = entries.find((e) => e.active)
     return active && !active.error && active.state !== "error" ? (active.login || null) : null
@@ -1319,7 +1857,7 @@ function killProcessTree(child) {
   if (!child || child.killed) return
   if (process.platform === "win32") {
     try {
-      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" })
+      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore", windowsHide: true })
     } catch {
       // Already exited between the killed-check above and here — fine.
     }
@@ -1355,7 +1893,7 @@ const LLM_PROVIDERS = {
   },
   // Deliberately NOT a third entry here: this registry doubles as the
   // execution-engine selector (see runAgentBin()/ACTIVE_PROVIDER below) —
-  // whichever key gets pinned as expectedLlmProvider is what dev-loop.js
+  // whichever key gets pinned as expectedLlmProvider is what task-builder.js
   // actually spawns agents through. GitHub Copilot CLI (`copilot`) has no
   // documented headless/non-interactive invocation at all (unlike Cursor's
   // `agent -p`), so there is no real execution path for it to select. See
@@ -1380,7 +1918,7 @@ function runProviderLoginFlow(provider, prefillEmail = "") {
     const loginArgs = provider.loginArgs(prefillEmail)
     let child
     if (process.platform === "win32") {
-      child = spawn([provider.bin, ...loginArgs.map(quoteArgForCmd)].join(" "), { stdio: ["pipe", "pipe", "pipe"], shell: true })
+      child = spawn([provider.bin, ...loginArgs.map(quoteArgForCmd)].join(" "), { stdio: ["pipe", "pipe", "pipe"], shell: true, windowsHide: true })
     } else {
       child = spawn(provider.bin, loginArgs, { stdio: ["pipe", "pipe", "pipe"], shell: false })
     }
@@ -1461,7 +1999,7 @@ async function abortRun(msg) {
 // the browser tab too early, signed into the wrong account, ...), offers to
 // retry right there instead of dead-ending the whole run via abortRun() —
 // that used to be the only outcome of a failed login, which meant one wrong
-// click during OAuth killed the entire dev-loop.js process with no way back
+// click during OAuth killed the entire task-builder.js process with no way back
 // except restarting it from scratch. Returns the newly logged-in email, or
 // null if the human explicitly gave up.
 async function attemptLogin(provider = "claude", prefillEmail = "") {
@@ -1669,6 +2207,15 @@ async function main() {
   // recommended for agent safety and context.
   if (!GIT_ENABLED) {
     banner("GIT IS NOT INITIALIZED")
+    // Not emitEvent("waiting-approval", ...) — this is a plain infra yes/no
+    // question, not a plan/design/merge/feature review the human is being
+    // asked to judge. Confirmed live: with no event emitted here at all,
+    // the dashboard's voice cue just kept whatever "waiting-approval" event
+    // happened to be lastEvent already (stale, from an earlier run/session),
+    // so it announced "agent waiting for your approval" for a question that
+    // isn't approving anything. "attention-needed" is the generic "human,
+    // look at this" bucket every other non-approval prompt already uses.
+    emitEvent("attention-needed", "orchestrator", "Git initialization")
     const answer = await askUserInput(
       "This project has no git repo. Agents work better and are safer with git (for diffs/rollbacks). " +
       "Initialize git now? (y/N): ",
@@ -1677,9 +2224,9 @@ async function main() {
     if (answer.trim().toLowerCase() === "y") {
       try {
         log("Initializing git repository...")
-        execSync("git init", { stdio: "inherit" })
-        execSync("git add .", { stdio: "inherit" })
-        execSync("git commit -m \"initial commit from dev-loop setup\"", { stdio: "inherit" })
+        execSync("git init", { stdio: "inherit", windowsHide: true })
+        execSync("git add .", { stdio: "inherit", windowsHide: true })
+        execSync("git commit -m \"initial commit from task-builder setup\"", { stdio: "inherit", windowsHide: true })
         updateGitStatus()
         log("Git initialized and initial commit created.")
       } catch (e) {
@@ -1706,9 +2253,10 @@ async function main() {
   acquireLock()
   await checkLlmAccount()
   ensureFrontendDevServerRunning().catch(() => {}) // fire-and-forget — must never block the loop
+  ensureBackendServicesRunning().then(() => ensureBackendSeeded()).catch(() => {})
   startFrontendHealthPolling()
 
-  banner("DEV LOOP ORCHESTRATOR")
+  banner("TASK BUILDER")
   emitEvent("orchestrator-start")
 
   const BASE_BRANCH = getBaseBranch()
@@ -1717,7 +2265,7 @@ async function main() {
   // inside the loop below (getCreateBranchPerTask(), same reasoning as
   // getAutoApprovePlans()/getAutoMergeTasks() above it), so a change made
   // through the dashboard's "⚙️ Edit Setup" live-gates panel mid-run takes
-  // effect on the very next task picked up, not just the next dev-loop.js
+  // effect on the very next task picked up, not just the next task-builder.js
   // process.
   const createBranchPerTaskAtStartup = getCreateBranchPerTask()
     && BASE_BRANCH !== "main"
@@ -1756,6 +2304,78 @@ async function main() {
     const task = getNextBacklogTask()
     if (!task) {
       banner("NO MORE TODO TASKS — LOOP COMPLETE")
+
+      // With the backlog empty, this is the last natural checkpoint any
+      // still-queued note will ever reach on its own — the per-task
+      // boundary check above only runs between tasks, and there's no next
+      // task anymore. Confirmed live: a human closed and reopened the app
+      // with 2 notes still queued and no task left, and had no way to tell
+      // "nothing more will ever happen to these automatically" from "they're
+      // still being tracked somewhere." Offer each one individually — not
+      // just a combined "address everything" — since she may only want to
+      // act on one of several right now.
+      if (!getAutoApprovePlans()) {
+        while (true) {
+          const noteLines = listPendingNoteLines()
+          if (!noteLines.length) break
+          // Announce as soon as this checkpoint is actually reached, not
+          // only once it's eventually left — confirmed live, no cue played
+          // at all while this prompt sat waiting, only (sometimes) at the
+          // very end.
+          emitEvent("orchestrator-idle-notes-pending", "orchestrator", `No tasks left in the backlog — ${noteLines.length} pending note(s) waiting.`)
+          // Just the one combined action here — per-note choices packed into
+          // THIS prompt were confirmed too cluttered live. Per-item action
+          // instead lives as its own "▶ Run" button on each entry in the
+          // Chat tab (see makeChatLogEntry() in agent-dashboard.html),
+          // which POSTs the ADDRESS_SINGLE_NOTE_PREFIX sentinel here via the
+          // exact same /respond channel this askUserInput() is listening on.
+          const pick = await askUserInput(
+            `No tasks left in the backlog. You have ${noteLines.length} pending note(s).`,
+            { choices: [{ label: "Address now", value: "y" }, { label: "Leave the rest for later", value: "skip" }] }
+          )
+          const trimmed = pick.trim()
+          if (trimmed.startsWith(ADDRESS_SINGLE_NOTE_PREFIX)) {
+            const line = trimmed.slice(ADDRESS_SINGLE_NOTE_PREFIX.length)
+            const noteText = takeSingleNoteLine(line)
+            if (noteText) {
+              const contextBlock = `No tasks are left in the backlog — this is ONE specific note the human chose to address right now, on its own; other queued notes, if any, are untouched.`
+              const result = await runNoteAddressingTurn(noteText, contextBlock, null, line)
+              if (result.handled) markSingleChatLogAddressed(noteText, result.reply)
+            }
+            continue
+          }
+          if (trimmed.toLowerCase() !== "y") break
+          const pendingNotes = takePendingNotes()
+          if (pendingNotes) {
+            const contextBlock = `No tasks are left in the backlog — this is the only remaining work being handled, independent of any task.`
+            const result = await runNoteAddressingTurn(pendingNotes, contextBlock, null)
+            if (result.handled) markChatLogAddressed(result.reply)
+          }
+        }
+      }
+
+      // banner() only writes to the console — without this, the dashboard
+      // (which only ever updates on log()/emitEvent() calls) is left
+      // showing whatever the last real status message happened to be,
+      // frozen, forever, with zero indication the run actually finished (or
+      // that the backlog was empty from the very first iteration and
+      // nothing ever ran at all). Confirmed live: a project whose
+      // .plan/000-backlog.md had no checklist lines in it sat showing a
+      // stale "Analyzing…" animation indefinitely, HTTP server still up,
+      // no error, no way to tell it was actually done doing nothing.
+      // Two distinct outcomes get two distinct events (own voice cue each,
+      // see AUDIO_MAP in agent-dashboard.html) — "genuinely nothing left
+      // anywhere" reads very differently from "backlog's done, but there's
+      // still something waiting on you," and conflating them under one cue
+      // would undersell the second case.
+      const stillPending = listPendingNoteLines().length > 0
+      emitEvent(
+        stillPending ? "orchestrator-idle-notes-pending" : "orchestrator-idle",
+        "orchestrator",
+        stillPending
+          ? "No tasks left in the backlog — but you still have pending notes."
+          : "No tasks left in the backlog — nothing more to build."
+      )
       break
     }
     // Recomputed fresh per task, not hoisted above the loop — see the
@@ -1768,11 +2388,42 @@ async function main() {
     currentTaskTitle = task.title
     currentTaskProgress = getBacklogProgress(task)
     emitEvent("picking-next-task", null, task.title)
+
+    // Surfaces a queued note right at this natural pause point, instead of
+    // it silently riding along unseen through this entire task's build
+    // cycle until some future checkpoint. Explicitly requested: a human
+    // asked "when does the orchestrator actually get to it, and will it
+    // tell me?" — before this, the honest answer was "eventually, and no."
+    // Skipped in ungated (autoApprovePlans) mode — that mode exists
+    // specifically so the run doesn't stop for human input at all.
+    if (!getAutoApprovePlans() && existsSync(NOTES_FILE) && readFileSync(NOTES_FILE, "utf-8").trim()) {
+      const pendingCount = readChatLog().filter((e) => e.from === "human" && e.status === "pending").length
+      emitEvent("attention-needed", "orchestrator", `You have ${pendingCount} pending note(s) for the orchestrator.`)
+      const choice = await askUserInput(
+        `You have ${pendingCount} pending note(s) waiting for the orchestrator, before starting "${task.title}". Address them now?`,
+        { choices: [{ label: "Address now", value: "y" }, { label: "Continue with next task", value: "n" }] }
+      )
+      if (choice.trim().toLowerCase().startsWith("y")) {
+        const pendingNotes = takePendingNotes()
+        if (pendingNotes) {
+          const contextBlock = `About to start the next task: "${task.title}" (not yet begun — this note is being handled first, before that task's own agents run).`
+          const result = await runNoteAddressingTurn(pendingNotes, contextBlock, null)
+          if (result.handled) markChatLogAddressed(result.reply)
+        }
+      }
+      emitEvent("picking-next-task", null, task.title)
+    }
+
     // Re-scan for backend services before dispatching this task's agents —
     // catches a service scaffolded by a previous task in THIS run, or a
     // human hand-editing the backlog's `scope:` field mid-session, without
     // needing a restart. See refreshBackendServiceKeys()'s own comment.
     refreshBackendServiceKeys()
+    // Cheap per-task check (a fetch per already-running service; only
+    // spawns anything for one that isn't reachable) — picks up a service
+    // that just got scaffolded THIS task, and self-heals one that crashed
+    // since the last task, without waiting for a restart.
+    ensureBackendServicesRunning().then(() => ensureBackendSeeded()).catch(() => {})
 
     if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true })
 
@@ -1811,18 +2462,29 @@ async function main() {
       }
     }
 
-    const userInstructions = planResumable || getAutoApprovePlans()
+    // Only relevant to a plan that hasn't been WRITTEN yet — it's passed to
+    // askClaudeForPlan() as drafting guidance. A resumed unapproved draft
+    // (draftResumable) already has real content sitting in planPath; asking
+    // this first, before the human has even seen that draft, was confusing
+    // in practice (the log line right above already says a draft exists
+    // and needs APPROVED, then this prompt appears anyway, blocking the
+    // human from reaching the actual plan-review step where they can see
+    // it). Skip straight to reviewPlanUntilApproved() for that case, same
+    // as the already-approved (planResumable) and gate-off cases.
+    const userInstructions = planResumable || draftResumable || getAutoApprovePlans()
       ? ""
-      : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ")
+      : await askUserInput("Any instructions for the orchestrator? (press Enter to run automatically): ", {
+          choices: [{ label: "▶ Run automatically", value: "" }],
+        })
 
     const branchName = createBranchPerTask ? `${BASE_BRANCH}-tasks/${task.slug}` : BASE_BRANCH
     if (createBranchPerTask) {
       createGitBranch(branchName, BASE_BRANCH)
-    } else if (GIT_ENABLED && execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim() !== BASE_BRANCH) {
+    } else if (GIT_ENABLED && execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", windowsHide: true }).trim() !== BASE_BRANCH) {
       // Only relevant right after a run with branching ON left a task branch
       // checked out — get back onto the base branch before working directly
       // on it this time.
-      execSync(`git checkout ${BASE_BRANCH}`, { stdio: "inherit" })
+      execSync(`git checkout ${BASE_BRANCH}`, { stdio: "inherit", windowsHide: true })
     }
 
     let planPath
@@ -1903,6 +2565,28 @@ async function main() {
         Object.entries(tickets).map(([key, ticket]) => [key, ticket.id])
       )
       reports = makeReportPaths(task.slug, ticketIds)
+      // Ticket ids are 100% deterministic from task.slug alone (see
+      // simulateTickets()) and the filename's date is just today's calendar
+      // date — so a task retried on the SAME day (a fixed bug, human
+      // feedback, anything that isn't literally "resume the exact prior
+      // attempt") computes the exact same report paths as any earlier
+      // attempt, even a completely unrelated one from hours before whose
+      // state was already cleared. runAgent()'s own "already done" check
+      // only looks at file content, not at which run wrote it — so a stale
+      // leftover (even a skip-marker, which still contains "STATUS: DONE"
+      // and satisfies that check) gets silently treated as this attempt's
+      // own completed work, and the agent never actually runs again.
+      // Confirmed live: exactly this let a stale "skipped — out of scope"
+      // report from the ORIGINAL buggy run survive a same-day retry after
+      // the scope bug was fixed, so the agent it belonged to silently never
+      // re-ran despite now being correctly in scope. Since this branch only
+      // executes for a genuinely fresh attempt (not a real resume — that's
+      // the `reportsResumable` branch above), any stale file already
+      // sitting at one of these paths is definitely NOT this attempt's own
+      // output and must not be trusted.
+      for (const reportPath of Object.values(reports)) {
+        if (existsSync(reportPath)) rmSync(reportPath)
+      }
       state = { ...state, reports }
       saveTaskState(task.slug, state)
     }
@@ -1980,61 +2664,82 @@ async function main() {
       if (inScope(task, key)) await ensureBackendEnv(key)
     }
 
-    // ── Step: QA ─────────────────────────────────────────────────────────────
-    if (inScope(task, "qa")) {
-      emitEvent("agent-start", "qa")
-      await runAgent({
-        systemPrompt: "agents/qa/CLAUDE.md",
-        input: [
-          `You are the QA Agent.`,
-          `Task: ${task.title}`,
-          `Task id: ${tickets.qa.id}`,
-          `Approved plan: ${planPath}`,
-          `API contracts:`,
-          ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
-          `Run validation across frontend, all in-scope backend services, and e2e.`,
-          `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
-        ].join("\n"),
-        outputFile: reports.qa,
-        doneMarker: "STATUS: DONE",
-        label: "QA Agent",
-        agentKey: "qa",
-      })
-    } else {
-      emitEvent("agent-skip", "qa")
-      logSkip("QA Agent", "out of scope for this task")
-      writeSkippedReport(reports.qa, "QA Agent")
+    // ── Step: QA + Security (run in parallel — neither depends on the
+    // other's output, both only audit code the Frontend/Backend agents
+    // already wrote. Running them back-to-back with a human-approval wait
+    // sandwiched in between used to serialize two independent audits AND
+    // make that approval happen before the Security report even existed;
+    // this way the wait after both finish reflects the full picture. Same
+    // shape as the backend services' own Promise.all above.) ─────────────
+    const qaInScope = inScope(task, "qa")
+    const securityInScope = inScope(task, "security")
+    // Only meaningful when BOTH are actually running this task — if one is
+    // out of scope, the other is genuinely solo and gets its own ordinary
+    // single-key event exactly as before.
+    if (qaInScope && securityInScope) {
+      parallelActiveKeys = ["qa", "security"]
+      emitEvent("agent-start", "qa-security", null, ["qa", "security"])
     }
+
+    const qaStep = (async () => {
+      if (qaInScope) {
+        if (!securityInScope) emitEvent("agent-start", "qa")
+        await runAgent({
+          systemPrompt: "agents/qa/CLAUDE.md",
+          input: [
+            `You are the QA Agent.`,
+            `Task: ${task.title}`,
+            `Task id: ${tickets.qa.id}`,
+            `Approved plan: ${planPath}`,
+            `API contracts:`,
+            ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
+            `Run validation across frontend, all in-scope backend services, and e2e.`,
+            `Write ${reports.qa} and end final response with exact line: STATUS: DONE`,
+          ].join("\n"),
+          outputFile: reports.qa,
+          doneMarker: "STATUS: DONE",
+          label: "QA Agent",
+          agentKey: "qa",
+        })
+      } else {
+        emitEvent("agent-skip", "qa")
+        logSkip("QA Agent", "out of scope for this task")
+        writeSkippedReport(reports.qa, "QA Agent")
+      }
+    })()
+
+    const securityStep = (async () => {
+      if (securityInScope) {
+        if (!qaInScope) emitEvent("agent-start", "security")
+        await runAgent({
+          systemPrompt: "agents/security/CLAUDE.md",
+          input: [
+            `You are the Security Agent.`,
+            `Task: ${task.title}`,
+            `Task id: ${tickets.security.id}`,
+            `Approved plan: ${planPath}`,
+            `API contracts:`,
+            ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
+            `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
+            `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
+          ].join("\n"),
+          outputFile: reports.security,
+          doneMarker: "STATUS: DONE",
+          label: "Security Agent",
+          agentKey: "security",
+        })
+      } else {
+        emitEvent("agent-skip", "security")
+        logSkip("Security Agent", "out of scope for this task")
+        writeSkippedReport(reports.security, "Security Agent")
+      }
+    })()
+
+    await Promise.all([qaStep, securityStep])
+    parallelActiveKeys = null
 
     emitEvent("agent-back", "orchestrator")
     await waitForApprovalWithChat({ task, tickets, planPath })
-
-    // ── Step: Security ───────────────────────────────────────────────────────
-    if (inScope(task, "security")) {
-      emitEvent("agent-start", "security")
-      await runAgent({
-        systemPrompt: "agents/security/CLAUDE.md",
-        input: [
-          `You are the Security Agent.`,
-          `Task: ${task.title}`,
-          `Task id: ${tickets.security.id}`,
-          `Approved plan: ${planPath}`,
-          `API contracts:`,
-          ...BACKEND_SERVICE_KEYS.map((key) => `- ${API_CONTRACTS[camelKey(key)]}`),
-          `Audit frontend, all in-scope backend services, and API contracts for security issues.`,
-          `Write security tests to tests/security/ and the report to ${reports.security}, then end final response with exact line: STATUS: DONE`,
-        ].join("\n"),
-        outputFile: reports.security,
-        doneMarker: "STATUS: DONE",
-        label: "Security Agent",
-        agentKey: "security",
-      })
-    } else {
-      emitEvent("agent-skip", "security")
-      logSkip("Security Agent", "out of scope for this task")
-      writeSkippedReport(reports.security, "Security Agent")
-    }
-    emitEvent("agent-back", "orchestrator")
     printCostTable(task.title)
 
     await markPlanStatus(planPath, "done")
@@ -2106,7 +2811,7 @@ async function runTaskCommand(task) {
     // a server that runs forever. Without this, a scaffold command can
     // silently turn into a hang with no error — this script just waits on
     // a process that was never going to exit on its own.
-    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit", env: { ...process.env, CI: "1" } })
+    execSync(task.cmd, { cwd: __projectRoot, stdio: "inherit", env: { ...process.env, CI: "1" }, windowsHide: true })
     log(`Command succeeded: ${task.cmd}`)
   } catch (err) {
     printRed(`Command failed: ${task.cmd}`)
@@ -2129,7 +2834,7 @@ function openChangedFilesInEditor() {
   if (!codeCliChecked) {
     codeCliChecked = true
     try {
-      execSync("code --version", { stdio: "ignore" })
+      execSync("code --version", { stdio: "ignore", windowsHide: true })
       codeCliAvailable = true
     } catch {
       warn("'code' CLI not found on PATH — skipping auto-open in VS Code for this and future tasks. (VS Code: Command Palette -> \"Shell Command: Install 'code' command in PATH\" to enable this.)")
@@ -2140,7 +2845,7 @@ function openChangedFilesInEditor() {
 
   let changedFiles
   try {
-    changedFiles = execSync("git diff-tree --no-commit-id --name-only -r HEAD", { encoding: "utf-8" })
+    changedFiles = execSync("git diff-tree --no-commit-id --name-only -r HEAD", { encoding: "utf-8", windowsHide: true })
       .split("\n")
       .map((f) => f.trim())
       .filter(Boolean)
@@ -2151,7 +2856,7 @@ function openChangedFilesInEditor() {
   if (changedFiles.length === 0) return
 
   try {
-    execSync(`code ${changedFiles.map((f) => `"${f}"`).join(" ")}`, { stdio: "ignore" })
+    execSync(`code ${changedFiles.map((f) => `"${f}"`).join(" ")}`, { stdio: "ignore", windowsHide: true })
     log(`Opened ${changedFiles.length} changed file(s) in VS Code.`)
   } catch (e) {
     warn(`Could not open changed files in VS Code (${e.message}).`)
@@ -2165,7 +2870,13 @@ function openChangedFilesInEditor() {
 // other manual step in this workflow — this never starts that server itself.
 // Pages requiring login are opened as-is; no auto-login is attempted, so the
 // human logs in manually if the page redirects to an auth screen.
-const FRONTEND_DEV_URL = process.env.FRONTEND_DEV_URL || "http://localhost:5173"
+// Mutable, not const — ensureFrontendDevServerRunning() below can move this
+// to a different port if its default one turns out to be occupied by
+// something unrelated (a stray dev server left running by a DIFFERENT
+// project). Every consumer (checkFrontendHealth(), task.url building, the
+// /status.json route) reads this same variable, so a port change takes
+// effect everywhere at once.
+let FRONTEND_DEV_URL = process.env.FRONTEND_DEV_URL || "http://localhost:5173"
 
 function openBrowserForTask(task) {
   if (!task.url) return // no `url:` field on this backlog line — nothing to open
@@ -2177,7 +2888,7 @@ function openBrowserForTask(task) {
     `xdg-open "${fullUrl}"`
 
   try {
-    execSync(openCmd, { stdio: "ignore" })
+    execSync(openCmd, { stdio: "ignore", windowsHide: true })
     log(`Opened in browser: ${fullUrl}`)
   } catch (e) {
     warn(`Could not open browser at ${fullUrl} (${e.message}) — open it manually to see this task's result.`)
@@ -2312,7 +3023,7 @@ let BACKEND_PORTS = Object.fromEntries(
 // Picks up backend services that became known SINCE this process started —
 // scaffolded on disk by a task that just ran, or newly named in a `scope:`
 // field a human added to the backlog mid-session — without requiring a
-// dev-loop.js restart. Only ever grows the known set (existing keys' ports/
+// task-builder.js restart. Only ever grows the known set (existing keys' ports/
 // contracts/identities are never touched), and is a cheap no-op read+diff
 // when nothing changed. Call before anything that iterates
 // BACKEND_SERVICE_KEYS to dispatch/describe work (the per-task backend
@@ -2521,7 +3232,10 @@ function ensureDirFor(filePath) {
 // session limit · resets 1:30pm (Asia/Jerusalem)" line, so the dashboard can
 // show it without the human having to go dig through terminal scrollback.
 function extractSessionLimitReset(text) {
-  const m = text && text.match(/resets?\s+(\d{1,2}:\d{2}\s*(?:am|pm)(?:\s*\([^)]*\))?)/i)
+  // Minutes are optional — the CLI says "resets 5pm" as often as "resets
+  // 1:30pm"; requiring ":MM" silently dropped the reset time whenever it
+  // landed on the hour (confirmed live: "resets 5pm (Asia/Jerusalem)").
+  const m = text && text.match(/resets?\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)(?:\s*\([^)]*\))?)/i)
   return m ? m[1] : null
 }
 
@@ -2597,6 +3311,34 @@ function llmBin() {
   return ACTIVE_PROVIDER === "cursor" ? "agent" : "claude"
 }
 
+// `claude` on Windows resolves to `claude.cmd` — a batch file, so invoking
+// it needs `shell: true`, which really spawns `cmd.exe /c "claude ..."`.
+// windowsHide is supposed to keep that hidden, but confirmed live: on some
+// machines (Windows 11, no explicit "default terminal" override — see
+// chat history) it isn't reliably honored, and every single agent turn
+// flashed/popped a visible window, repeatedly stealing focus during a real
+// run. Same fix as the frontend/backend dev-server spawns already use for
+// npm.cmd: skip the batch file and shell entirely by resolving and invoking
+// the REAL executable underneath it directly (`claude.cmd` itself just does
+// `%dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe %*`) — a
+// genuine .exe, no cmd.exe in the middle, so there's no shell-launched
+// console for anything to fail to hide. Resolved once and cached; falls
+// back to the old shell route for any install layout this doesn't match
+// (a global install elsewhere, a future package restructuring, ...).
+let cachedClaudeExePath
+function resolveClaudeExePath() {
+  if (cachedClaudeExePath !== undefined) return cachedClaudeExePath
+  try {
+    const whereOut = execSync("where claude", { encoding: "utf-8", windowsHide: true })
+    const cmdPath = whereOut.split(/\r?\n/).map((l) => l.trim()).find((l) => l.toLowerCase().endsWith(".cmd"))
+    const exePath = cmdPath ? join(dirname(cmdPath), "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe") : null
+    cachedClaudeExePath = exePath && existsSync(exePath) ? exePath : null
+  } catch {
+    cachedClaudeExePath = null
+  }
+  return cachedClaudeExePath
+}
+
 // Builds provider-specific CLI flags + stdin. Cursor has no --system-prompt,
 // so the CLAUDE.md file is inlined at the front of the prompt. Claude keeps
 // --system-prompt / --permission-mode as before.
@@ -2650,7 +3392,7 @@ function launchLlm({ operation, systemPromptPath, input, outputFormat = "stream-
 // A real, successful Claude run that itself reports STATUS: BLOCKED (e.g. the
 // Security Agent found a real vulnerability) is not a technical failure to
 // retry — it's the agent correctly telling us not to proceed. Halt the whole
-// dev-loop run rather than warning and marching the task to "done" anyway.
+// task-builder run rather than warning and marching the task to "done" anyway.
 class AgentBlockedError extends Error {}
 
 async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, agentKey }) {
@@ -2687,6 +3429,25 @@ async function runAgent({ systemPrompt, input, outputFile, doneMarker, label, ag
 
   ensureDirFor(outputFile)
   writeFileSync(outputFile, stdout, "utf-8")
+  // Safety net for exactly the failure confirmed live: a report whose own
+  // prose says something is blocked ("Marked BLOCKED, not DONE, since core
+  // AC's cannot pass...") but whose literal final line still says
+  // `STATUS: DONE` — agents/qa/CLAUDE.md and agents/security/CLAUDE.md both
+  // now say explicitly that the STATUS line must match the report's own
+  // conclusion, but a prompt instruction is not a guarantee. Since
+  // blockedRegex above only matches the real marker (by design — it must
+  // stay strict, or ordinary prose mentioning "blocked" would misfire), this
+  // catches the specific case where the agent visibly SAID it was marking
+  // the task blocked yet still emitted STATUS: DONE, rather than silently
+  // trusting the (wrong) marker over what the agent itself just concluded.
+  const selfContradictionMatch = stdout.match(/\bmark(?:ed|ing)\b[^.\n]{0,60}\bblocked\b/i)
+  if (!blockedRegex.test(stdout) && doneRegex.test(stdout) && selfContradictionMatch) {
+    printRed(`${label}: report says "${selfContradictionMatch[0]}" but the final line still reads STATUS: DONE — treating this as blocked rather than trusting a self-contradicting marker.`)
+    printRed(`Report (real, not simulated): ${outputFile}`)
+    emitEvent("attention-needed", agentKey, `${label} reported DONE but its own text says it should be blocked`)
+    throw new AgentBlockedError(`${label}'s report contradicts its own STATUS line ("${selfContradictionMatch[0]}" vs STATUS: DONE) — see ${outputFile}`)
+  }
+
   if (blockedRegex.test(stdout)) {
     printRed(`${label}: STATUS: BLOCKED — the agent found something that must be fixed before continuing.`)
     printRed(`Report (real, not simulated): ${outputFile}`)
@@ -2712,7 +3473,7 @@ async function runAgentInteractive({ systemPrompt, input, outputFile, doneMarker
   const bin = llmBin()
   try {
     if (bin === "agent") ensureCursorCliOnPath()
-    execSync(`${bin} --version`, { stdio: "ignore" })
+    execSync(`${bin} --version`, { stdio: "ignore", windowsHide: true })
   } catch {
     warn(`${label}: ${bin} not available — simulating output.`)
     simulateAgent(label, outputFile, doneMarker)
@@ -2734,7 +3495,7 @@ async function runAgentInteractive({ systemPrompt, input, outputFile, doneMarker
     let child
     if (process.platform === "win32") {
       const command = [bin, ...args.map(quoteArgForCmd)].join(" ")
-      child = spawn(command, { stdio: ["pipe", "inherit", "inherit"], shell: true })
+      child = spawn(command, { stdio: ["pipe", "inherit", "inherit"], shell: true, windowsHide: true })
     } else {
       child = spawn(bin, args, { stdio: ["pipe", "inherit", "inherit"], shell: false })
     }
@@ -2779,7 +3540,7 @@ function simulateAgent(label, outputFile, doneMarker) {
 // session/usage-limit block apart from "claude not installed" or a crash.
 let lastSpawnError = null
 
-const SESSION_LIMIT_PATTERN = /hit your (?:session|usage) limit|resets?\s+\d{1,2}:\d{2}\s*(?:am|pm)\b/i
+const SESSION_LIMIT_PATTERN = /hit your (?:session|usage) limit|resets?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i
 const AUTH_ERROR_PATTERN = /\bnot logged in\b|please run\s*`?\/login`?|invalid api key|not authenticated|please run\s*`?agent login`?|authentication required/i
 
 // The claude CLI has been observed to print its final assistant text (often
@@ -2811,7 +3572,7 @@ function spawnLlm(args, stdinText, { agentKey = "", extraEnv = {}, timeoutMs = n
 
   try {
     if (bin === "agent") ensureCursorCliOnPath()
-    execSync(`${bin} --version`, { stdio: "ignore" })
+    execSync(`${bin} --version`, { stdio: "ignore", windowsHide: true })
   } catch {
     lastSpawnError = { kind: "NOT_INSTALLED", raw: "" }
     return Promise.resolve(null)
@@ -2825,9 +3586,37 @@ function spawnLlm(args, stdinText, { agentKey = "", extraEnv = {}, timeoutMs = n
 
   return new Promise((resolve) => {
     let child
-    if (process.platform === "win32") {
+    const directExe = process.platform === "win32" && bin === "claude" ? resolveClaudeExePath() : null
+    const hiddenLauncher = "development/hidden-console-launcher.ps1"
+    if (directExe && existsSync(hiddenLauncher)) {
+      // `windowsHide`/CREATE_NO_WINDOW gives claude.exe NO console at all —
+      // which is exactly why it (still) needed a real window for anything
+      // IT itself spawns internally: a Bash-tool command claude runs on its
+      // own (npm install, a test run, git, ...) is a console app with no
+      // existing console to attach to, so Windows gives it a brand new
+      // (visible) one — confirmed live, repeatedly, this whole session.
+      // hidden-console-launcher.ps1 fixes the actual cause instead of
+      // guessing again: it gives claude.exe a REAL console (via .NET's
+      // Process class, CreateNoWindow=false) that is immediately hidden
+      // (WindowStyle=Hidden) — a genuine console object, just not shown.
+      // Anything claude spawns afterward with no console-creation flag of
+      // its own inherits/attaches to THAT hidden console by default Windows
+      // behavior, instead of creating a new one. Confirmed live end-to-end,
+      // including a real Bash-tool child process, with zero visible
+      // windows at any point. stdin/stdout/stderr are relayed byte-for-byte
+      // through PowerShell, so stream-json parsing below sees no
+      // difference at all versus talking to claude.exe directly.
+      child = spawn("powershell", ["-NoProfile", "-WindowStyle", "Hidden", "-File", hiddenLauncher, directExe, ...args], {
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false,
+        env,
+        windowsHide: true,
+      })
+    } else if (directExe) {
+      child = spawn(directExe, args, { stdio: ["pipe", "pipe", "pipe"], shell: false, env, windowsHide: true })
+    } else if (process.platform === "win32") {
       const command = [bin, ...args.map(quoteArgForCmd)].join(" ")
-      child = spawn(command, { stdio: ["pipe", "pipe", "pipe"], shell: true, env })
+      child = spawn(command, { stdio: ["pipe", "pipe", "pipe"], shell: true, env, windowsHide: true })
     } else {
       child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"], shell: false, env })
     }
@@ -2953,6 +3742,7 @@ function spawnLlm(args, stdinText, { agentKey = "", extraEnv = {}, timeoutMs = n
         if (code !== 0 || !resultEvent || resultEvent.is_error) { recordFailure(assistantText); resolve(null); return }
         resolve(JSON.stringify({
           result:         resultEvent.result ?? "",
+          session_id:     resultEvent.session_id ?? null,
           usage:          resultEvent.usage ?? {},
           total_cost_usd: resultEvent.total_cost_usd ?? 0,
           duration_ms:    resultEvent.duration_ms ?? 0,
@@ -3083,14 +3873,14 @@ ${BACKEND_SERVICE_KEYS.map((key) => `- backend/${key} (only if in scope): npm --
 
 // ─── Git ──────────────────────────────────────────────────────────────────────
 
-// The branch dev-loop.js was launched from — every task branches fresh from
+// The branch task-builder.js was launched from — every task branches fresh from
 // here and merges back here, after approval. main/master is sacred: this
 // loop never creates a per-task branch from it or merges into it. When the
 // current branch is main/master (or there is no .git at all), branch
 // creation is skipped and tasks work on the current tree as-is.
 function getBaseBranch() {
   if (!GIT_ENABLED) return "no-git"
-  const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8" }).trim()
+  const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf-8", windowsHide: true }).trim()
   if (branch.includes("-tasks/")) {
     // A task branch this same script generated (`<base>-tasks/<slug>`), not a
     // real human base branch. Re-deriving BASE_BRANCH from one of these is
@@ -3111,14 +3901,14 @@ function getBaseBranch() {
 // would silently carry forward unmerged/unreviewed work between tasks.
 function createGitBranch(branch, baseBranch) {
   if (!GIT_ENABLED) return
-  execSync(`git checkout ${baseBranch}`, { stdio: "inherit" })
+  execSync(`git checkout ${baseBranch}`, { stdio: "inherit", windowsHide: true })
   try {
-    execSync(`git rev-parse --verify ${branch}`, { stdio: "ignore" })
+    execSync(`git rev-parse --verify ${branch}`, { stdio: "ignore", windowsHide: true })
     log(`Git branch '${branch}' already exists — checking it out.`)
-    execSync(`git checkout ${branch}`, { stdio: "inherit" })
+    execSync(`git checkout ${branch}`, { stdio: "inherit", windowsHide: true })
   } catch {
     log(`Creating git branch: ${branch} (from '${baseBranch}')`)
-    execSync(`git checkout -b ${branch}`, { stdio: "inherit" })
+    execSync(`git checkout -b ${branch}`, { stdio: "inherit", windowsHide: true })
   }
 }
 
@@ -3130,8 +3920,8 @@ function createGitBranch(branch, baseBranch) {
 function commitTaskChanges(task, branch) {
   if (!GIT_ENABLED) return
   try {
-    execSync("git add -A", { stdio: "inherit" })
-    const status = execSync("git status --porcelain", { encoding: "utf-8" })
+    execSync("git add -A", { stdio: "inherit", windowsHide: true })
+    const status = execSync("git status --porcelain", { encoding: "utf-8", windowsHide: true })
     if (!status.trim()) {
       log(`Nothing to commit for '${task.title}' — working tree already clean.`)
       return
@@ -3143,11 +3933,11 @@ function commitTaskChanges(task, branch) {
       [
         task.title,
         "",
-        "Automated local commit by dev-loop.js after this task's agents finished.",
+        "Automated local commit by task-builder.js after this task's agents finished.",
       ].join("\n"),
       "utf-8",
     )
-    execSync(`git commit -F "${msgFile}"`, { stdio: "inherit" })
+    execSync(`git commit -F "${msgFile}"`, { stdio: "inherit", windowsHide: true })
     rmSync(msgFile)
     log(`Committed locally on branch '${branch}'.`)
   } catch (e) {
@@ -3165,12 +3955,12 @@ function commitTaskChanges(task, branch) {
 function commitCostArtifacts(task, baseBranch) {
   if (!GIT_ENABLED) return
   try {
-    const status = execSync("git status --porcelain", { encoding: "utf-8" })
+    const status = execSync("git status --porcelain", { encoding: "utf-8", windowsHide: true })
     if (!status.trim()) return
-    execSync("git add -A -- docs/cost", { stdio: "inherit" })
-    const stillDirty = execSync("git status --porcelain", { encoding: "utf-8" })
+    execSync("git add -A -- docs/cost", { stdio: "inherit", windowsHide: true })
+    const stillDirty = execSync("git status --porcelain", { encoding: "utf-8", windowsHide: true })
     if (!stillDirty.trim()) return // nothing under docs/cost/ was actually dirty
-    execSync(`git commit -m "Cost tracking for: ${task.title.replace(/"/g, '\\"')}"`, { stdio: "inherit" })
+    execSync(`git commit -m "Cost tracking for: ${task.title.replace(/"/g, '\\"')}"`, { stdio: "inherit", windowsHide: true })
     log(`Committed cost-tracking files on '${baseBranch}'.`)
   } catch (e) {
     warn(`Could not auto-commit cost-tracking files (${e.message}) — the next task's branch checkout may fail until this is committed or discarded manually.`)
@@ -3204,15 +3994,15 @@ async function pushAndMergeTaskBranch(task, branch, baseBranch) {
   }
 
   try {
-    const hasRemote = execSync("git remote", { encoding: "utf-8" }).trim().length > 0
+    const hasRemote = execSync("git remote", { encoding: "utf-8", windowsHide: true }).trim().length > 0
     if (hasRemote) {
-      execSync(`git push -u origin ${branch}`, { stdio: "inherit" })
+      execSync(`git push -u origin ${branch}`, { stdio: "inherit", windowsHide: true })
     } else {
       log("No git remote configured — skipping push, merging locally only.")
     }
 
-    execSync(`git checkout ${baseBranch}`, { stdio: "inherit" })
-    execSync(`git merge --no-ff ${branch} -m "Merge ${branch} into ${baseBranch}: ${task.title}"`, { stdio: "inherit" })
+    execSync(`git checkout ${baseBranch}`, { stdio: "inherit", windowsHide: true })
+    execSync(`git merge --no-ff ${branch} -m "Merge ${branch} into ${baseBranch}: ${task.title}"`, { stdio: "inherit", windowsHide: true })
     log(`Merged '${branch}' into '${baseBranch}'.`)
   } catch (e) {
     warn(`Push/merge failed (${e.message}). '${branch}' is still committed and intact — resolve manually (conflicts, auth, etc.), then merge it into '${baseBranch}' yourself.`)
@@ -3240,46 +4030,236 @@ async function waitForApproval(prompt) {
 }
 
 // Backs /status.json's frontendReady, which the dashboard's "Live App" tab
-// gates on (see agent-dashboard.html) — a real (if imperfect) improvement
-// over the tab being unconditionally clickable regardless of whether
-// anything is actually answering at FRONTEND_DEV_URL yet. Refreshed on an
-// interval (not per /status.json poll — that route is hit every ~1s from
+// gates on (see agent-dashboard.html) — a real improvement over the tab
+// being unconditionally clickable regardless of whether anything is
+// actually answering at FRONTEND_DEV_URL yet, AND now actually verifies
+// identity (see isOurFrontendAt()) rather than just liveness. Refreshed on
+// an interval (not per /status.json poll — that route is hit every ~1s from
 // the dashboard and this check has its own 2s timeout, so doing it inline
-// there would make every poll as slow as the health check itself).
-// IMPORTANT LIMITATION: this only confirms *something* Vite-shaped answers
-// at that URL — it cannot tell THIS project's dev server apart from an
-// unrelated one a previous project left running on the same port (Vite's
-// own HTTP response gives no project identity to check). A stray server
-// from another project can still make this — and the tab — report ready.
+// there would make every poll as slow as the health check itself). If the
+// check fails, tries ensureFrontendDevServerRunning() again (rate-limited —
+// see frontendRecoveryCooldownUntil) so a hijacked port gets a real chance
+// at self-healing instead of just quietly reporting "not ready" forever.
 let FRONTEND_READY = false
+let frontendRecoveryCooldownUntil = 0
 function startFrontendHealthPolling() {
-  const tick = () => { checkFrontendHealth().then((ok) => { FRONTEND_READY = ok }) }
+  const tick = async () => {
+    const ok = await checkFrontendHealth()
+    FRONTEND_READY = ok
+    if (!ok && Date.now() >= frontendRecoveryCooldownUntil) {
+      frontendRecoveryCooldownUntil = Date.now() + 15000 // don't hammer a port that keeps failing
+      ensureFrontendDevServerRunning().catch(() => {})
+    }
+  }
   tick()
   setInterval(tick, 4000)
 }
 
-async function checkFrontendHealth() {
+// This project's own frontend/index.html's <title> — the one bit of
+// identity a fresh `fetch()` of a candidate URL can actually compare
+// against. Read fresh each call (not cached) since the Frontend Agent could
+// still be mid-edit on it early in a run.
+function getExpectedFrontendTitle() {
   try {
-    const res = await fetch(FRONTEND_DEV_URL, { signal: AbortSignal.timeout(2000) })
-    // If we get a response, also check if it's actually Vite (and not a zombie)
-    const serverHeader = res.headers.get("server")
-    if (serverHeader && serverHeader.toLowerCase().includes("vite")) return true
-    
-    // If no Vite header, maybe it's fine (some versions don't send it or it's proxied)
-    // but if we are here and the user says it's not working, we might be hitting a zombie.
-    return res.ok
+    const html = readFileSync(join("frontend", "index.html"), "utf-8")
+    const m = html.match(/<title>([^<]*)<\/title>/i)
+    return m ? m[1].trim() : null
   } catch {
-    // If 5173 is dead, check the log to see if Vite moved to a different port
-    const logPath = "docs/frontend-dev-server.log"
-    if (existsSync(logPath)) {
-      const log = readFileSync(logPath, "utf-8")
-      const match = log.match(/Local:\s+http:\/\/localhost:(\d+)\//i)
-      if (match && match[1] !== "5173") {
-        warn(`Vite is running on port ${match[1]} instead of 5173 (detected from logs).`)
-      }
-    }
+    return null
+  }
+}
+
+// Confirmed live: a plain liveness check ("does anything answer here")
+// isn't enough — a stray dev server from a COMPLETELY DIFFERENT project
+// took over a port this project's own server had died on mid-session, and
+// every liveness-only check kept reporting "ready" against someone else's
+// app. Comparing the served page's own <title> against this project's real
+// frontend/index.html is the one identity signal actually available without
+// modifying the scaffolded app itself. Falls back to liveness-only (can't
+// verify, so don't block on it) if this project's own index.html has no
+// title yet (very early in a run) — never a false "not mine".
+async function isOurFrontendAt(url) {
+  const expectedTitle = getExpectedFrontendTitle()
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) })
+    if (!res.ok) return false
+    if (!expectedTitle) return true
+    const body = await res.text()
+    const m = body.match(/<title>([^<]*)<\/title>/i)
+    return (m ? m[1].trim() : null) === expectedTitle
+  } catch {
     return false
   }
+}
+
+async function checkFrontendHealth() {
+  if (await isOurFrontendAt(FRONTEND_DEV_URL)) return true
+  // Either unreachable, or something else entirely is answering there right
+  // now (see isOurFrontendAt()'s own comment) — check the log for whether
+  // Vite itself logged a different port than what we're currently pointed
+  // at, purely as a diagnostic hint in the console; startFrontendHealthPolling()
+  // is what actually attempts recovery.
+  const logPath = "docs/frontend-dev-server.log"
+  if (existsSync(logPath)) {
+    const log = readFileSync(logPath, "utf-8")
+    const match = log.match(/Local:\s+http:\/\/localhost:(\d+)\//i)
+    if (match && `http://localhost:${match[1]}` !== FRONTEND_DEV_URL) {
+      warn(`Vite last logged itself running on port ${match[1]}, not ${FRONTEND_DEV_URL}.`)
+    }
+  }
+  return false
+}
+
+// waitForApprovalWithChat()'s own chat loop below used to call launchLlm()
+// fresh on every turn — a brand-new, memory-less `claude --print` process
+// each time, with NOTHING carried over from the orchestrator's own previous
+// reply. Confirmed live: the orchestrator asked its own follow-up question
+// ("found a gap — implement it now?"), the human replied "YES", and the
+// NEXT call had no idea what question that "YES" was even answering — it
+// only saw the bare word alongside the original static task/plan context,
+// which reads exactly like agreeing the whole feature is done. This isn't
+// the marker-detection bug fixed earlier (that was real too); it's that
+// there was never an actual back-and-forth conversation to detect a marker
+// in correctly. Fixed by pinning this exchange to one real Claude session
+// (--resume, by its own real session_id — never bare --continue, which
+// would grab whichever OTHER session ran most recently in this same cwd,
+// e.g. a Backend Agent's own turn — see the identical bug/fix in
+// electron/main.js's setup chat) and reusing it turn after turn, so the
+// model genuinely remembers its own prior question when the human answers
+// it. `--output-format json` (a single JSON object, not a stream) is enough
+// here — no live progress display is needed for a short chat reply — and
+// its `session_id` field is exactly what makes the pinning possible.
+// Claude-specific (`--resume`/`--session-id` semantics) — Cursor's `agent`
+// CLI has no equivalent flag here, so a Cursor-based project falls back to
+// the old memory-less per-turn call (same limitation this whole fix closes
+// for Claude, not a new regression for Cursor — it never had memory here
+// either) rather than something that would just error out.
+// 5 minutes, not 2 — a note-addressing turn isn't always a quick reply, it
+// can involve reading several files and making a real edit (see
+// runNoteAddressingTurn()'s own prompt: "make the change yourself"). 2
+// minutes was cutting some of these off mid-work: the edit itself could
+// complete first, but the turn got killed before it produced its final
+// wrap-up text, leaving an empty reply that looked exactly like total
+// failure even though real work had already happened. Confirmed live.
+const ORCHESTRATOR_CHAT_TIMEOUT_MS = 5 * 60 * 1000
+
+function launchOrchestratorChatTurn(systemPromptPath, input, resumeSessionId) {
+  const model = modelFor("orchestrator-chat")
+  if (llmBin() !== "claude") {
+    return launchLlm({ operation: "orchestrator-chat", systemPromptPath, input, outputFormat: null, agentKey: "orchestrator", timeoutMs: ORCHESTRATOR_CHAT_TIMEOUT_MS })
+  }
+  // stream-json, not plain json — plain json writes NOTHING to stdout until
+  // the entire turn is finished, so a genuinely-working multi-minute turn
+  // (reading files, making a real edit) looks byte-for-byte identical to a
+  // truly hung one: the idle-timeout below has no way to tell them apart,
+  // and WILL eventually kill any turn that simply takes longer than the
+  // timeout, no matter how high that's set — confirmed live, twice in a
+  // row, on the exact same note. stream-json emits a real event per
+  // assistant-text chunk/tool call, which is what lets the SAME idle-timeout
+  // logic correctly distinguish "still working" from "actually stuck" for
+  // every other agent type already — this was the one call site still using
+  // the format that can't make that distinction. --verbose is required
+  // alongside --print for stream-json (see buildLlmInvocation() above, the
+  // pattern every other agent's own invocation already follows).
+  const args = resumeSessionId
+    ? ["--model", model, "--permission-mode", CLAUDE_PERMISSION_MODE, "--add-dir", process.cwd(), "--print", "--verbose", "--output-format", "stream-json", "--resume", resumeSessionId]
+    : ["--model", model, "--permission-mode", CLAUDE_PERMISSION_MODE, "--add-dir", process.cwd(), "--print", "--verbose", "--output-format", "stream-json", "--system-prompt", systemPromptPath]
+  return spawnLlm(args, input, { agentKey: "orchestrator", timeoutMs: ORCHESTRATOR_CHAT_TIMEOUT_MS })
+}
+
+// Shared by every place a queued note (NOTES_FILE, see takePendingNotes())
+// actually gets addressed — the feature-done gate's own checkpoint
+// (waitForApprovalWithChat) and the between-tasks checkpoint (the main loop,
+// right after "picking-next-task"). Both need the exact same real-reply
+// validation: a bare/empty/low-effort reply ("Noted.", "OK", ...) must never
+// silently count as addressed — that's exactly the bug that once let a real,
+// unactioned bug report sit marked "✓ Addressed" in the Chat tab with
+// nothing actually done. On a bad reply, the note is re-queued for the next
+// checkpoint instead of being silently lost or falsely marked done.
+async function runNoteAddressingTurn(pendingNotes, contextBlock, resumeSessionId, rawLineForRequeue) {
+  emitEvent("agent-back", "orchestrator", "Reading a note you left earlier…")
+  const noteInput = `
+${contextBlock}
+The human left this note earlier, independent of any specific task (it may be unrelated to whatever's currently in progress — do not treat it as feedback on that unless it explicitly is):
+"""
+${pendingNotes}
+"""
+Address it now: answer it if it's a question, make the change yourself and say what you did if it's small and within your own tools, or explain what's needed (e.g. which agent/ticket) if it isn't.
+If it's a bug report about something an already-DONE task built, a bug is exactly the kind of thing QA should have caught — before re-launching the responsible agent, check that task's own QA report/acceptance criteria for whether this case was ever actually covered. Say what you find. Once the fix is made, re-launch the QA Agent for the relevant ticket to verify it for real — and if the acceptance criteria never covered this case, add it so the same bug can't silently ship again.
+First decide which of these it is:
+- Feedback on an already-built task (a bug in it, a tweak to it) — make the fix, then append a dated entry under an "## Addendum (human notes)" section at the end of that task's own plan file.
+- A wholly new capability, not already in the backlog — append a new unchecked item to \`.plan/000-backlog.md\` in the same format as the existing entries, and say you've added it there rather than building it now.
+If this changes what's documented in \`docs/PRD.md\`, update that file too — a decision that only exists in a chat reply is one nobody will find later.
+End your response with exactly: STATUS: DONE
+`.trim()
+  const stdout = await launchOrchestratorChatTurn("agents/orchestrator/CLAUDE.md", noteInput, resumeSessionId)
+  let parsed = null
+  try { parsed = stdout ? JSON.parse(stdout) : null } catch { parsed = null }
+  const newSessionId = parsed?.session_id || resumeSessionId
+  const reply = (parsed?.result ?? stdout ?? "").replace(/^\s*STATUS\s*:\s*(APPROVED|AWAITING_APPROVAL|DONE)\s*$/gim, "").trim()
+  const isLowEffortNonAnswer = reply.length < 15 || /^(noted|ok|okay|done|got it|sure|understood|acknowledged)\.?$/i.test(reply)
+  if (!reply || isLowEffortNonAnswer) {
+    warn(`Got no real reply while addressing a pending note (raw: "${reply || stdout || "(empty)"}") — re-queuing it for the next checkpoint instead of falsely marking it addressed.`)
+    // Re-queue the ORIGINAL "- [timestamp] text" line(s), never the
+    // already-stripped `pendingNotes` a single-note caller passes in (that's
+    // been through takeSingleNoteLine(), which strips the "- [ts] " prefix
+    // before sending it to the model) — writing that back verbatim silently
+    // corrupted NOTES_FILE's own format (lost the prefix on that one line),
+    // which listPendingNoteLines()/markSingleChatLogAddressed() both rely on
+    // to find/match entries correctly on the next attempt. Confirmed live.
+    const toRequeue = rawLineForRequeue || pendingNotes
+    const existing = existsSync(NOTES_FILE) ? readFileSync(NOTES_FILE, "utf-8") : ""
+    writeFileSync(NOTES_FILE, `${toRequeue}${existing ? "\n" + existing : ""}\n`)
+    emitEvent("attention-needed", "orchestrator", "Couldn't get a real, substantive reply while addressing your note — it's been re-queued for the next checkpoint.")
+
+    // Guessing "probably a timeout" turned out wrong last time this fired —
+    // lastSpawnError (set inside spawnLlm) actually records WHY the call
+    // came back empty (a real kind: TIMEOUT, SESSION_LIMIT, AUTH_ERROR,
+    // NOT_INSTALLED, or a genuine crash — see BLOCK_REASONS), so say that
+    // specifically instead of speculating. Also dumps the full raw output to
+    // a real file — the chat message and console warn() above both truncate
+    // it, and without a saved copy there was no way to actually diagnose a
+    // repeat occurrence instead of guessing again.
+    const failKind = lastSpawnError?.kind || "UNKNOWN"
+    const failReason = BLOCK_REASONS[failKind] || "The call failed for an unrecorded reason."
+    const debugPath = `${REPORTS_DIR}/note-turn-failure-${new Date().toISOString().replace(/[:.]/g, "-")}.debug.md`
+    try {
+      ensureDirFor(debugPath)
+      writeFileSync(debugPath, [
+        `# Note-addressing turn failed`,
+        ``,
+        `Time: ${new Date().toISOString()}`,
+        `Kind: ${failKind}`,
+        `Note: ${pendingNotes}`,
+        ``,
+        `## Raw output`,
+        "```",
+        lastSpawnError?.raw || stdout || "(nothing captured)",
+        "```",
+      ].join("\n"))
+    } catch { /* best-effort diagnostic, never block the actual re-queue on it */ }
+
+    // A transient status-line message alone (emitEvent above) is easy to
+    // miss — it gets overwritten by whatever the next event is, often
+    // within seconds, with nothing left in the Chat tab's own persistent
+    // history explaining why a note that seemed to get worked on is still
+    // sitting "Pending."
+    appendChatLog({
+      ts: new Date().toISOString(),
+      from: "orchestrator",
+      text: `Didn't get a real, substantive reply while working on this note. Reason: ${failReason} Full diagnostic: ${debugPath}. Re-queued for another attempt; the note above is still shown as pending.`,
+      status: "addressed",
+    })
+    return { handled: false, sessionId: newSessionId }
+  }
+  log(reply)
+  // Deliberately does NOT mark the chat log itself — callers differ on
+  // whether that should close out every pending entry (the combined-blob
+  // case) or just the one note this turn was actually about (a single
+  // note's own "▶ Run" button), and only the caller knows which situation
+  // it's in.
+  emitEvent("waiting-approval", "orchestrator")
+  return { handled: true, sessionId: newSessionId, reply }
 }
 
 async function waitForApprovalWithChat({ task, tickets, planPath }) {
@@ -3305,36 +4285,163 @@ async function waitForApprovalWithChat({ task, tickets, planPath }) {
     }
   }
 
+  let chatSessionId = null
+  let contextSent = false // whether this session has been told the current task/plan/ticket context yet
+
+  // A note left via the dashboard's always-available "note" box (see
+  // startDashboardServer()'s POST /note) — independent of whatever specific
+  // gate is currently open, so it may have nothing to do with THIS task.
+  // Addressed as this session's own first turn (combined with the normal
+  // task context below) rather than waiting for the human to type it in
+  // manually as a reply to "any feedback on this task?", which is exactly
+  // where it doesn't belong and — confirmed live — confuses the model.
+  // Addresses whatever's queued in NOTES_FILE right now, if anything, as its
+  // own turn in this session — called both before the loop starts and again
+  // at the top of every iteration (see below), since a note can arrive at
+  // any moment via the dashboard's always-available Chat tab, independent
+  // of whatever this gate itself is doing. What it CAN'T do is interrupt an
+  // `askUserInput()` that's already blocked waiting on a human answer, or a
+  // Frontend/Backend/QA/Security agent that's already running — task-builder.js
+  // is single-threaded and strictly sequential; a note sent then simply
+  // waits, unread, until the next point this process is actually free to
+  // check for it (the next loop iteration here, or — if none arrives before
+  // this task's own gate closes — whenever the NEXT task reaches its own
+  // feature-done gate).
+  async function addressPendingNotesIfAny() {
+    const pendingNotes = takePendingNotes()
+    if (!pendingNotes) return
+    const contextBlock = `Current task: ${task.title}\nPlan: ${planPath}\nTask ids (local, no issue tracker): ${JSON.stringify(tickets, null, 2)}\n\nThis is separate from approving the current task.`
+    const result = await runNoteAddressingTurn(pendingNotes, contextBlock, chatSessionId)
+    chatSessionId = result.sessionId
+    contextSent = true
+    if (result.handled) markChatLogAddressed(result.reply)
+  }
+
   log("Feature done. Type APPROVED to mark task complete, or send a command to the orchestrator.")
   emitEvent("waiting-approval", "orchestrator", "Feature-done approval")
+  await addressPendingNotesIfAny()
 
   while (true) {
     const answer = await askUserInput("orchestrator> ", {
       choices: [{ label: "✅ APPROVED", value: "APPROVED" }]
     })
     if (answer.trim().toUpperCase() === "APPROVED") return
+    // A dedicated, explicit dashboard button (see agent-dashboard.html's
+    // #pending-notes-address-btn) POSTs this exact sentinel instead of
+    // relying on someone knowing that typing ANYTHING at this prompt
+    // happens to also flush pending notes as a side effect — that trick
+    // worked but wasn't discoverable, and a human explicitly asked "how are
+    // my own clients supposed to guess this?" Recognized here and consumed
+    // silently — never forwarded to the model as if it were a real message,
+    // and the loop re-prompts immediately afterward instead of falling
+    // through to the general "user says" turn below.
+    if (answer.trim() === ADDRESS_NOTES_SENTINEL) {
+      await addressPendingNotesIfAny()
+      continue
+    }
+    // A specific note's own "▶ Run" button (Chat tab) — addresses just that
+    // one, leaving any other still-queued notes untouched, same reasoning
+    // as the combined sentinel above (never forwarded to the model as a
+    // real message).
+    if (answer.trim().startsWith(ADDRESS_SINGLE_NOTE_PREFIX)) {
+      const line = answer.trim().slice(ADDRESS_SINGLE_NOTE_PREFIX.length)
+      const noteText = takeSingleNoteLine(line)
+      if (noteText) {
+        const contextBlock = `Current task: ${task.title}\nPlan: ${planPath}\nTask ids (local, no issue tracker): ${JSON.stringify(tickets, null, 2)}\n\nThis is separate from approving the current task. This is ONE specific note the human chose to address right now — other queued notes, if any, are untouched.`
+        const result = await runNoteAddressingTurn(noteText, contextBlock, chatSessionId, line)
+        chatSessionId = result.sessionId
+        contextSent = true
+        if (result.handled) markSingleChatLogAddressed(noteText, result.reply)
+      }
+      continue
+    }
+    // Catches a note that arrived WHILE the human was busy typing their real
+    // answer above (the only other moment this process is free to notice
+    // one before this task's gate closes) — addressed first, separately,
+    // before treating `answer` itself as the reply to the gate question.
+    await addressPendingNotesIfAny()
 
-    const context = `
+    // `emitEvent("waiting-approval", ...)` above this whole loop is still
+    // `lastEvent` at this point (nothing re-emits between iterations) — and
+    // "waiting-approval" is one of PAUSE_ON_EVENTS, which is what makes the
+    // dashboard suppress its own rotating "thinking…" label (see
+    // agent-dashboard.html's tickThinking()). Confirmed live: that made a
+    // real, possibly slow (LLM call + it may itself act on the request —
+    // read files, edit things) turn look completely frozen — the respond
+    // box empties and closes the instant she hits Send, then NOTHING
+    // visibly happens until until the next prompt appears, with no way to
+    // tell "still working" from "stuck". A plain event outside
+    // PAUSE_ON_EVENTS resumes the thinking indicator for this call.
+    emitEvent("agent-back", "orchestrator", "Thinking about your message…")
+
+    // No task/plan/ticket recap needed on every turn any more — a real,
+    // continued session (see launchOrchestratorChatTurn()'s own comment)
+    // already has that from its first turn, plus the actual back-and-forth
+    // this whole fix exists to give it. Re-sending it would just be noise
+    // (and risks contradicting what it already knows from files it may
+    // have since read/changed).
+    const firstTurn = !contextSent
+    contextSent = true
+    const input = firstTurn
+      ? `
 Current task: ${task.title}
 Plan: ${planPath}
 Task ids (local, no issue tracker): ${JSON.stringify(tickets, null, 2)}
 
 The user says: "${answer}"
 
-Act on the request.
-When done responding, print exactly: AWAITING_APPROVAL
-Do NOT print APPROVED unless the user has explicitly said the task is complete.
+Respond to what they actually said — answer a question if it's a question, make a change if it's an instruction. A plain question (e.g. "how do I get to this page?") is NOT the user saying the task is complete; answer it and keep waiting, don't treat it as approval.
+End your response with exactly one of these two lines, nothing else on that line:
+  STATUS: AWAITING_APPROVAL   — the normal case, whenever the user has not explicitly said the task/feature is complete/approved.
+  STATUS: APPROVED            — ONLY when the user's message explicitly says the task is done/approved/good to go.
+Never use the bare words "approved" or "awaiting approval" anywhere else in your response (e.g. don't write "reply APPROVED once you're happy") — only that exact status line, so it can't be confused with the rest of your answer.
+`.trim()
+      : `
+The user says: "${answer}"
+
+Respond to what they actually said, remembering the whole conversation so far in this session — including any question YOU just asked them, so a short reply like "yes"/"no" is answered as a reply to THAT, not misread as approving the whole feature. A plain question or a short confirmation of something you proposed is NOT the user saying the task is complete; act on it and keep waiting, don't treat it as approval.
+End your response with exactly one of these two lines, nothing else on that line:
+  STATUS: AWAITING_APPROVAL   — the normal case, whenever the user has not explicitly said the task/feature itself is complete/approved.
+  STATUS: APPROVED            — ONLY when the user's message explicitly says the task/feature itself is done/approved/good to go.
+Never use the bare words "approved" or "awaiting approval" anywhere else in your response — only that exact status line.
 `.trim()
 
-    const stdout = await launchLlm({
-      operation: "orchestrator-chat",
-      systemPromptPath: "agents/orchestrator/CLAUDE.md",
-      input: context,
-      outputFormat: null,
-      agentKey: "orchestrator",
-      timeoutMs: 2 * 60 * 1000, // 2-minute timeout for chat; much faster recovery than the 10m global default
-    })
-    if (stdout?.trim().toUpperCase().includes("APPROVED") && !stdout.includes("AWAITING_APPROVAL")) return
+    const stdout = await launchOrchestratorChatTurn("agents/orchestrator/CLAUDE.md", input, chatSessionId)
+    let parsed = null
+    try { parsed = stdout ? JSON.parse(stdout) : null } catch { parsed = null }
+    if (parsed?.session_id) chatSessionId = parsed.session_id
+    const rawReply = parsed?.result ?? stdout ?? ""
+    // Confirmed live, three separate bugs now fixed together: (1) a plain
+    // `stdout.includes("APPROVED")` check fired on the WORD appearing
+    // anywhere in a longer answer (e.g. "reply APPROVED once you're happy")
+    // even though the model never meant to approve anything. (2) a real
+    // answer was computed and then thrown away regardless of which branch
+    // ran — never shown to the human at all. (3) — the deepest one — every
+    // turn was a brand-new, memory-less call with no idea what the
+    // orchestrator itself had just said, so a short reply like "yes" to
+    // the orchestrator's OWN question got misread as approving the whole
+    // feature. (1) and (2) are fixed by matching an exact status LINE and
+    // always logging the real reply; (3) is fixed by launchOrchestratorChatTurn()
+    // pinning this whole exchange to one real, continued session.
+    const approvedViaChat = /^\s*STATUS\s*:\s*APPROVED\s*$/im.test(rawReply)
+    const reply = rawReply.replace(/^\s*STATUS\s*:\s*(APPROVED|AWAITING_APPROVAL)\s*$/gim, "").trim()
+    // Always log something here, even when the model's entire response was
+    // just the status line with no extra text — otherwise status.message is
+    // left as whatever the "Thinking about your message…" emit above said,
+    // which would misleadingly keep showing "thinking" after it's actually
+    // done and back to waiting.
+    log(reply || "Feature-done approval")
+    if (approvedViaChat) return
+    // Back to genuinely waiting on her — re-suppress the thinking indicator
+    // (see the "agent-back" emit above) now that this turn is actually done,
+    // not just whenever the loop happens to come back around to askUserInput.
+    // Deliberately no message argument here: emitEvent only overwrites
+    // status.message when given one, and passing the generic "Feature-done
+    // approval" text again — confirmed live — clobbered the real reply
+    // log() just wrote a moment earlier, right back to the same static
+    // string, on every single turn. Leaving it out keeps whatever log(reply)
+    // above actually said as what's visible on screen.
+    emitEvent("waiting-approval", "orchestrator")
   }
 }
 
@@ -3485,11 +4592,23 @@ async function ensureBackendEnv(serviceDir) {
 
       // The shared file is the single source of truth for this key — check
       // it first, regardless of what this service's own local file has.
-      if (shared[key] && shared[key] !== defaultValue) {
+      // Trusting mere presence here (not comparing against defaultValue) is
+      // deliberate — anything in `shared`/`existing` only ever got there
+      // through THIS function's own confirmation paths (consumeSetupSecret,
+      // the ask-loop below, or the migration branch right under this one),
+      // never a raw copy of the scaffold's unfilled template. Comparing
+      // against defaultValue used to punish the one case that legitimately
+      // *equals* it: a human who chose "use local db" during setup gets
+      // exactly `mongodb://localhost:27017/<slug>` staged for them — which
+      // is visually identical to a typical unfilled placeholder — so every
+      // service after the first one to consume it re-asked "we need a real
+      // URI" for a value that was already deliberately confirmed. Confirmed
+      // live: this is exactly what happened.
+      if (shared[key]) {
         collected[key] = shared[key]
         continue
       }
-      if (existing[key] && existing[key] !== defaultValue) {
+      if (existing[key]) {
         // This service already has a real value the shared file doesn't
         // know about yet (e.g. leftover from before this shared-file
         // mechanism existed) — adopt it into the shared file instead of

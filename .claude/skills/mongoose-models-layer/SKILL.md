@@ -5,7 +5,7 @@ references:
   - @.rule/database-rules.md
   - @.rule/naming-rules.md
   - @backend-service-layer/SKILL.md
-  - @seat-concurrency-layer/SKILL.md
+  - @resource-concurrency-layer/SKILL.md
 ---
 
 <!--
@@ -14,7 +14,7 @@ TEMPLATE — fill during project setup. Placeholders:
   {{MODELS_LIST}}          — list of models with core fields, for the schema examples below
   {{SOFT_DELETE_MODELS}}   — which models are soft-deleted vs hard-deleted
   {{SENSITIVE_FIELD_MODEL}} — model with a sensitive field to strip (e.g. Admin.passwordHash), if any
-  {{CONTESTED_ENTITY}}     — entity covered by seat-concurrency-layer, if any
+  {{CONTESTED_ENTITY}}     — entity covered by resource-concurrency-layer, if any
   {{REQUIRED_INDEXES}}     — table of model/index/reason rows
 Ask the user: "List your models and which service owns each." "Which models need soft-delete vs hard-delete, and which fields are sensitive?" "What indexes does each model need?"
 -->
@@ -40,10 +40,17 @@ const exampleSchema = new Schema({
   deletedAt: { type: Date, default: null }, // omit if this model is not soft-deleted — see {{SOFT_DELETE_MODELS}}
 })
 
-export const Example = model('Example', exampleSchema)
+// Third arg is required, not optional — Mongoose's own default behavior is
+// to auto-pluralize the model name into the collection name ('Example' ->
+// 'examples'), which is the opposite of this project's convention: every
+// collection name is singular, lowercase, matching the model name exactly
+// ('Example' -> 'example', 'User' -> 'user', not 'users'). Passing this
+// explicitly is the only way to override that default — a model defined
+// without it silently gets the pluralized name with no error.
+export const Example = model('Example', exampleSchema, 'example')
 ```
 
-`{{CONTESTED_ENTITY}}`'s schema (if any) is covered in `@seat-concurrency-layer/SKILL.md` and `@backend-service-layer/SKILL.md` — its status enum and indexes are the one part of the codebase with its own dedicated skill; don't duplicate that schema definition here.
+`{{CONTESTED_ENTITY}}`'s schema (if any) is covered in `@resource-concurrency-layer/SKILL.md` and `@backend-service-layer/SKILL.md` — its status enum and indexes are the one part of the codebase with its own dedicated skill; don't duplicate that schema definition here.
 
 ## Soft Delete — Enforce It in the Schema, Not the Caller
 {{SOFT_DELETE_MODELS}} are soft-deleted. Don't rely on every service function remembering to add `{ deletedAt: null }` — add a schema-level hook once, per model:
@@ -128,6 +135,7 @@ Define indexes directly on the schema (`schema.index({...})`), not via a separat
 - Test index uniqueness violations explicitly rather than assuming the index exists because it's declared in code.
 
 ## Implementation Checklist
+- [ ] Every `model(...)` call passes an explicit third argument: the singular, lowercase collection name (`model('User', userSchema, 'user')`) — never left to Mongoose's own auto-pluralizing default.
 - [ ] Every soft-deleted model has the `pre('find'/'findOne')` hook.
 - [ ] Any model with a sensitive field strips it via `toJSON` transform — no query needs to remember `.select('-field')`.
 - [ ] All required indexes (see table above) are declared on the schema, not created ad hoc.

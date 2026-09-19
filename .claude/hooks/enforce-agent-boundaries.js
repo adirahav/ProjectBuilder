@@ -51,7 +51,7 @@ process.stdin.on('end', () => {
   }
 
   // tool_input.file_path is absolute (Claude resolves it against its cwd,
-  // which dev-loop.js sets to the repo root before spawning). Resolve it
+  // which task-builder.js sets to the repo root before spawning). Resolve it
   // relative to the repo root before comparing against the relative
   // ALLOWED_WRITE_PREFIXES below — comparing an absolute path against a
   // relative prefix like "frontend/" via startsWith() never matches.

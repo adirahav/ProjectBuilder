@@ -55,14 +55,18 @@ backend/*/.env.production
 
 # Setup-time staging for real secret values (MongoDB URI, etc.) collected
 # during setup, before the real local secrets files exist yet.
-# Consumed and deleted by dev-loop.js -- never committed.
+# Consumed and deleted by task-builder.js -- never committed.
 .setup-secrets.json
 
-# Single-instance lock for dev-loop.js -- machine/process-specific, never committed.
-.dev-loop.lock
+# Single-instance lock for task-builder.js -- machine/process-specific, never committed.
+.task-builder.lock
 
 # Live agent-status feed for the dashboard -- changes every second, never committed.
 docs/agent-status.json
+
+# Records which port ensureFrontendDevServerRunning() actually bound on this
+# machine (see task-builder.js) -- machine/process-specific, never committed.
+docs/frontend-dev-server.port
 
 # Bundled MongoDB binary for the Electron desktop shell -- large, license-
 # bearing, fetched by hand per electron/resources/mongodb-win-x64/README.md,

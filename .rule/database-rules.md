@@ -3,10 +3,10 @@
 <!--
 TEMPLATE — fill during project setup. Placeholders:
   {{PROJECT_NAME}}, {{SERVICES_AND_PORTS}}, {{ENTITIES}}, {{MODEL_OWNERSHIP}}
-  {{ROLE_NAME}}, {{ROLES_LIST}}, {{PERMISSION_KEYS}} — if RBAC is used
+  {{ROLE_NAME}}, {{ROLES_LIST}}, {{PERMISSION_KEYS}} — every project has these; a fixed two-role app still fills them in, just with a short list
   {{CONTESTED_ENTITY}}, {{STATUS_VALUES}}, {{STATUS_TRANSITIONS}} — if a contested entity exists
   {{REQUIRED_INDEXES}}
-Ask the user: "What are your core data entities and their key fields?" "Is there a stateful/contested entity requiring atomic concurrency-safe transitions?" "Do you need role-based permissions, or a simpler auth model?"
+Ask the user: "What are your core data entities and their key fields?" "Is there a stateful/contested entity requiring atomic concurrency-safe transitions?" "What roles does this product have, and what does each one grant?" — never "do you need role-based permissions" framed as opt-in; every project gets the `roles`/`permissions` collection shape below regardless of how few roles it has.
 Delete this comment block once filled.
 -->
 
@@ -27,7 +27,7 @@ Delete this comment block once filled.
 ## Core Collections
 List every collection here, one subsection per entity in {{ENTITIES}}, following this shape:
 
-### <entity>  *(owned by <service>)*
+### <entity>  *(owned by <service>)* — collection name is the entity name lowercased and singular (`User` -> `user`, never `users`); pass it as the explicit third argument to `model(...)` (see `mongoose-models-layer` skill) since Mongoose otherwise auto-pluralizes
 - `_id` — ObjectId (auto-generated, internal only — never sent to clients)
 - `uuid` — String (auto-generated, unique, indexed — this is the `id` clients see)
 - ...domain fields...
@@ -42,14 +42,17 @@ If a contested entity exists, describe its status field here:
 ## Status Rules (fill in if {{CONTESTED_ENTITY}} exists)
 - `status` must always be one of the canonical values above — never store any other string.
 - Valid transitions (enforced in the owning service's `<entity>.service.ts`, not just at the DB layer): {{STATUS_TRANSITIONS}}
-- **Concurrency:** any transition away from the "available"/initial state must use an atomic, condition-checked update (e.g. Mongoose `findOneAndUpdate({ _id, status: '<expected>' }, { $set: { status: '<next>', ... } })`) so two simultaneous requests for the same resource can't both succeed. Never read-then-write the status in two separate steps. See `seat-concurrency-layer` skill for the full pattern.
+- **Concurrency:** any transition away from the "available"/initial state must use an atomic, condition-checked update (e.g. Mongoose `findOneAndUpdate({ _id, status: '<expected>' }, { $set: { status: '<next>', ... } })`) so two simultaneous requests for the same resource can't both succeed. Never read-then-write the status in two separate steps. See `resource-concurrency-layer` skill for the full pattern.
 
-## Roles & Permissions (RBAC — fill in if this project uses role-based access, otherwise delete this section)
-- List the roles here: {{ROLES_LIST}}.
-- An account's `roles` field is an array (not a single string) to support multiple roles per account later without a schema change.
-- Permission `key`s follow `<category>:<action>` — e.g. {{PERMISSION_KEYS}}.
-- List which routes remain fully public — the permission system governs admin-only write/management routes only.
-- The seed script must create baseline role/permission documents on first run — the app should never start with zero roles defined.
+## Roles & Permissions (RBAC — always present, even for a fixed, small role set)
+Every project has this, unconditionally — never a single `role: String` enum field and never deleted as "not needed here." A project with exactly two fixed roles and one with a full admin permission matrix use the exact same shape below; the only thing that varies per project is how many roles/permissions actually get seeded, never whether these collections exist at all. Confirmed live: a project skipped this (plain `role: String`, no `roles`/`permissions` collections) because its role set looked simple and fixed at setup time — and simple, fixed role sets are exactly the ones most likely to stop being fixed later (a second role added to an account, an admin-only feature added after launch), which is a real schema migration under the single-string design and a pure data change (seed a new role/permission document) under this one.
+- List the roles here: {{ROLES_LIST}} (as few as two is fine — this section's shape doesn't scale with how many there are).
+- An account's `roles` field is an **array** of role keys, never a single string — even a project where every account genuinely has exactly one role today still uses `roles: [String]` with one entry, so adding a second role to an account later is a data change, not a schema/migration change.
+- `role` and `permission` are real collections (singular names, per this file's own naming convention above — not a hardcoded enum/constant), each document with its own `uuid` per the External Identity rule above:
+  - `role`: `key` (String, unique, e.g. `"owner"`), `name` (display label), `permissionKeys` (array of permission keys this role grants).
+  - `permission`: `key` (String, unique, `<category>:<action>` shape — e.g. {{PERMISSION_KEYS}}), `description`.
+- The seed script must create baseline role/permission documents on first run — the app should never start with zero roles defined, regardless of how few roles the product has.
+- List which routes remain fully public — the permission system governs everything else, not just admin-only routes; a project with only two roles still checks membership in `roles`/looks up `permissionKeys`, it just has a short list to check against.
 
 ## Migration Rules
 - Migrations are managed via Mongoose model changes.

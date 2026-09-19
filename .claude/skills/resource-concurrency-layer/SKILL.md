@@ -1,5 +1,5 @@
 ---
-name: seat-concurrency-layer
+name: resource-concurrency-layer
 description: Use this skill whenever writing, reviewing, or testing any code that changes the status of a contested resource (bookings, approve, cancel, and any other action competing for the same limited item). This is the highest-risk area in any codebase with a limited/shared resource — two actors racing on the same item must never both succeed.
 references:
   - @backend-service-layer/SKILL.md

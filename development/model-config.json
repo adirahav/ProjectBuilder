@@ -1,0 +1,20 @@
+{
+  "claude": {
+    "planning": "claude-sonnet-5",
+    "planning-revise": "claude-sonnet-5",
+    "designer": "claude-opus-5",
+    "frontend": "claude-opus-5",
+    "qa": "claude-sonnet-5",
+    "security": "claude-sonnet-5",
+    "orchestrator-chat": "claude-sonnet-5"
+  },
+  "cursor": {
+    "planning": "gemini-3.1-pro",
+    "planning-revise": "gemini-3.1-pro",
+    "designer": "gemini-3.1-pro",
+    "frontend": "gemini-3.1-pro",
+    "qa": "gemini-3-flash",
+    "security": "gemini-3.1-pro",
+    "orchestrator-chat": "gemini-3-flash"
+  }
+}
